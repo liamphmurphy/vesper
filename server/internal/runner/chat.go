@@ -166,9 +166,10 @@ type generatedImage struct {
 }
 
 // harvestChatImages stores the images an image-generating chat copied into
-// its outbox. It runs before the turn's transaction so no blob I/O happens
-// under row locks; a failure is logged as a run event and never fails the turn.
-func (r *Runner) harvestChatImages(ctx context.Context, c runCtx) (out []generatedImage) {
+// its outbox, plus any images produced directly in-process (e.g. Gemini API).
+// It runs before the turn's transaction so no blob I/O happens under row locks;
+// a failure is logged as a run event and never fails the turn.
+func (r *Runner) harvestChatImages(ctx context.Context, c runCtx, direct []directChatImage) (out []generatedImage) {
 	warn := func(state string, detail any) {
 		r.event(ctx, c.run.ID, "lifecycle", map[string]any{"state": state, "detail": detail})
 	}
@@ -192,9 +193,15 @@ func (r *Runner) harvestChatImages(ctx context.Context, c runCtx) (out []generat
 	}
 	files, skipped, err := r.Backend.ReadOutbox(ctx, c.run.ID.String())
 	if err != nil {
+		if len(direct) == 0 {
+			r.Log.Warn("read chat outbox", "run", c.run.ID, "err", err)
+			warn("chat_images_failed", err.Error())
+			return nil
+		}
 		r.Log.Warn("read chat outbox", "run", c.run.ID, "err", err)
-		warn("chat_images_failed", err.Error())
-		return nil
+	}
+	for _, d := range direct {
+		files = append(files, OutboxFile{Name: d.name, Data: d.data})
 	}
 	for _, f := range files {
 		ct, ok := runs.GeneratedImageType(f.Data)
@@ -248,9 +255,9 @@ func (r *Runner) finishChatTurn(ctx context.Context, c runCtx, turn store.RunTur
 	codeChanges := work.changes
 	var imgs []generatedImage
 	// A Codex chat copies its pictures to the outbox itself; any other chat's
-	// come from the Codex steps its generate_image requests ran.
+	// come from the image jobs its generate_image requests ran.
 	if (c.spec.HarnessOptions[agentdef.OptionImageGeneration] == "true" || jobs.ran) && waitErr == nil && code == 0 && !res.IsError && !res.UsageLimited {
-		imgs = r.harvestChatImages(ctx, c)
+		imgs = r.harvestChatImages(ctx, c, jobs.direct)
 	}
 	bound := false
 	err := r.retryChatTransaction(ctx, func(ctx context.Context, q *store.Queries) error {

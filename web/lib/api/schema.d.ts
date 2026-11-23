@@ -1133,10 +1133,10 @@ export interface paths {
         };
         /**
          * Which engine makes images, and which are connected
-         * @description Images are made by Codex or Antigravity. engine is the workspace's
-         *     choice (auto uses the first connected, Codex first); a persona or a
-         *     workflow step may override it. options says whether each engine can
-         *     make an image right now.
+         * @description Images are made by Codex, Antigravity, or the Gemini API. engine is the
+         *     workspace's choice (auto uses the first connected, Codex then
+         *     Antigravity then Gemini API); a persona or a workflow step may override
+         *     it. options says whether each engine can make an image right now.
          */
         get: operations["getImageEngine"];
         /** Choose the workspace's image engine */
@@ -7881,19 +7881,21 @@ export interface components {
         };
         ImageEngineSettings: {
             /** @enum {string} */
-            engine: "auto" | "codex" | "antigravity";
+            engine: "auto" | "codex" | "antigravity" | "gemini";
             options: {
                 /** @enum {string} */
-                engine: "codex" | "antigravity";
+                engine: "codex" | "antigravity" | "gemini";
                 label: string;
                 /** @description Connected, with a model to run the image step on */
                 available: boolean;
                 /** @description Why it isn't available */
                 reason?: string;
+                /** @description Active model used when this engine is chosen (when known) */
+                model?: string;
             }[];
         };
         /** @enum {string} */
-        MediaCapability: "music" | "video" | "tts" | "script";
+        MediaCapability: "image" | "music" | "video" | "tts" | "script";
         MediaFieldOption: {
             value: string;
             label: string;
@@ -8763,7 +8765,7 @@ export interface components {
                 web?: boolean;
                 /** @description agent: generate images. The step runs as a persona allowed to make images, on image_engine */
                 images?: boolean;
-                /** @description agent with images: auto (default; the first connected of Codex and Antigravity), codex or antigravity. Defaults to the persona's, then the workspace's, engine */
+                /** @description agent with images: auto (default; the first connected of Codex, Antigravity, and Gemini API), codex, antigravity, or gemini. Defaults to the persona's, then the workspace's, engine */
                 image_engine?: string;
                 /** @description agent: reports pass or fail, and nothing after it runs unless it passes */
                 check?: boolean;
@@ -10285,9 +10287,9 @@ export interface components {
         PersonaCapabilities: {
             /** @description Clone the chat's repo, edit and run code, commit and push its own work branch, open PRs */
             code: boolean;
-            /** @description Generate images with an image engine (Codex or Antigravity); works with any chat model (a chat on another harness hands the image to a one-off step on the engine) */
+            /** @description Generate images with an image engine (Codex, Antigravity, or Gemini API); works with any chat model (a chat on another harness hands the image to a one-off step on the engine) */
             images: boolean;
-            /** @description Which engine makes this persona's images: codex, antigravity or auto (the first connected, Codex first). Empty inherits the workspace's choice (GET /image-engine). Absent in a request means unchanged. */
+            /** @description Which engine makes this persona's images: codex, antigravity, gemini, or auto (the first connected). Empty inherits the workspace's choice (GET /image-engine). Absent in a request means unchanged. */
             image_engine?: string;
             /** @description Propose new personas from a chat; each is created only when the person approves it, with every capability off. Absent in a request means unchanged (false for a new persona). */
             personas?: boolean;
@@ -12802,7 +12804,7 @@ export interface operations {
             content: {
                 "application/json": {
                     /** @enum {string} */
-                    engine: "auto" | "codex" | "antigravity";
+                    engine: "auto" | "codex" | "antigravity" | "gemini";
                 };
             };
         };

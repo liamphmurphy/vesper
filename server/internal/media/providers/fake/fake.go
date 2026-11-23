@@ -34,6 +34,12 @@ type Controller struct {
 	SpeechCalls []media.SpeechRequest
 	// SpeechErr, when set, fails every GenerateSpeech after recording it.
 	SpeechErr error
+	// ImageCalls records every GenerateImage request.
+	ImageCalls []media.ImageRequest
+	// ImageErr, when set, decides per request whether GenerateImage fails.
+	ImageErr func(media.ImageRequest) error
+	// ImageData overrides the default 1x1 PNG payload returned by GenerateImage.
+	ImageData []byte
 }
 
 // SetVideo sets VideoErr and VideoBlockCh under the controller's lock, so a
@@ -200,6 +206,117 @@ func (c *Controller) SpeechRequests() []media.SpeechRequest {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return append([]media.SpeechRequest(nil), c.SpeechCalls...)
+}
+
+// ImageRequests returns a copy of the image requests made so far.
+func (c *Controller) ImageRequests() []media.ImageRequest {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return append([]media.ImageRequest(nil), c.ImageCalls...)
+}
+
+// ImageProviderID is the fake image provider RegisterImage adds.
+const ImageProviderID = "fake-image"
+
+// FakeImagePNG is a valid 1x1 PNG returned by FakeImage when Controller.ImageData is empty.
+var FakeImagePNG = []byte{
+	0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+	0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+	0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+	0x08, 0x02, 0x00, 0x00, 0x00, 0x90, 0x77, 0x53,
+	0xde, 0x00, 0x00, 0x00, 0x0c, 0x49, 0x44, 0x41,
+	0x54, 0x08, 0xd7, 0x63, 0xf8, 0xcf, 0xc0, 0x00,
+	0x00, 0x03, 0x01, 0x01, 0x00, 0x18, 0xdd, 0x8d,
+	0xb0, 0x00, 0x00, 0x00, 0x00, 0x49, 0x45, 0x4e,
+	0x44, 0xae, 0x42, 0x60, 0x82,
+}
+
+// RegisterImage registers a fake image provider under id (defaulting to
+// ImageProviderID) on reg, sharing ctrl. Tests of the "gemini" engine can pass
+// id = "gemini".
+func RegisterImage(reg *media.Registry, id string, ctrl *Controller) {
+	if ctrl == nil {
+		ctrl = &Controller{}
+	}
+	if id == "" {
+		id = ImageProviderID
+	}
+	reg.Register(media.Entry{
+		Descriptor: media.Descriptor{
+			ID:           id,
+			Label:        "Fake Image",
+			Description:  "Deterministic test image provider.",
+			Capabilities: []media.Capability{media.CapImage},
+			Fields: []media.FieldSpec{
+				{Key: "api_key", Label: "API Key", Kind: "secret", Required: true},
+				{
+					Key:     "image_model",
+					Label:   "Image Model",
+					Kind:    "select",
+					Default: "fake-nano-banana",
+					Options: []media.FieldOption{
+						{Value: "fake-nano-banana", Label: "Fake Nano Banana"},
+						{Value: "fake-nano-banana-fast", Label: "Fake Nano Banana Fast"},
+					},
+				},
+			},
+		},
+		CheckAvailability: func(cfg media.ResolvedConfig) (bool, string) {
+			if cfg.Secrets["api_key"] == "" {
+				return false, "Add a Gemini API key in Settings → Workspace → Media providers."
+			}
+			return true, ""
+		},
+		New: func(cfg media.ResolvedConfig) (media.Provider, error) {
+			model := cfg.Settings["image_model"]
+			if model == "" {
+				model = "fake-nano-banana"
+			}
+			return &ImageProvider{id: id, model: model, ctrl: ctrl}, nil
+		},
+	})
+}
+
+// ImageProvider is an in-memory ImageGenerator.
+type ImageProvider struct {
+	id    string
+	model string
+	ctrl  *Controller
+}
+
+func (p *ImageProvider) ID() string                      { return p.id }
+func (p *ImageProvider) Label() string                   { return "Fake Image" }
+func (p *ImageProvider) Check(ctx context.Context) error { return nil }
+
+func (p *ImageProvider) GenerateImage(ctx context.Context, req media.ImageRequest) (media.GeneratedImage, error) {
+	p.ctrl.mu.Lock()
+	p.ctrl.ImageCalls = append(p.ctrl.ImageCalls, req)
+	errFor := p.ctrl.ImageErr
+	custom := p.ctrl.ImageData
+	p.ctrl.mu.Unlock()
+
+	if err := ctx.Err(); err != nil {
+		return media.GeneratedImage{}, err
+	}
+	if errFor != nil {
+		if err := errFor(req); err != nil {
+			return media.GeneratedImage{}, err
+		}
+	}
+	data := custom
+	if len(data) == 0 {
+		data = FakeImagePNG
+	}
+	model := req.Model
+	if model == "" {
+		model = p.model
+	}
+	return media.GeneratedImage{
+		Data:        data,
+		ContentType: "image/png",
+		FilenameExt: ".png",
+		Model:       model,
+	}, nil
 }
 
 // Provider is an in-memory MusicGenerator.

@@ -174,3 +174,57 @@ func TestMediaProviderVideoAndTTSDefaults(t *testing.T) {
 	// Mismatched capability is rejected.
 	e.want("PUT", "/media/defaults/video", map[string]any{"provider_id": fake.SpeechProviderID}, http.StatusUnprocessableEntity)
 }
+
+func TestImageEngineIncludesGeminiMediaProvider(t *testing.T) {
+	reg := media.NewRegistry()
+	ctrl := &fake.Controller{}
+	fake.RegisterImage(reg, "gemini", ctrl)
+
+	k := make([]byte, 32)
+	_, _ = rand.Read(k)
+	box, err := secrets.NewBox(base64.StdEncoding.EncodeToString(k))
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := newChatEnvServer(t, nil, func(s *Server) {
+		s.Secrets = &secrets.Service{Q: s.Q, Box: box}
+		s.MediaRegistry = reg
+	})
+
+	findOption := func(resp map[string]any, engine string) map[string]any {
+		t.Helper()
+		for _, raw := range resp["options"].([]any) {
+			opt := raw.(map[string]any)
+			if opt["engine"] == engine {
+				return opt
+			}
+		}
+		t.Fatalf("engine %q missing from options: %v", engine, resp["options"])
+		return nil
+	}
+
+	// Initially Gemini is listed as an option, unavailable with its default model.
+	before := e.want("GET", "/image-engine", nil, http.StatusOK)
+	gBefore := findOption(before, "gemini")
+	if gBefore["available"] != false || gBefore["label"] != "Gemini API" || gBefore["model"] != "fake-nano-banana" {
+		t.Fatalf("gemini option before config = %v", gBefore)
+	}
+
+	// Saving Gemini's API key & custom model makes Gemini API available in /image-engine.
+	e.want("PUT", "/media/providers/gemini", map[string]any{
+		"settings": map[string]any{"image_model": "fake-nano-banana-fast"},
+		"secrets":  map[string]any{"api_key": "AIza-image-test"},
+	}, http.StatusOK)
+
+	after := e.want("GET", "/image-engine", nil, http.StatusOK)
+	gAfter := findOption(after, "gemini")
+	if gAfter["available"] != true || gAfter["model"] != "fake-nano-banana-fast" {
+		t.Fatalf("gemini option after config = %v", gAfter)
+	}
+
+	// Workspace can select gemini as its image engine.
+	saved := e.want("PUT", "/image-engine", map[string]any{"engine": "gemini"}, http.StatusOK)
+	if saved["engine"] != "gemini" {
+		t.Fatalf("saved engine = %v, want gemini", saved["engine"])
+	}
+}

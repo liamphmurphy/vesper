@@ -1,7 +1,6 @@
-// Package gemini implements Vesper's media.MusicGenerator and
-// media.VideoGenerator adapters backed by Google's official
-// google.golang.org/genai SDK (Lyria 3 music & Gemini Omni video via the
-// Interactions API).
+// Package gemini implements Vesper's media.ImageGenerator,
+// media.MusicGenerator, media.VideoGenerator, and media.SpeechGenerator
+// adapters backed by Google's official google.golang.org/genai SDK.
 package gemini
 
 import (
@@ -69,9 +68,9 @@ func WithPollInterval(d time.Duration) Option {
 func Descriptor() media.Descriptor {
 	return media.Descriptor{
 		ID:           ProviderID,
-		Label:        "Gemini (Lyria, Omni & TTS)",
-		Description:  "Lyria 3 music, Gemini Omni video and Gemini TTS persona voices via Google AI Studio API key or GCP Vertex AI.",
-		Capabilities: []media.Capability{media.CapMusic, media.CapVideo, media.CapTTS},
+		Label:        "Gemini (Nano Banana, Lyria, Omni & TTS)",
+		Description:  "Nano Banana images, Lyria 3 music, Gemini Omni video and Gemini TTS persona voices via Google AI Studio API key or GCP Vertex AI.",
+		Capabilities: []media.Capability{media.CapImage, media.CapMusic, media.CapVideo, media.CapTTS},
 		Fields: []media.FieldSpec{
 			{
 				Key:     "backend",
@@ -108,6 +107,31 @@ func Descriptor() media.Descriptor {
 				Default:     defaultVertexLoc,
 				Placeholder: defaultVertexLoc,
 				ShowWhen:    map[string]string{"backend": backendVertexAI},
+			},
+			{
+				Key:     "image_model",
+				Label:   "Image Model",
+				Kind:    "select",
+				Default: defaultImageModel,
+				Help:    "Used when Image engine is set to Gemini API (or Auto fallback)",
+				Options: []media.FieldOption{
+					{Value: string(interactions.ModelGemini3ProImage), Label: "Gemini 3 Pro Image (Nano Banana Pro — highest quality)"},
+					{Value: string(interactions.ModelGemini31FlashImage), Label: "Gemini 3.1 Flash Image (Nano Banana 2 — fast & sharp)"},
+					{Value: string(interactions.ModelGeminiNanoBanana21), Label: "Nano Banana 2.1 (Fast editing & consistency)"},
+					{Value: string(interactions.ModelGemini31FlashLiteImage), Label: "Gemini 3.1 Flash-Lite Image (Fastest)"},
+					{Value: string(interactions.ModelGemini25FlashImage), Label: "Gemini 2.5 Flash Image"},
+				},
+			},
+			{
+				Key:     "image_size",
+				Label:   "Image Resolution",
+				Kind:    "segmented",
+				Default: defaultImageSize,
+				Options: []media.FieldOption{
+					{Value: "1K", Label: "1K"},
+					{Value: "2K", Label: "2K"},
+					{Value: "4K", Label: "4K"},
+				},
 			},
 			{
 				Key:     "model",
@@ -188,6 +212,7 @@ type Provider struct {
 }
 
 var (
+	_ media.ImageGenerator = (*Provider)(nil)
 	_ media.MusicGenerator = (*Provider)(nil)
 	_ media.VideoGenerator = (*Provider)(nil)
 )

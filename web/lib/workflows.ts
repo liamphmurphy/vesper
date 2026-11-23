@@ -188,6 +188,8 @@ export function imageEngineName(engine: string | undefined): string {
       return "Codex";
     case "antigravity":
       return "Antigravity";
+    case "gemini":
+      return "Gemini API";
     case "auto":
       return "Auto engine";
     default:

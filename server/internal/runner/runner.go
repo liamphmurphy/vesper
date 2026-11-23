@@ -1616,6 +1616,11 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		}
 	}
 
+	if c.run.Purpose == runs.PurposeWorkflow && c.spec.HarnessOptions[agentdef.OptionImageEngine] == runs.EngineGemini {
+		r.runWorkflowGeminiImageStep(ctx, c, turn)
+		return
+	}
+
 	// A plan step asked this run to continue in a fresh session: drop the
 	// session before the usage baseline, so this turn is billed from zero.
 	// It's recorded once the prompt is built (takePlanStepRollover), so a

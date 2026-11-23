@@ -45,8 +45,8 @@ type WorkflowConfig struct {
 	AgentHandle string `json:"agent_handle,omitempty" jsonschema:"agent: the @handle of a persona that works (takes tickets or helps on runs), to run with its work definition (harness, model, work brief, scopes) instead of as a chat persona"`
 	Web         bool   `json:"web,omitempty" jsonschema:"agent: read the web. A web step can't read the workspace"`
 	Images      bool   `json:"images,omitempty" jsonschema:"agent: generate images. The step runs as a persona allowed to make images, on image_engine; not available with agent_handle"`
-	// ImageEngine picks the harness an images step runs on.
-	ImageEngine string   `json:"image_engine,omitempty" jsonschema:"agent with images: auto (default; the first connected of Codex and Antigravity), codex or antigravity. Defaults to the persona's, then the workspace's, engine"`
+	// ImageEngine picks the engine an images step runs on.
+	ImageEngine string   `json:"image_engine,omitempty" jsonschema:"agent with images: auto (default; the first connected of Codex, Antigravity, and Gemini API), codex, antigravity or gemini. Defaults to the persona's, then the workspace's, engine"`
 	Show        []string `json:"show,omitempty" jsonschema:"gate: ids of upstream nodes whose output the reviewer sees; empty shows the gate's parents"`
 	Check       bool     `json:"check,omitempty" jsonschema:"agent: this step is a check that reports pass or fail. Unless it passes, nothing after it runs, apart from a gate tied to it with requires_check"`
 	RetryFrom   string   `json:"retry_from,omitempty" jsonschema:"gate: id of an upstream enrich or agent node to re-run on Request changes; empty offers only approve or reject. agent with check: the upstream node to re-run automatically when the check fails; empty doesn't retry"`

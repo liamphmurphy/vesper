@@ -20,6 +20,7 @@ func (s *Server) imageEngineSettings(ctx context.Context) (api.ImageEngineSettin
 		Available bool                                 `json:"available"`
 		Engine    api.ImageEngineSettingsOptionsEngine `json:"engine"`
 		Label     string                               `json:"label"`
+		Model     *string                              `json:"model,omitempty"`
 		Reason    *string                              `json:"reason,omitempty"`
 	}, len(opts))}
 	for i, o := range opts {
@@ -27,6 +28,10 @@ func (s *Server) imageEngineSettings(ctx context.Context) (api.ImageEngineSettin
 		if o.Reason != "" {
 			reason := o.Reason
 			out.Options[i].Reason = &reason
+		}
+		if o.Model != "" {
+			model := o.Model
+			out.Options[i].Model = &model
 		}
 	}
 	return out, nil

@@ -168,9 +168,9 @@ func (s *Service) prepareChatImage(ctx context.Context, ws, runID uuid.UUID, pro
 	if err != nil {
 		return none, err
 	}
-	engine, model, reason := PickImageEngine(catalog, preference)
+	engine, model, reason := PickImageEngineWith(catalog, s.geminiImageInfo(ctx, ws), preference)
 	if reason != "" {
-		return none, apperr.Conflict("Image generation isn't available: %s. The person can connect one in Settings.", reason)
+		return none, apperr.Conflict("Image generation isn't available: %s. The person can configure one in Settings → Workspace → Media providers.", reason)
 	}
 	turn, err := q.RunningChatTurn(ctx, run.ID)
 	if errors.Is(err, pgx.ErrNoRows) {

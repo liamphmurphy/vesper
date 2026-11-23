@@ -182,6 +182,7 @@ final class NodeGraphTests: XCTestCase {
 
         XCTAssertEqual(WorkflowsLogic.nodeSummary(work), "Persona · images · Codex")
         XCTAssertEqual(WorkflowsLogic.imageEngineName("antigravity"), "Antigravity")
+        XCTAssertEqual(WorkflowsLogic.imageEngineName("gemini"), "Gemini API")
         XCTAssertEqual(WorkflowsLogic.imageEngineName(nil), "default engine")
 
         XCTAssertTrue(WorkflowsLogic.canConnect(in: graph, from: "start", to: "ok"))

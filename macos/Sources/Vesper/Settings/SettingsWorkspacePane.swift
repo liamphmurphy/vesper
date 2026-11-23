@@ -5,9 +5,6 @@ struct SettingsWorkspacePane: View {
     let aux: AuxWindows
     @Bindable var navigation: SettingsNavigation
 
-    @State private var busy = false
-    @State private var errorMessage: String?
-
     private var store: QueryStore? { aux.store }
 
     var body: some View {
@@ -17,7 +14,6 @@ struct SettingsWorkspacePane: View {
         let runnerEntry = store?.entry(API.getRunnerStatus())
         let plansEntry = store?.entry(API.listPlanningSessions())
         let spacesEntry = store?.entry(API.listChatSpaces())
-        let imageEntry = store?.entry(API.getImageEngine())
 
         ScrollViewReader { proxy in
             SettingsScrollContainer {
@@ -28,10 +24,6 @@ struct SettingsWorkspacePane: View {
                     Button("Run setup again") {
                         aux.openInMainWindow("/setup")
                     }
-                }
-
-                if let errorMessage {
-                    SettingsBanner(tone: .blocked, title: "Workspace action failed", message: errorMessage)
                 }
 
                 if let boot = bootEntry?.data {
@@ -104,40 +96,6 @@ struct SettingsWorkspacePane: View {
                     }
                 }
 
-                SettingsCard("Image engine", subtitle: "Which harness generates images requested by personas and workflows.") {
-                    if let img = imageEntry?.data {
-                        let choices = WorkspaceSetupHelpers.imageEngineChoices(img.options)
-                        ForEach(choices) { choice in
-                            let selected = img.engine == choice.value
-                            Button {
-                                saveImageEngine(choice.value)
-                            } label: {
-                                HStack(alignment: .top, spacing: 10) {
-                                    Image(systemName: selected ? "largecircle.fill.circle" : "circle")
-                                        .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                                        .padding(.top, 2)
-                                    VStack(alignment: .leading, spacing: 2) {
-                                        Text(choice.label).font(.callout.weight(.medium))
-                                        Text(choice.detail).font(.caption).foregroundStyle(.secondary)
-                                    }
-                                    Spacer()
-                                }
-                                .contentShape(Rectangle())
-                            }
-                            .buttonStyle(.plain)
-                            .disabled(busy)
-                            Divider()
-                        }
-                    } else if imageEntry?.isFetching == true {
-                        ProgressView().controlSize(.small)
-                    } else {
-                        SettingsUnavailableCard(title: "Couldn't load image engine", error: imageEntry?.error) {
-                            Task { await store?.refetch(API.getImageEngine()) }
-                        }
-                    }
-                }
-                .id("images")
-
                 SettingsMediaProvidersSection(aux: aux)
                     .id("media")
             }
@@ -161,22 +119,6 @@ struct SettingsWorkspacePane: View {
             store?.load(API.listChatSpaces())
             store?.load(API.getImageEngine())
             store?.load(API.listMediaProviders())
-        }
-    }
-
-    private func saveImageEngine(_ raw: API.ImageEngineSettings.Engine) {
-        guard let store else { return }
-        busy = true
-        errorMessage = nil
-        let target = API.UpdateImageEngineBody.Engine(rawValue: raw.rawValue)
-        Task {
-            defer { busy = false }
-            do {
-                let updated = try await store.mutate(API.updateImageEngine(body: API.UpdateImageEngineBody(engine: target)))
-                store.setData(updated, for: API.getImageEngine())
-            } catch {
-                errorMessage = settingsErrorText(error)
-            }
         }
     }
 }

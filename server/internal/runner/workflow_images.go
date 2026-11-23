@@ -2,7 +2,9 @@ package runner
 
 import (
 	"bytes"
+	"cmp"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 
@@ -10,6 +12,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/harness"
+	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
@@ -172,4 +175,154 @@ func (r *Runner) finishWorkflowImageStep(ctx context.Context, c runCtx, res harn
 		return "Couldn't record this step's images."
 	}
 	return ""
+}
+
+// runWorkflowGeminiImageStep executes a workflow image step directly against
+// the workspace's Gemini media provider without spawning a CLI harness.
+func (r *Runner) runWorkflowGeminiImageStep(ctx context.Context, c runCtx, turn store.RunTurn) {
+	q := r.q()
+	finishTurn := func(code int32) {
+		usage, _ := json.Marshal(harness.Usage{})
+		if err := q.FinishTurn(context.WithoutCancel(ctx), store.FinishTurnParams{ID: turn.ID, ExitCode: &code, Usage: usage}); err != nil {
+			r.Log.Warn("finish gemini workflow turn", "run", c.run.ID, "err", err)
+		}
+		r.event(context.WithoutCancel(ctx), c.run.ID, "lifecycle", map[string]any{"state": "turn_ended", "turn": turn.Seq, "exit_code": code})
+	}
+	fail := func(msg string) {
+		finishTurn(1)
+		r.end(ctx, c, "failed", msg, runs.VerbRunFailed)
+	}
+
+	_, _, inputImages, failure := r.workflowTurnImages(ctx, q, c)
+	if failure != "" {
+		fail(failure)
+		return
+	}
+	if r.Media == nil {
+		fail("Gemini API isn't configured on this runner.")
+		return
+	}
+	if r.Blobs == nil || r.Cfg.AttachmentBucket == "" {
+		fail("Generated images can't be stored: no attachment storage is configured.")
+		return
+	}
+	gen, _, err := r.Media.ResolveImage(ctx, c.run.WorkspaceID, runs.EngineGemini)
+	if err != nil {
+		_, msg := media.ClassifyError(err)
+		fail(clipReason(cmp.Or(msg, "Gemini API isn't configured.")))
+		return
+	}
+
+	callID := fmt.Sprintf("gemini-workflow-%s-%d", c.run.ID.String()[:8], turn.Seq)
+	r.event(ctx, c.run.ID, "tool_call", map[string]any{"id": callID, "tool": "image_generation", "input": map[string]any{}})
+
+	refs := make([]media.ImageReference, 0, len(inputImages))
+	for _, im := range inputImages {
+		refs = append(refs, media.ImageReference{Data: im.Data, ContentType: im.MediaType})
+	}
+	timeout := r.Cfg.ChatImageTimeout
+	if timeout <= 0 {
+		timeout = DefaultChatImageTimeout
+	}
+	tctx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	img, err := gen.GenerateImage(tctx, media.ImageRequest{
+		Prompt:     turn.InputMessage,
+		References: refs,
+		Model:      c.spec.HarnessOptions[agentdef.OptionImageModel],
+	})
+	if err != nil {
+		if ctx.Err() != nil {
+			return // shutting down: Recover re-runs this turn
+		}
+		kind, msg := media.ClassifyError(err)
+		payload := map[string]any{"id": callID, "tool": "image_generation", "is_error": true}
+		if kind == media.ErrKindFiltered {
+			payload["failure_kind"] = imageFailModeration
+			r.event(context.WithoutCancel(ctx), c.run.ID, "tool_result", payload)
+			fail(clipReason("The image was rejected by moderation: " + cmp.Or(msg, "blocked by safety filter")))
+			return
+		}
+		r.event(context.WithoutCancel(ctx), c.run.ID, "tool_result", payload)
+		if errors.Is(tctx.Err(), context.DeadlineExceeded) {
+			fail("Gemini API timed out generating the image.")
+			return
+		}
+		fail(clipReason(cmp.Or(msg, "Gemini API couldn't generate the image.")))
+		return
+	}
+	r.event(ctx, c.run.ID, "tool_result", map[string]any{"id": callID, "tool": "image_generation", "is_error": false})
+
+	ct, ok := runs.GeneratedImageType(img.Data)
+	if !ok {
+		fail("Gemini API returned an unsupported image format.")
+		return
+	}
+	wf, err := q.WorkflowRunForAgentRun(ctx, &c.run.ID)
+	if err != nil {
+		r.Log.Warn("workflow gemini image step", "run", c.run.ID, "err", err)
+		fail("Couldn't record this step's images.")
+		return
+	}
+	used, err := q.ChatGeneratedImageBytes(ctx, store.ChatGeneratedImageBytesParams{WorkspaceID: wf.WorkspaceID, UserID: wf.UserID})
+	if err != nil {
+		r.Log.Warn("generated image usage", "run", c.run.ID, "err", err)
+		fail("Couldn't record this step's images.")
+		return
+	}
+	if used+int64(len(img.Data)) > runs.MaxGeneratedImageStorageBytes {
+		fail("Your generated image storage is full: delete some images from the Library, then run this again.")
+		return
+	}
+	ext := img.FilenameExt
+	if ext == "" {
+		ext = referenceExts[ct]
+	}
+	if ext == "" {
+		ext = ".png"
+	}
+	name := fmt.Sprintf("gemini-%s%s", c.run.ID.String()[:8], ext)
+	key := runs.ChatAttachmentKey(wf.WorkspaceID, wf.UserID)
+	if err := r.Blobs.Put(ctx, r.Cfg.AttachmentBucket, key, bytes.NewReader(img.Data), int64(len(img.Data)), ct); err != nil {
+		r.Log.Warn("store workflow gemini image", "run", c.run.ID, "err", err)
+		fail("Couldn't store the generated image.")
+		return
+	}
+	stored := []generatedImage{{name: name, ct: ct, key: key, size: int64(len(img.Data))}}
+	note := "Generated an image with Gemini API."
+	if img.Model != "" {
+		note = fmt.Sprintf("Generated an image with Gemini API (%s).", img.Model)
+	}
+	bound := false
+	err = pgx.BeginFunc(ctx, r.Pool, func(tx pgx.Tx) error {
+		tq := store.New(tx)
+		cur, err := tq.WorkflowStepForAgentRun(ctx, &c.run.ID)
+		if err != nil {
+			return err
+		}
+		if cur.State != "running" {
+			return nil
+		}
+		if _, err := tq.CreateWorkflowStepImage(ctx, store.CreateWorkflowStepImageParams{
+			StepID: cur.ID, RunID: cur.RunID, Filename: name, ContentType: ct, SizeBytes: int64(len(img.Data)), BlobKey: key,
+		}); err != nil {
+			return err
+		}
+		bound = true
+		return tq.SetWorkflowStepOutput(ctx, store.SetWorkflowStepOutputParams{ID: cur.ID, Output: note})
+	})
+	if !bound {
+		r.dropImageBlobs(stored)
+	}
+	if err != nil {
+		if ctx.Err() != nil {
+			return
+		}
+		r.Log.Warn("record workflow gemini image", "run", c.run.ID, "err", err)
+		fail("Couldn't record this step's images.")
+		return
+	}
+	finishTurn(0)
+	r.afterTurn(ctx, c.run.ID, harness.Result{Final: note}, "", 0, nil)
 }

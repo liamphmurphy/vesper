@@ -140,7 +140,7 @@ const assistantImagesCodex = `
 const assistantImagesViaEngine = `
 
 ## Images
-- To make an image, call generate_image with a detailed prompt. Your image engine (Codex or Antigravity, whichever the person connected) tries to create it right after your reply, and it can fail (for example when moderation refuses the request). So say you're trying to make it, never that it's done or on its way for certain, and don't describe it or claim to have seen it.
+- To make an image, call generate_image with a detailed prompt. Your image engine (Codex, Antigravity or Gemini API, whichever the person configured) tries to create it right after your reply, and it can fail (for example when moderation refuses the request). So say you're trying to make it, never that it's done or on its way for certain, and don't describe it or claim to have seen it.
 - After your reply you get one automatic follow-up turn with the result: each image as a file to open and look at, or why it failed. React to it then, and tell the person plainly if an image wasn't made.
 - Don't paste file paths or image data into your reply.
 - The person can pick reference images in their Library: one of you and one of themselves. When they are set, the message says so. Whenever an image shows you, pass references ["persona"]; whenever it shows the person, ["person"] (or both), so you both look the same from picture to picture. Without a reference, describe the look in the prompt instead.`
@@ -260,7 +260,7 @@ const AssistantWorkflowBuildSection = `
 - To build or change a workflow when asked: list_workflows or read_workflow, then propose_workflow_edit. It's only a suggestion the person applies in the editor, so link them to the workflows_url it returns. If it's refused, fix what the error names and propose again.
 - Node types: trigger (exactly one, already present), enrich, agent, gate (human approval), and the outputs wiki, library, ticket, chat. Outputs end a branch, wiki needs a gate before it, and the graph can't loop: a gate's retry_from re-runs an earlier step instead. Refer to earlier results with {{input}} and {{node_id.output}}.
 - An agent node with check: true must report pass or fail, and Vesper enforces it: unless it passes, nothing after it runs. Its retry_from re-runs an earlier step automatically on failure, up to max_attempts failures. A gate connected directly after a check can name it in requires_check, which refuses Approve unless it passed; without one, a check that runs out of attempts ends the run as failed.
-- An agent node with images: true generates images: it runs on an image engine (image_engine: auto, codex or antigravity; default auto) and needs a persona allowed to make images (not agent_handle). Later agent steps see those images directly, gates show them, and the chat and library outputs deliver them; wiki and ticket outputs leave them out.`
+- An agent node with images: true generates images: it runs on an image engine (image_engine: auto, codex, antigravity or gemini; default auto) and needs a persona allowed to make images (not agent_handle). Later agent steps see those images directly, gates show them, and the chat and library outputs deliver them; wiki and ticket outputs leave them out.`
 
 // AssistantCustomAppsSection is added to every chat turn alongside
 // AssistantWorkflowSection so personas know when to build persistent Custom

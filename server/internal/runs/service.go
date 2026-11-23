@@ -80,6 +80,10 @@ type Service struct {
 	// RolloverContextTokens mirrors the runner's setting (ROLLOVER_CONTEXT_TOKENS):
 	// a main agent at least this large continues in a fresh session. 0 is off.
 	RolloverContextTokens int64
+	// GeminiImageStatus reports whether the Gemini media provider is configured
+	// for image generation in ws, returning its active model ID and any
+	// unavailability reason. Kept as a callback so runs does not import media.
+	GeminiImageStatus func(ctx context.Context, ws uuid.UUID) (model string, available bool, reason string)
 }
 
 type Caller = agents.Caller

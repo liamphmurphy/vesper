@@ -466,6 +466,10 @@ func runAppMicroVMRunner(
 		Secrets:    secretStore,
 		PlanModels: (&chatmodels.QueuedListings{Pool: pool}).Models,
 	}
+	geminiImageStatus := func(ctx context.Context, ws uuid.UUID) (string, bool, string) {
+		return mediaSvc.ImageProviderStatus(ctx, ws, "gemini")
+	}
+	workflows.GeminiImageStatus = geminiImageStatus
 	r := &runner.Runner{
 		Cfg: runner.Config{
 			ModelPrices:           cfg.Runner.ModelPrices,
@@ -510,6 +514,7 @@ func runAppMicroVMRunner(
 			RequireHarnessKey:     true,
 			PlanModels:            (&chatmodels.QueuedListings{Pool: pool}).Models,
 			RolloverContextTokens: int64(cfg.RolloverContextTokens),
+			GeminiImageStatus:     geminiImageStatus,
 		},
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})

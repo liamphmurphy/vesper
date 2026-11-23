@@ -180,11 +180,19 @@ func (e *WorkflowEngine) workflowImageEngine(ctx context.Context, q *store.Queri
 	if err != nil {
 		return "", "", "", err
 	}
-	engine, model, why := PickImageEngine(catalog, preference)
+	engine, model, why := PickImageEngineWith(catalog, e.geminiImageInfo(ctx, chat.WorkspaceID), preference)
 	if why != "" {
-		return "", "", "Image steps need an image engine: " + why + ". Connect one in Settings → Connections & secrets, then run this again.", nil
+		return "", "", "Image steps need an image engine: " + why + ". Configure one in Settings → Workspace → Media providers, then run this again.", nil
 	}
 	return engine, model, "", nil
+}
+
+func (e *WorkflowEngine) geminiImageInfo(ctx context.Context, ws uuid.UUID) GeminiImageInfo {
+	if e == nil || e.GeminiImageStatus == nil {
+		return GeminiImageInfo{Reason: "isn't configured"}
+	}
+	model, ok, reason := e.GeminiImageStatus(ctx, ws)
+	return GeminiImageInfo{Available: ok, Model: model, Reason: reason}
 }
 
 // workflowPersonaImageEngine is the engine the persona a step runs as has chosen.

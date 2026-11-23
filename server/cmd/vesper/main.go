@@ -42,6 +42,8 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/httpapi"
+	"github.com/liamphmurphy/vesper/server/internal/media"
+	"github.com/liamphmurphy/vesper/server/internal/media/providers/gemini"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
 	"github.com/liamphmurphy/vesper/server/internal/metrics"
 	"github.com/liamphmurphy/vesper/server/internal/prsync"
@@ -416,8 +418,16 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		m.SaveClaudeAuth = saveClaude
 		m.SaveCodexAuth = saveCodex
 	}
+	mediaReg := media.NewRegistry()
+	gemini.Register(mediaReg)
+	media.RegisterLocalMLXPlaceholder(mediaReg)
+	mediaSvc := &media.Service{Pool: pool, Box: box, Registry: mediaReg}
+	geminiImageStatus := func(ctx context.Context, ws uuid.UUID) (string, bool, string) {
+		return mediaSvc.ImageProviderStatus(ctx, ws, gemini.ProviderID)
+	}
 	workflows := runs.NewWorkflowEngine(pool, &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket}, &tracker.Service{Pool: pool})
 	workflows.Catalog = chatmodels.Catalog{RequireKey: config.IsolatesBackend(rc.Backend), Secrets: secretStore, PlanModels: planModels(rc.Backend, pool)}
+	workflows.GeminiImageStatus = geminiImageStatus
 	r := &runner.Runner{
 		Cfg: runner.Config{
 			ModelPrices: rc.ModelPrices,
@@ -429,9 +439,10 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 		},
 		Pool: pool, Backend: backend, Secrets: secretStore,
 		Tracker: &tracker.Service{Pool: pool}, Blobs: blobs, Attachments: blobs, Log: log,
+		Media:     mediaSvc,
 		Workflows: workflows,
 		Designs:   &designs.Service{Pool: pool, Worker: &designs.Worker{URL: cfg.DesignWorkerURL, Token: cfg.DesignWorkerToken}, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket},
-		Scheduled: &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket}, RequireHarnessKey: config.IsolatesBackend(rc.Backend), PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens)},
+		Scheduled: &runs.Service{Pool: pool, Secrets: secretStore, Tracker: &tracker.Service{Pool: pool}, Artifacts: &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: cfg.Blob.ArtifactBucket}, RequireHarnessKey: config.IsolatesBackend(rc.Backend), PlanModels: planModels(rc.Backend, pool), RolloverContextTokens: int64(cfg.RolloverContextTokens), GeminiImageStatus: geminiImageStatus},
 		StoreSecret: func(ctx context.Context, ws, by uuid.UUID, name, value string) error {
 			_, err := secretStore.Set(ctx, ws, by, secrets.SetInput{Name: name, Value: value})
 			return err

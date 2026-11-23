@@ -13,8 +13,8 @@ export function takesEffort(harness: string): boolean {
   return harness !== "antigravity";
 }
 
-/** Harnesses with a built-in image generator, in the order "Auto" prefers them (agentdef.ImageHarnesses). */
-export const IMAGE_ENGINES = ["codex", "antigravity"] as const;
+/** Image engines supported by Vesper, in the order "Auto" prefers them (runs.ImageEngines). */
+export const IMAGE_ENGINES = ["codex", "antigravity", "gemini"] as const;
 export type ImageEngine = (typeof IMAGE_ENGINES)[number];
 
 export function harnessLabel(harness: string): string {
