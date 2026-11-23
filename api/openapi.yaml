@@ -3017,6 +3017,34 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /library/bulk-delete:
+    post:
+      operationId: bulkDeleteLibraryItems
+      summary: Remove multiple items from your Library
+      description: |
+        Removes every listed item that belongs to the caller. Items that are
+        missing or belong to someone else are ignored. Each item's object is
+        removed once nothing else references it; items from chats stay in their
+        chats while those chats exist. 422 if ids is empty or exceeds 500.
+      tags: [library]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LibraryBulkDelete" }
+      responses:
+        "200":
+          description: Removed
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [deleted]
+                properties:
+                  deleted: { type: integer }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /library/diagrams:
     post:
       operationId: saveLibraryDiagram
@@ -10405,6 +10433,15 @@ components:
       properties:
         items: { type: array, items: { $ref: "#/components/schemas/LibraryItem" } }
         has_more: { type: boolean }
+    LibraryBulkDelete:
+      type: object
+      required: [ids]
+      properties:
+        ids:
+          type: array
+          minItems: 1
+          maxItems: 500
+          items: { type: string, format: uuid }
     ChatMessage:
       type: object
       required: [id, seq, role, body_md, created_at]
