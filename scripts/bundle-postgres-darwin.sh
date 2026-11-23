@@ -72,6 +72,7 @@ done
 echo "Relocating Mach-O dylib dependencies -> @loader_path ..."
 /usr/bin/python3 - "${tmp_stage}" <<'PY'
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -159,11 +160,34 @@ for p in collect_files():
                     subprocess.call(["install_name_tool", "-delete_rpath", rpath, p],
                                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
+# 2b. nixpkgs builds Postgres --with-system-tzdata, which compiles the tzdata
+# store path into postgres and initdb as an absolute string; there is no env
+# var to override it. On a Mac without that store path, every time zone,
+# even 'UTC', fails to load and postgres refuses to start. Point it at macOS's
+# own zoneinfo, overwriting the C string in place (shorter, NUL-padded).
+TZ_RE = re.compile(rb"/nix/store/[0-9a-z]{32}-tzdata-[^/\x00]+/share/zoneinfo")
+SYSTEM_TZDIR = b"/usr/share/zoneinfo"
+for p in collect_files():
+    with open(p, "rb") as fh:
+        data = fh.read()
+    out = bytearray(data)
+    for m in TZ_RE.finditer(data):
+        s, e = m.span()
+        if (s > 0 and data[s - 1] != 0) or data[e] != 0:
+            raise RuntimeError(f"tzdata path in {p} is not a standalone C string")
+        out[s:e] = SYSTEM_TZDIR + b"\0" * ((e - s) - len(SYSTEM_TZDIR))
+    if out != data:
+        with open(p, "wb") as fh:
+            fh.write(out)
+
 # 3. Verify zero /nix/store references remain and ad-hoc sign every Mach-O binary/dylib.
 for p in collect_files():
     for dep in otool_deps(p):
         if "/nix/store/" in dep:
             raise RuntimeError(f"unrelocated /nix/store ref in {p}: {dep}")
+    with open(p, "rb") as fh:
+        if re.search(rb"/nix/store/[^\x00]*tzdata", fh.read()):
+            raise RuntimeError(f"unpatched /nix/store tzdata path in {p}")
     subprocess.check_call(["codesign", "--force", "--sign", "-", p],
                           stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 
@@ -186,12 +210,16 @@ env -i PATH=/usr/bin:/bin \
   "${tmp_stage}/bin/initdb" -D "${smoke_dir}/data" --username=vesper --auth=trust --encoding=UTF8 --locale=C --no-instructions >/dev/null
 env -i PATH=/usr/bin:/bin \
   "${tmp_stage}/bin/pg_ctl" -D "${smoke_dir}/data" -l "${smoke_dir}/pg.log" \
-  -o "-k ${smoke_dir}/sock -h ''" start >/dev/null
+  -o "-k ${smoke_dir}/sock -h '' -c timezone=UTC -c log_timezone=UTC" start >/dev/null
 env -i PATH=/usr/bin:/bin \
   "${tmp_stage}/bin/pg_isready" -h "${smoke_dir}/sock" -U vesper >/dev/null
 env -i PATH=/usr/bin:/bin \
   "${tmp_stage}/bin/psql" -h "${smoke_dir}/sock" -U vesper -d postgres \
   -c "CREATE EXTENSION IF NOT EXISTS pg_trgm; SELECT array_length(show_trgm('vesper'), 1);" >/dev/null
+# Named zones load from /usr/share/zoneinfo (step 2b), not the build host's nix store.
+env -i PATH=/usr/bin:/bin \
+  "${tmp_stage}/bin/psql" -h "${smoke_dir}/sock" -U vesper -d postgres -v ON_ERROR_STOP=1 \
+  -c "SELECT now() AT TIME ZONE 'America/Los_Angeles';" >/dev/null
 env -i PATH=/usr/bin:/bin \
   "${tmp_stage}/bin/pg_ctl" -D "${smoke_dir}/data" -m fast stop >/dev/null
 rm -rf "${smoke_dir}"
