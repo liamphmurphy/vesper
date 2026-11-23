@@ -122,6 +122,13 @@ public struct AnimatedImageFrames: @unchecked Sendable {
         return AnimatedImageFrames(frames: frames, delays: delays, duration: delays.reduce(0, +))
     }
 
+    /// Suggested periodic tick interval matching the loop's own frame cadence, bounded to
+    /// [1/30s, 0.25s]. Drives a `.periodic` TimelineView instead of a 120Hz DisplayLink.
+    public var recommendedTickInterval: Double {
+        guard let fastest = delays.min(), fastest > 0 else { return 1.0 / 24.0 }
+        return min(max(fastest, 1.0 / 30.0), 0.25)
+    }
+
     /// The frame shown `elapsed` seconds into playback, looping.
     public func frameIndex(at elapsed: Double) -> Int {
         guard frames.count > 1, duration > 0 else { return 0 }

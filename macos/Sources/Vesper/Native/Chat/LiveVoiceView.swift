@@ -521,11 +521,20 @@ private struct AvatarStage: View {
 
     @Environment(\.vesperTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.vesperWindowVisible) private var windowVisible
     @State private var pulse = false
 
     var body: some View {
         let tint = Color(cssHex: persona?.color) ?? theme.palette.accent
-        let swell = listening ? CGFloat(level) * 0.18 : (talking && pulse ? 0.08 : 0)
+        let animate = AnimationPolicy.shouldAnimate(
+            working: true,
+            context: AppPowerState.shared.animationContext(
+                reduceMotion: reduceMotion,
+                windowVisible: windowVisible
+            )
+        )
+        let shouldPulse = talking && animate
+        let swell = listening ? CGFloat(level) * 0.18 : (shouldPulse && pulse ? 0.08 : 0)
         ZStack {
             Circle()
                 .fill(tint.opacity(0.18))
@@ -534,8 +543,8 @@ private struct AvatarStage: View {
         }
         .frame(width: size * 1.4, height: size * 1.4)
         .animation(.easeOut(duration: 0.12), value: level)
-        .animation(talking && !reduceMotion ? .easeInOut(duration: 0.5).repeatForever(autoreverses: true) : .default, value: pulse)
-        .onChange(of: talking, initial: true) { _, now in pulse = now }
+        .animation(shouldPulse ? .easeInOut(duration: 0.5).repeatForever(autoreverses: true) : .default, value: pulse)
+        .onChange(of: shouldPulse, initial: true) { _, now in pulse = now }
         .accessibilityLabel(persona?.name ?? "Assistant")
     }
 }

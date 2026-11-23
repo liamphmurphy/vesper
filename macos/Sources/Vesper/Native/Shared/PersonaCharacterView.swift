@@ -16,6 +16,7 @@ struct PersonaCharacterView: View {
     @Environment(\.vesperTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.displayScale) private var displayScale
+    @Environment(\.vesperWindowVisible) private var windowVisible
 
     @State private var ownerID = UUID()
     @State private var snapshotImage: Image?
@@ -42,7 +43,15 @@ struct PersonaCharacterView: View {
         let pad = framed ? max(1, (size * 0.06).rounded()) : 0
         let tintAlpha = theme.mode == .dark ? 0.15 : 0.20
         let accentColor = Color(cssHex: PersonaCharacterSanitizer.safeHexColor(color)) ?? .gray
-        let showsLive = active && PersonaCharacterPool.shared.isShowingLive(ownerID)
+        let isActiveState = state != .idle && state != .staticState
+        let liveAllowed = active && AnimationPolicy.shouldAnimate(
+            working: isActiveState,
+            context: AppPowerState.shared.animationContext(
+                reduceMotion: reduceMotion,
+                windowVisible: windowVisible
+            )
+        )
+        let showsLive = liveAllowed && PersonaCharacterPool.shared.isShowingLive(ownerID)
         let cached = snapshotImage ?? PersonaCharacterPool.shared.cachedSnapshot(
             svg: svg,
             color: color,
@@ -58,7 +67,7 @@ struct PersonaCharacterView: View {
                     .interpolation(.high)
                     .aspectRatio(contentMode: .fit)
             }
-            if active {
+            if liveAllowed {
                 PersonaCharacterPlatformHost(
                     ownerID: ownerID,
                     svg: svg,

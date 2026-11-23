@@ -63,6 +63,7 @@ struct CompanionChatHost: View {
             .environment(screenContext)
             .environment(\.vesperTheme, theme)
             .environment(\.colorScheme, colorScheme)
+            .vesperTrackHostVisibility()
     }
 }
 

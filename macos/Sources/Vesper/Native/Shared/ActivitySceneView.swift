@@ -12,41 +12,31 @@ struct ActivitySceneView: View {
 
     @Environment(\.vesperTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.vesperWindowVisible) private var windowVisible
 
     @State private var box = TransitionerBox()
     @State private var holdTask: Task<Void, Never>?
     @State private var staticTick = 0
+    @State private var start = Date()
 
     var body: some View {
         let palette = ActivityScenePalette(theme: theme)
-        TimelineView(.animation(minimumInterval: 1.0 / 30.0, paused: reduceMotion)) { timeline in
-            let _ = staticTick
-            let now = timeline.date.timeIntervalSinceReferenceDate
-            let frame = evaluatedFrame(at: now)
-
-            Canvas { ctx, canvasSize in
-                ctx.withCGContext { cg in
-                    if !reduceMotion, let prev = frame.previous, frame.previousOpacity > 0.001 {
-                        ActivitySceneRenderer.render(
-                            prev,
-                            at: frame.previousClock,
-                            palette: palette,
-                            reduceMotion: false,
-                            opacity: frame.previousOpacity,
-                            in: cg,
-                            size: canvasSize
-                        )
-                    }
-                    ActivitySceneRenderer.render(
-                        frame.current,
-                        at: frame.currentClock,
-                        palette: palette,
-                        reduceMotion: reduceMotion,
-                        opacity: reduceMotion ? 1 : frame.currentOpacity,
-                        in: cg,
-                        size: canvasSize
-                    )
+        let animate = AnimationPolicy.shouldAnimate(
+            working: true,
+            context: AppPowerState.shared.animationContext(
+                reduceMotion: reduceMotion,
+                windowVisible: windowVisible
+            )
+        )
+        Group {
+            if animate {
+                TimelineView(.periodic(from: start, by: AnimationPolicy.activitySceneTickInterval)) { timeline in
+                    let _ = staticTick
+                    sceneCanvas(at: timeline.date.timeIntervalSinceReferenceDate, palette: palette)
                 }
+            } else {
+                let _ = staticTick
+                sceneCanvas(at: Date.timeIntervalSinceReferenceDate, palette: palette)
             }
         }
         .padding(.horizontal, showStageChrome ? 4 : 0)
@@ -97,6 +87,34 @@ struct ActivitySceneView: View {
         .onDisappear {
             holdTask?.cancel()
             holdTask = nil
+        }
+    }
+
+    private func sceneCanvas(at now: Double, palette: ActivityScenePalette) -> some View {
+        let frame = evaluatedFrame(at: now)
+        return Canvas { ctx, canvasSize in
+            ctx.withCGContext { cg in
+                if !reduceMotion, let prev = frame.previous, frame.previousOpacity > 0.001 {
+                    ActivitySceneRenderer.render(
+                        prev,
+                        at: frame.previousClock,
+                        palette: palette,
+                        reduceMotion: false,
+                        opacity: frame.previousOpacity,
+                        in: cg,
+                        size: canvasSize
+                    )
+                }
+                ActivitySceneRenderer.render(
+                    frame.current,
+                    at: frame.currentClock,
+                    palette: palette,
+                    reduceMotion: reduceMotion,
+                    opacity: reduceMotion ? 1 : frame.currentOpacity,
+                    in: cg,
+                    size: canvasSize
+                )
+            }
         }
     }
 

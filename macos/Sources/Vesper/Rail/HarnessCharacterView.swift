@@ -1,7 +1,9 @@
 import SwiftUI
+import VesperCore
 
 /// Animated harness characters drawn on a 64x64 grid for the chat composer's status strip and
-/// usage button. Reduce Motion freezes the pose at t = 0.
+/// usage button. Reduce Motion, occluded/hidden hosts, backgrounded app (when idle), and Low Power
+/// Mode (when idle) freeze the pose at t = 0 with no timeline running.
 struct HarnessCharacterView: View {
     enum Kind { case robot, comet, jet }
 
@@ -10,6 +12,8 @@ struct HarnessCharacterView: View {
     var size: CGFloat = 24
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @Environment(\.vesperWindowVisible) private var windowVisible
+    @State private var start = Date()
 
     /// nil for a harness without a character (the caller keeps the avatar).
     static func kind(for harness: String) -> Kind? {
@@ -30,19 +34,33 @@ struct HarnessCharacterView: View {
     }
 
     var body: some View {
-        // Cap at 30fps while working (20fps idle): `minimumInterval: nil` runs at 120Hz on
-        // ProMotion displays across every rail button and the composer usage chip.
-        TimelineView(.animation(minimumInterval: working ? 1.0 / 30.0 : 1.0 / 20.0, paused: reduceMotion)) { timeline in
-            let t = reduceMotion ? 0 : timeline.date.timeIntervalSinceReferenceDate
-            Canvas { ctx, canvas in
-                let scale = min(canvas.width, canvas.height) / 64
-                var c = ctx
-                c.scaleBy(x: scale, y: scale)
-                CharacterDrawing.draw(kind, working: working, t: t, in: &c)
+        let context = AppPowerState.shared.animationContext(
+            reduceMotion: reduceMotion,
+            windowVisible: windowVisible
+        )
+        let animate = AnimationPolicy.shouldAnimate(working: working, context: context)
+        Group {
+            if animate {
+                // Use `.periodic` instead of `.animation(minimumInterval:)` so SwiftUI does not
+                // attach a 120Hz ProMotion DisplayLink just to throttle it down.
+                TimelineView(.periodic(from: start, by: AnimationPolicy.harnessTickInterval(working: working))) { timeline in
+                    canvas(at: timeline.date.timeIntervalSinceReferenceDate)
+                }
+            } else {
+                canvas(at: 0)
             }
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
+    }
+
+    private func canvas(at t: Double) -> some View {
+        Canvas { ctx, canvas in
+            let scale = min(canvas.width, canvas.height) / 64
+            var c = ctx
+            c.scaleBy(x: scale, y: scale)
+            CharacterDrawing.draw(kind, working: working, t: t, in: &c)
+        }
     }
 }
 
