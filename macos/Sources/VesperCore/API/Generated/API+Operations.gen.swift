@@ -1084,6 +1084,17 @@ extension API {
         )
     }
 
+    /// Toggle a markdown checklist item on an assistant chat message
+    ///
+    /// `PATCH /chats/{id}/messages/{messageId}/checklist`
+    public static func updateChatMessageChecklist(id: Swift.String, messageId: Swift.String, body: ChatChecklistUpdate) -> APIRequest<ChatChecklistStateResponse> {
+        return APIRequest(
+            method: "PATCH", template: "/chats/{id}/messages/{messageId}/checklist",
+            path: "/api/v1/chats/\(APIPath.escape(id))/messages/\(APIPath.escape(messageId))/checklist",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
     /// A reply spoken in its persona's voice
     ///
     /// The reply's prose (no code, tables or URLs), up to about 120 words and

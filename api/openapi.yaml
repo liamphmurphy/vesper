@@ -3358,6 +3358,32 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/messages/{messageId}/checklist:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - name: messageId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updateChatMessageChecklist
+      summary: Toggle a markdown checklist item on an assistant chat message
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatChecklistUpdate" }
+      responses:
+        "200":
+          description: Updated checklist state for the message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatChecklistStateResponse" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/edit-last:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -10444,7 +10470,25 @@ components:
           description: "Rules that raised effort_level above the message's own: confirmation (a go-ahead takes the weight of what it approves), effort_mismatch (a retry or edit steps it up)"
         git_branch: { type: string, description: "Primary repository branch at the end of the turn that produced this assistant message" }
         git_commit_sha: { type: string, description: "Primary repository HEAD commit SHA at the end of the turn that produced this assistant message" }
+        checklist_state:
+          type: object
+          additionalProperties: { type: boolean }
+          description: "Persisted ticked state for markdown task-list items in an assistant message, keyed by 0-based task index"
         created_at: { type: string, format: date-time }
+    ChatChecklistUpdate:
+      type: object
+      required: [index, checked]
+      properties:
+        index: { type: integer, minimum: 0, maximum: 500 }
+        checked: { type: boolean }
+    ChatChecklistStateResponse:
+      type: object
+      required: [message_id, checklist_state]
+      properties:
+        message_id: { type: string, format: uuid }
+        checklist_state:
+          type: object
+          additionalProperties: { type: boolean }
     ChatCodeChange:
       type: object
       required: [path, status, additions, deletions, binary, truncated]

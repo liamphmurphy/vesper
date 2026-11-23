@@ -3936,6 +3936,66 @@ extension API {
         }
     }
 
+    public struct ChatChecklistStateResponse: Codable, Sendable, Equatable {
+        public var checklistState: [Swift.String: Swift.Bool]
+        public var messageId: Swift.String
+
+        public init(
+            checklistState: [Swift.String: Swift.Bool],
+            messageId: Swift.String
+        ) {
+            self.checklistState = checklistState
+            self.messageId = messageId
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case checklistState = "checklist_state"
+            case messageId = "message_id"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.checklistState = try c.decodeIfPresent([Swift.String: Swift.Bool].self, forKey: .checklistState) ?? [:]
+            self.messageId = try c.decode(Swift.String.self, forKey: .messageId)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(checklistState, forKey: .checklistState)
+            try c.encode(messageId, forKey: .messageId)
+        }
+    }
+
+    public struct ChatChecklistUpdate: Codable, Sendable, Equatable {
+        public var checked: Swift.Bool
+        public var index: Swift.Int
+
+        public init(
+            checked: Swift.Bool,
+            index: Swift.Int
+        ) {
+            self.checked = checked
+            self.index = index
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case checked
+            case index
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.checked = try c.decode(Swift.Bool.self, forKey: .checked)
+            self.index = try c.decode(Swift.Int.self, forKey: .index)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(checked, forKey: .checked)
+            try c.encode(index, forKey: .index)
+        }
+    }
+
     /// Something the assistant read while answering (from read_artifact / read_page / get_ticket)
     public struct ChatCitation: Codable, Sendable, Equatable {
         /// The artifact (or wiki page) that was read
@@ -4375,6 +4435,8 @@ extension API {
         public var bodyMd: Swift.String
         /// Input served from cache where the provider reported cache usage
         public var cachedInputTokens: Swift.Int?
+        /// Persisted ticked state for markdown task-list items in an assistant message, keyed by 0-based task index
+        public var checklistState: [Swift.String: Swift.Bool]?
         public var citations: [ChatCitation]?
         /// Files a coding persona changed during the turn that produced an assistant message (git diff from the turn's starting commit to the working tree, commits included, plus new untracked files). Secrets the run used are redacted. Absent when nothing changed.
         public var codeChanges: [ChatCodeChange]?
@@ -4444,6 +4506,7 @@ extension API {
             author: UserRef? = nil,
             bodyMd: Swift.String,
             cachedInputTokens: Swift.Int? = nil,
+            checklistState: [Swift.String: Swift.Bool]? = nil,
             citations: [ChatCitation]? = nil,
             codeChanges: [ChatCodeChange]? = nil,
             contextRefs: [ChatContextRef]? = nil,
@@ -4471,6 +4534,7 @@ extension API {
             self.author = author
             self.bodyMd = bodyMd
             self.cachedInputTokens = cachedInputTokens
+            self.checklistState = checklistState
             self.citations = citations
             self.codeChanges = codeChanges
             self.contextRefs = contextRefs
@@ -4500,6 +4564,7 @@ extension API {
             case author
             case bodyMd = "body_md"
             case cachedInputTokens = "cached_input_tokens"
+            case checklistState = "checklist_state"
             case citations
             case codeChanges = "code_changes"
             case contextRefs = "context_refs"
@@ -4530,6 +4595,7 @@ extension API {
             self.author = try c.decodeIfPresent(UserRef.self, forKey: .author)
             self.bodyMd = try c.decode(Swift.String.self, forKey: .bodyMd)
             self.cachedInputTokens = try c.decodeIfPresent(Swift.Int.self, forKey: .cachedInputTokens)
+            self.checklistState = try c.decodeIfPresent([Swift.String: Swift.Bool].self, forKey: .checklistState)
             self.citations = try c.decodeIfPresent([ChatCitation].self, forKey: .citations)
             self.codeChanges = try c.decodeIfPresent([ChatCodeChange].self, forKey: .codeChanges)
             self.contextRefs = try c.decodeIfPresent([ChatContextRef].self, forKey: .contextRefs)
@@ -4560,6 +4626,7 @@ extension API {
             try c.encodeIfPresent(author, forKey: .author)
             try c.encode(bodyMd, forKey: .bodyMd)
             try c.encodeIfPresent(cachedInputTokens, forKey: .cachedInputTokens)
+            try c.encodeIfPresent(checklistState, forKey: .checklistState)
             try c.encodeIfPresent(citations, forKey: .citations)
             try c.encodeIfPresent(codeChanges, forKey: .codeChanges)
             try c.encodeIfPresent(contextRefs, forKey: .contextRefs)

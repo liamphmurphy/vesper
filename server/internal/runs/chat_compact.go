@@ -189,13 +189,17 @@ func buildCompactOrForkPrompt(ctx context.Context, q *store.Queries, chat store.
 	}
 	hist := make([]HandoffMessage, len(rows))
 	for i, r := range rows {
+		body := r.BodyMd
+		if r.Role == "assistant" {
+			body = ApplyChecklistState(body, ParseChecklistState(r.ChecklistState))
+		}
 		hist[i] = HandoffMessage{
 			Seq:     r.Seq,
 			Role:    r.Role,
 			Harness: deref(r.Harness),
 			Model:   deref(r.Model),
 			Persona: r.PersonaName,
-			Body:    r.BodyMd,
+			Body:    body,
 		}
 	}
 	hc, err := loadHandoffContext(ctx, q, chat.ID)

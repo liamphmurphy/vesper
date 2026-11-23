@@ -2661,6 +2661,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chats/{id}/messages/{messageId}/checklist": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                messageId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        /** Toggle a markdown checklist item on an assistant chat message */
+        patch: operations["updateChatMessageChecklist"];
+        trace?: never;
+    };
     "/chats/{id}/edit-last": {
         parameters: {
             query?: never;
@@ -9563,8 +9583,23 @@ export interface components {
             git_branch?: string;
             /** @description Primary repository HEAD commit SHA at the end of the turn that produced this assistant message */
             git_commit_sha?: string;
+            /** @description Persisted ticked state for markdown task-list items in an assistant message, keyed by 0-based task index */
+            checklist_state?: {
+                [key: string]: boolean;
+            };
             /** Format: date-time */
             created_at: string;
+        };
+        ChatChecklistUpdate: {
+            index: number;
+            checked: boolean;
+        };
+        ChatChecklistStateResponse: {
+            /** Format: uuid */
+            message_id: string;
+            checklist_state: {
+                [key: string]: boolean;
+            };
         };
         ChatCodeChange: {
             /** @description Repository URL for this change */
@@ -15274,6 +15309,36 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateChatMessageChecklist: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                id: components["parameters"]["ChatId"];
+                messageId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatChecklistUpdate"];
+            };
+        };
+        responses: {
+            /** @description Updated checklist state for the message */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatChecklistStateResponse"];
+                };
+            };
+            404: components["responses"]["Error"];
             422: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };

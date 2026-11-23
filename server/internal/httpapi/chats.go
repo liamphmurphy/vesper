@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"slices"
+	"strconv"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -338,6 +339,11 @@ func (s *Server) toMessages(ctx context.Context, msgs []store.ChatMessage) ([]ap
 		}
 		item.GitBranch = m.GitBranch
 		item.GitCommitSha = m.GitCommitSha
+		if m.Role == "assistant" && len(m.ChecklistState) > 2 {
+			if state := runs.ParseChecklistState(m.ChecklistState); len(state) > 0 {
+				item.ChecklistState = &state
+			}
+		}
 		// Which persona wrote a reply; absent is the chat's host.
 		if p, ok := authors[deref(m.PersonaID)]; ok && m.Role == "assistant" {
 			item.Persona = toPersonaSummary(p)
@@ -912,4 +918,51 @@ func (s *Server) DecidePersonaCharacterProposal(ctx context.Context, req api.Dec
 		return nil, err
 	}
 	return api.DecidePersonaCharacterProposal200JSONResponse(out[0]), nil
+}
+
+func (s *Server) UpdateChatMessageChecklist(ctx context.Context, req api.UpdateChatMessageChecklistRequestObject) (api.UpdateChatMessageChecklistResponseObject, error) {
+	if req.Body == nil {
+		return nil, apperr.Invalid("body", "required")
+	}
+	if req.Body.Index < 0 || req.Body.Index > 500 {
+		return nil, apperr.Invalid("index", "must be between 0 and 500")
+	}
+	if _, err := s.ownChat(ctx, req.Id); err != nil {
+		return nil, err
+	}
+	msg, err := s.Q.GetChatMessageByID(ctx, store.GetChatMessageByIDParams{ID: req.MessageId, SessionID: req.Id})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if msg.Role != "assistant" {
+		return nil, apperr.Invalid("message_id", "only assistant message checklists can be updated")
+	}
+	state := runs.ParseChecklistState(msg.ChecklistState)
+	if state == nil {
+		state = map[string]bool{}
+	}
+	state[strconv.Itoa(req.Body.Index)] = req.Body.Checked
+	raw, err := json.Marshal(state)
+	if err != nil {
+		return nil, err
+	}
+	updated, err := s.Q.SetChatMessageChecklistState(ctx, store.SetChatMessageChecklistStateParams{
+		ID:             msg.ID,
+		SessionID:      req.Id,
+		ChecklistState: raw,
+	})
+	if err != nil {
+		return nil, err
+	}
+	finalState := runs.ParseChecklistState(updated.ChecklistState)
+	if finalState == nil {
+		finalState = map[string]bool{}
+	}
+	return api.UpdateChatMessageChecklist200JSONResponse{
+		MessageId:      updated.ID,
+		ChecklistState: finalState,
+	}, nil
 }

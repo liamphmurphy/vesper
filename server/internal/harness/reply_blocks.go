@@ -7,7 +7,31 @@ import (
 
 // richReplyBlocks are the fenced blocks the chat renders as something other
 // than code. They can take a while to write and call no tool.
-var richReplyBlocks = map[string]bool{"app": true, "svg-image": true, "svg-steps": true, "chart": true, "mermaid": true, "choices": true, "workflow-run": true, "recommend": true}
+var richReplyBlocks = map[string]bool{
+	"app":            true,
+	"svg-image":      true,
+	"svg-steps":      true,
+	"chart":          true,
+	"stats":          true,
+	"mermaid":        true,
+	"choices":        true,
+	"workflow-run":   true,
+	"recommend":      true,
+	"diff":           true,
+	"compare":        true,
+	"timeline":       true,
+	"tree":           true,
+	"compare-images": true,
+	"graph":          true,
+	"plot":           true,
+	"datatable":      true,
+	"code-group":     true,
+	"kv":             true,
+	"json-tree":      true,
+	"http":           true,
+	"tabs":           true,
+	"details":        true,
+}
 
 // replyScanner finds rich blocks in a reply as it streams, so the chat can say
 // what's being written before the finished message arrives. A block is seen once

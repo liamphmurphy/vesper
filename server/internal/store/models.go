@@ -375,23 +375,24 @@ type ChatImageJob struct {
 }
 
 type ChatMessage struct {
-	ID           uuid.UUID
-	SessionID    uuid.UUID
-	Seq          int64
-	Role         string
-	BodyMd       string
-	Harness      *string
-	Model        *string
-	RunID        *uuid.UUID
-	RunTurnID    *uuid.UUID
-	ContextRefs  json.RawMessage
-	Citations    json.RawMessage
-	Usage        []byte
-	CreatedAt    time.Time
-	CodeChanges  json.RawMessage
-	PersonaID    *uuid.UUID
-	GitBranch    *string
-	GitCommitSha *string
+	ID             uuid.UUID
+	SessionID      uuid.UUID
+	Seq            int64
+	Role           string
+	BodyMd         string
+	Harness        *string
+	Model          *string
+	RunID          *uuid.UUID
+	RunTurnID      *uuid.UUID
+	ContextRefs    json.RawMessage
+	Citations      json.RawMessage
+	Usage          []byte
+	CreatedAt      time.Time
+	CodeChanges    json.RawMessage
+	PersonaID      *uuid.UUID
+	GitBranch      *string
+	GitCommitSha   *string
+	ChecklistState json.RawMessage
 }
 
 type ChatParticipant struct {
