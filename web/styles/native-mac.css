@@ -89,10 +89,8 @@ html.native-mac [data-chat-dock] > * {
   pointer-events: auto;
 }
 
-/* Window-level companion (/companion) and inspector panel (/inspector-panel) WKWebViews
- * fill their native AppKit inspector host and let NSVisualEffectView Liquid Glass show through. */
-html.native-companion,
-html.native-companion body,
+/* Window-level inspector panel (/inspector-panel) WKWebView
+ * fills its native AppKit inspector host and lets NSVisualEffectView Liquid Glass show through. */
 html.native-inspector-glass,
 html.native-inspector-glass body {
   height: 100%;

@@ -63,7 +63,7 @@ enum WebViewFactory {
         return webView
     }
 
-    /// Lets the native inspector backdrop's vibrancy / Liquid Glass shine through `/companion` and `/inspector-panel`.
+    /// Lets the native inspector backdrop's vibrancy / Liquid Glass shine through `/inspector-panel`.
     private static func disableBackground(_ webView: WKWebView) {
         webView.underPageBackgroundColor = .clear
         if webView.responds(to: NSSelectorFromString("_setDrawsBackground:"))
