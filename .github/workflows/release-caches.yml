@@ -1,0 +1,84 @@
+name: release-caches
+
+# Keeps mac-release's caches warm: the guest kernel (vmlinux) and the Swift
+# release build of the app (macos/.build).
+#
+# mac-release runs on tags, and a cache saved from one tag can't be restored by
+# another, so its caches never hit: every release rebuilt the kernel (about 12
+# minutes) and the Swift app from scratch (about 15), and saved copies no later
+# run could read. Any run can restore a cache saved from the default branch, so
+# this workflow saves them from main, and mac-release only restores them.
+#
+# Each cache's key and path must stay identical to mac-release.yml's.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/microvm/kernel.Dockerfile
+      - deploy/microvm/kernel.fragment.config
+      - deploy/microvm/build-images.sh
+      - macos/Package.swift
+      - macos/Package.resolved
+      - macos/scripts/build-app.sh
+      - .github/workflows/release-caches.yml
+  # GitHub evicts a cache nobody has restored for 7 days. Restoring them twice a
+  # week keeps them for releases that come further apart, and rebuilds the Swift
+  # cache when the runner image brings a new compiler.
+  schedule:
+    - cron: "23 6 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-caches
+  cancel-in-progress: false
+
+jobs:
+  kernel:
+    # Same runner as mac-release's images job, so the cache entry matches.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      VESPER_IMAGES_DIR: ${{ github.workspace }}/.images
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: kernel
+        with:
+          path: |
+            .images/vmlinux
+            .images/vmlinux.sha256
+            .images/kernel.config
+          key: vmlinux-${{ hashFiles('deploy/microvm/kernel.Dockerfile', 'deploy/microvm/kernel.fragment.config', 'deploy/microvm/build-images.sh') }}
+      - uses: docker/setup-buildx-action@v3
+        if: steps.kernel.outputs.cache-hit != 'true'
+      - name: Build kernel
+        if: steps.kernel.outputs.cache-hit != 'true'
+        run: bash deploy/microvm/build-images.sh --kernel
+
+  # The same `swift build` that macos/scripts/build-app.sh starts with. A fresh
+  # checkout gives every source file a new mtime, so a release still recompiles
+  # Vesper's own modules; what this saves is compiling the packages it depends
+  # on. That's why the key is the package manifest and the compiler, not the
+  # sources: one entry per dependency set instead of one per commit.
+  swift:
+    # Same runner as mac-release's dmg job, so the cache entry matches.
+    runs-on: macos-26
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - name: Identify the Swift compiler
+        id: swift
+        run: echo "version=$(swift --version 2>&1 | shasum -a 256 | cut -c1-16)" >> "$GITHUB_OUTPUT"
+      - uses: actions/cache@v4
+        id: build
+        with:
+          path: macos/.build
+          key: mac-release-build-${{ runner.os }}-${{ steps.swift.outputs.version }}-${{ hashFiles('macos/Package.resolved', 'macos/Package.swift', 'macos/scripts/build-app.sh') }}
+      - name: Build the app (release)
+        if: steps.build.outputs.cache-hit != 'true'
+        working-directory: macos
+        run: swift build -c release --product Vesper
