@@ -226,6 +226,27 @@ test("buildCustomAppCapabilities surfaces configured API secrets without manifes
       requested: undefined,
     },
     {
+      key: "os.notifications",
+      label: "macOS · Notifications",
+      hint: "Post native macOS Notification Center alerts",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "os.clipboard",
+      label: "macOS · Clipboard",
+      hint: "Read and write plain text on the macOS clipboard",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "os.file_picker",
+      label: "macOS · File picker",
+      hint: "Open a macOS file dialog to import selected files",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
       key: "mcp:github:*",
       label: "MCP · GitHub",
       hint: "12 tools · connected",
@@ -275,25 +296,28 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     "app.ws:outbound",
     "app.media:download",
     "app.media:relay",
+    "os.notifications",
+    "os.clipboard",
+    "os.file_picker",
     "secret:youtube-data-api",
     "secret:missing-key",
     "nix:yt-dlp",
   ]);
-  assert.deepEqual(caps[6], {
+  assert.deepEqual(caps[9], {
     key: "secret:youtube-data-api",
     label: "Secret · YouTube Data API",
     hint: "youtube-data-api · www.googleapis.com",
     mode: "denied",
     requested: "requires_approval",
   });
-  assert.deepEqual(caps[7], {
+  assert.deepEqual(caps[10], {
     key: "secret:missing-key",
     label: "Secret · missing-key",
     hint: "Authenticated secretFetch calls using this Vesper secret",
     mode: "denied",
     requested: "requires_approval",
   });
-  assert.deepEqual(caps[8], {
+  assert.deepEqual(caps[11], {
     key: "nix:yt-dlp",
     label: "Nix · yt-dlp",
     hint: "Run nixpkgs#yt-dlp in a background tool job",

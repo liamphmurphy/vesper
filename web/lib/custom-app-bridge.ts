@@ -89,6 +89,21 @@ export function validateCustomAppSlug(slug: string): string | null {
   return null;
 }
 
+/** True when the current URL is a standalone Custom App route (`/apps/<slug>?standalone=1`). */
+export function isStandaloneCustomAppRoute(pathname: string, search: string): boolean {
+  const match = /^\/apps\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return false;
+  let slug: string;
+  try {
+    slug = decodeURIComponent(match[1]);
+  } catch {
+    return false;
+  }
+  if (validateCustomAppSlug(slug) !== null) return false;
+  const params = new URLSearchParams(search.startsWith("?") ? search.slice(1) : search);
+  return params.get("standalone") === "1";
+}
+
 function escapeCloseTag(text: string, tagName: string): string {
   return text.replace(new RegExp(`</${tagName}`, "gi"), `<\\/${tagName}`);
 }
@@ -363,11 +378,20 @@ export function resolveVideoEmbed(rawUrl: string, parentHost?: string): VideoEmb
   return null;
 }
 
+export type CustomAppOSCapability = "os.notifications" | "os.clipboard" | "os.file_picker";
+
+export type OSBridgeMessage =
+  | { channel: "vesper:custom-app"; id: string; type: "os-notify"; payload: { title: string; subtitle?: string; body?: string; silent?: boolean } }
+  | { channel: "vesper:custom-app"; id: string; type: "os-clipboard-read"; payload: Record<string, never> }
+  | { channel: "vesper:custom-app"; id: string; type: "os-clipboard-write"; payload: { text: string } }
+  | { channel: "vesper:custom-app"; id: string; type: "os-file-pick"; payload: { multiple?: boolean; extensions?: string[]; title?: string } };
+
 export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: string; type: "sql"; payload: { query: string; params: unknown[] } }
   | { channel: "vesper:custom-app"; id: string; type: "api"; payload: { method: string; path: string; body?: unknown } }
   | { channel: "vesper:custom-app"; id: string; type: "mcp"; payload: { connector: string; tool: string; arguments: Record<string, unknown> } }
   | { channel: "vesper:custom-app"; id: string; type: "image"; payload: { url: string } }
+  | OSBridgeMessage
   | { channel: "vesper:custom-app"; id: ""; type: "ws-open"; payload: { connId: string; url: string; protocols?: string[] } }
   | { channel: "vesper:custom-app"; id: ""; type: "ws-send"; payload: { connId: string; data: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "ws-close"; payload: { connId: string; code?: number; reason?: string } }
@@ -376,6 +400,166 @@ export type BridgeMessage =
   | { channel: "vesper:custom-app"; id: ""; type: "open-url"; payload: { url: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "play-video"; payload: { url: string; title?: string; theater?: boolean; sidePanel?: boolean; externalUrl?: string } }
   | { channel: "vesper:custom-app"; id: ""; type: "app-error"; payload: { message: string } };
+
+const MAX_OS_NOTIFY_TITLE_CHARS = 120;
+const MAX_OS_NOTIFY_SUBTITLE_CHARS = 120;
+const MAX_OS_NOTIFY_BODY_CHARS = 500;
+const MAX_OS_CLIPBOARD_CHARS = 1_000_000;
+const MAX_OS_FILE_PICKER_TITLE_CHARS = 120;
+const MAX_OS_FILE_PICKER_EXTENSIONS = 20;
+const FILE_EXT_RE = /^[A-Za-z0-9]{1,12}$/;
+
+export function isOSBridgeMessage(msg: BridgeMessage): msg is OSBridgeMessage {
+  return (
+    msg.type === "os-notify" ||
+    msg.type === "os-clipboard-read" ||
+    msg.type === "os-clipboard-write" ||
+    msg.type === "os-file-pick"
+  );
+}
+
+export function osCapabilityForMessage(msg: OSBridgeMessage): CustomAppOSCapability {
+  switch (msg.type) {
+    case "os-notify":
+      return "os.notifications";
+    case "os-clipboard-read":
+    case "os-clipboard-write":
+      return "os.clipboard";
+    case "os-file-pick":
+      return "os.file_picker";
+  }
+}
+
+export function formatOSApprovalSummary(msg: OSBridgeMessage): string {
+  switch (msg.type) {
+    case "os-notify":
+      return `Send macOS notification: “${msg.payload.title}”`;
+    case "os-clipboard-read":
+      return "Read plain text from the macOS clipboard";
+    case "os-clipboard-write":
+      return "Copy text to the macOS clipboard";
+    case "os-file-pick":
+      return msg.payload.multiple ? "Choose files using the macOS file picker" : "Choose a file using the macOS file picker";
+  }
+}
+
+export type NativeOSBridgeResponse = {
+  v: 1;
+  requestId: string;
+  ok: boolean;
+  data?: unknown;
+  error?: string;
+  approvalRequired?: boolean;
+  capability?: CustomAppOSCapability;
+  summary?: string;
+};
+
+interface NativeOSWindow extends EventTarget {
+  webkit?: {
+    messageHandlers?: {
+      vesperCustomAppOS?: {
+        postMessage?: (msg: unknown) => void;
+      };
+    };
+  };
+}
+
+let osBridgeSeq = 0;
+
+function resolveNativeOSWindow(override?: unknown): NativeOSWindow | undefined {
+  if (override !== undefined) return override as NativeOSWindow | undefined;
+  return (globalThis as { window?: NativeOSWindow }).window;
+}
+
+/** True when the Vesper Mac app's narrow Custom App OS capability handler is installed. */
+export function hasCustomAppOSBridge(targetWindow?: unknown): boolean {
+  const w = resolveNativeOSWindow(targetWindow);
+  return typeof w?.webkit?.messageHandlers?.vesperCustomAppOS?.postMessage === "function";
+}
+
+export function buildNativeOSBridgePayload(args: {
+  requestId: string;
+  slug: string;
+  msg: OSBridgeMessage;
+  approved?: boolean;
+}): Record<string, unknown> {
+  const base: Record<string, unknown> = {
+    v: 1,
+    requestId: args.requestId,
+    slug: args.slug,
+    approved: args.approved === true,
+  };
+  switch (args.msg.type) {
+    case "os-notify":
+      return {
+        ...base,
+        action: "notify",
+        title: args.msg.payload.title,
+        ...(args.msg.payload.subtitle ? { subtitle: args.msg.payload.subtitle } : {}),
+        ...(args.msg.payload.body ? { body: args.msg.payload.body } : {}),
+        ...(args.msg.payload.silent !== undefined ? { silent: args.msg.payload.silent } : {}),
+      };
+    case "os-clipboard-read":
+      return { ...base, action: "clipboard.read" };
+    case "os-clipboard-write":
+      return { ...base, action: "clipboard.write", text: args.msg.payload.text };
+    case "os-file-pick":
+      return {
+        ...base,
+        action: "filePicker",
+        ...(args.msg.payload.multiple !== undefined ? { multiple: args.msg.payload.multiple } : {}),
+        ...(args.msg.payload.extensions ? { extensions: args.msg.payload.extensions } : {}),
+        ...(args.msg.payload.title ? { title: args.msg.payload.title } : {}),
+      };
+  }
+}
+
+/** Sends a validated OS capability request to the native `vesperCustomAppOS` message handler. */
+export function callNativeOSBridge(args: {
+  slug: string;
+  msg: OSBridgeMessage;
+  approved?: boolean;
+  timeoutMs?: number;
+  targetWindow?: unknown;
+}): Promise<NativeOSBridgeResponse> {
+  const w = resolveNativeOSWindow(args.targetWindow);
+  const handler = w?.webkit?.messageHandlers?.vesperCustomAppOS?.postMessage;
+  if (!w || typeof handler !== "function") {
+    return Promise.reject(new Error(`macOS capability ${osCapabilityForMessage(args.msg)} requires the Vesper Mac app`));
+  }
+  const requestId = `os_${Date.now().toString(36)}_${(++osBridgeSeq).toString(36)}`;
+  const timeoutMs = args.timeoutMs ?? (args.msg.type === "os-file-pick" ? 600_000 : 15_000);
+  const payload = buildNativeOSBridgePayload({
+    requestId,
+    slug: args.slug,
+    msg: args.msg,
+    approved: args.approved,
+  });
+
+  return new Promise<NativeOSBridgeResponse>((resolve, reject) => {
+    const cleanup = () => {
+      clearTimeout(timer);
+      w.removeEventListener("vesper-custom-app-os", onReply);
+    };
+    const timer = setTimeout(() => {
+      cleanup();
+      reject(new Error("Timed out waiting for macOS capability response"));
+    }, timeoutMs);
+    const onReply = (event: Event) => {
+      const detail = (event as CustomEvent).detail as Partial<NativeOSBridgeResponse> | undefined;
+      if (!detail || typeof detail !== "object" || detail.v !== 1 || detail.requestId !== requestId) return;
+      cleanup();
+      resolve(detail as NativeOSBridgeResponse);
+    };
+    w.addEventListener("vesper-custom-app-os", onReply);
+    try {
+      handler.call(w.webkit!.messageHandlers!.vesperCustomAppOS, payload);
+    } catch (err) {
+      cleanup();
+      reject(err instanceof Error ? err : new Error(String(err)));
+    }
+  });
+}
 
 export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
   if (!raw || typeof raw !== "object") return null;
@@ -413,6 +597,59 @@ export function parseBridgeMessage(raw: unknown): BridgeMessage | null {
       const url = parseSafeHttpsUrl(payload.url);
       if (!url) return null;
       return { channel: "vesper:custom-app", id, type: "image", payload: { url } };
+    }
+    case "os-notify": {
+      if (!id || typeof payload.title !== "string") return null;
+      const title = payload.title.trim().slice(0, MAX_OS_NOTIFY_TITLE_CHARS);
+      if (!title) return null;
+      const subtitle =
+        typeof payload.subtitle === "string" ? payload.subtitle.trim().slice(0, MAX_OS_NOTIFY_SUBTITLE_CHARS) : "";
+      const body = typeof payload.body === "string" ? payload.body.trim().slice(0, MAX_OS_NOTIFY_BODY_CHARS) : "";
+      return {
+        channel: "vesper:custom-app",
+        id,
+        type: "os-notify",
+        payload: {
+          title,
+          ...(subtitle ? { subtitle } : {}),
+          ...(body ? { body } : {}),
+          ...(typeof payload.silent === "boolean" ? { silent: payload.silent } : {}),
+        },
+      };
+    }
+    case "os-clipboard-read": {
+      if (!id) return null;
+      return { channel: "vesper:custom-app", id, type: "os-clipboard-read", payload: {} };
+    }
+    case "os-clipboard-write": {
+      if (!id || typeof payload.text !== "string" || payload.text.length > MAX_OS_CLIPBOARD_CHARS) return null;
+      return { channel: "vesper:custom-app", id, type: "os-clipboard-write", payload: { text: payload.text } };
+    }
+    case "os-file-pick": {
+      if (!id) return null;
+      const rawExts = Array.isArray(payload.extensions) ? payload.extensions : [];
+      const seenExts = new Set<string>();
+      const extensions: string[] = [];
+      for (const rawExt of rawExts) {
+        if (typeof rawExt !== "string") continue;
+        const cleaned = rawExt.trim().replace(/^\.+/, "").toLowerCase();
+        if (!FILE_EXT_RE.test(cleaned) || seenExts.has(cleaned)) continue;
+        seenExts.add(cleaned);
+        extensions.push(cleaned);
+        if (extensions.length >= MAX_OS_FILE_PICKER_EXTENSIONS) break;
+      }
+      const title =
+        typeof payload.title === "string" ? payload.title.trim().slice(0, MAX_OS_FILE_PICKER_TITLE_CHARS) : "";
+      return {
+        channel: "vesper:custom-app",
+        id,
+        type: "os-file-pick",
+        payload: {
+          ...(typeof payload.multiple === "boolean" ? { multiple: payload.multiple } : {}),
+          ...(extensions.length ? { extensions } : {}),
+          ...(title ? { title } : {}),
+        },
+      };
     }
     case "ws-open": {
       const connId = typeof payload.connId === "string" ? payload.connId.trim() : "";

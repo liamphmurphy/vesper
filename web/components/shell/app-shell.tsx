@@ -1,10 +1,11 @@
 "use client";
 
-import { useRouter, useSelectedLayoutSegment } from "next/navigation";
+import { usePathname, useRouter, useSearchParams, useSelectedLayoutSegment } from "next/navigation";
 import { Suspense, useEffect, type ReactNode } from "react";
 import { useBootstrap } from "@/lib/api/hooks";
 import { useDevWorkspace } from "@/lib/api/dev-workspace-hooks";
-import { currentArea } from "@/lib/navigator";
+import { isStandaloneCustomAppRoute } from "@/lib/custom-app-bridge";
+import { onCommand, post } from "@/lib/native-shell/bridge";
 import { LiveUpdates } from "./live-updates";
 import { ViewedChatReader } from "./viewed-chat-reader";
 import { CommandMenu } from "./command-menu";
@@ -13,6 +14,7 @@ import { DocumentTitle } from "./document-title";
 import { shortcutBlocked, ShortcutsDialog } from "./shortcuts";
 import { NativeShellHost } from "./native-shell";
 import { SystemBanner } from "./system-banner";
+import { applyNativeAppearance } from "./theme";
 
 /** Global and area-scoped single-key shortcuts (DESIGN.md §6). */
 function useShortcuts() {
@@ -65,11 +67,22 @@ function SectionFade({ children }: { children: ReactNode }) {
   );
 }
 
-/**
- * Wide: a wrapping flex row with the sidebar beside the content. Below COMPACT:
- * the content over a bottom tab bar, which detail screens hide (DESIGN.md §3 Responsive).
- */
-export function AppShell({ children }: { children: ReactNode }) {
+/** Minimal native shell sync for standalone Custom App windows (appearance only, no workbench chrome). */
+function StandaloneNativeBridge({ pathname }: { pathname: string }) {
+  useEffect(() => {
+    post({ v: 1, type: "ready", path: pathname });
+  }, [pathname]);
+  useEffect(
+    () =>
+      onCommand((cmd) => {
+        if (cmd.type === "appearance") applyNativeAppearance(cmd);
+      }),
+    [],
+  );
+  return null;
+}
+
+function WorkbenchShell({ children }: { children: ReactNode }) {
   const { data } = useBootstrap();
   useShortcuts();
   return (
@@ -101,5 +114,33 @@ export function AppShell({ children }: { children: ReactNode }) {
         </Suspense>
       )}
     </div>
+  );
+}
+
+function AppShellRouter({ children }: { children: ReactNode }) {
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  if (isStandaloneCustomAppRoute(pathname, searchParams.toString())) {
+    return (
+      <div className="flex h-dvh min-h-0 overflow-hidden bg-bg text-fg">
+        <LiveUpdates />
+        <StandaloneNativeBridge pathname={pathname} />
+        <main className="flex min-h-0 min-w-0 flex-1 flex-col">{children}</main>
+      </div>
+    );
+  }
+  return <WorkbenchShell>{children}</WorkbenchShell>;
+}
+
+/**
+ * Wide: a wrapping flex row with the sidebar beside the content. Below COMPACT:
+ * the content over a bottom tab bar, which detail screens hide (DESIGN.md §3 Responsive).
+ * Standalone Custom App routes (`/apps/<slug>?standalone=1`) render chromeless without workbench chrome.
+ */
+export function AppShell({ children }: { children: ReactNode }) {
+  return (
+    <Suspense fallback={<div className="flex min-h-dvh bg-bg text-fg">{children}</div>}>
+      <AppShellRouter>{children}</AppShellRouter>
+    </Suspense>
   );
 }
