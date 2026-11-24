@@ -1,9 +1,10 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import type { LinkTarget } from "@/lib/api/client";
 import { useChatRunEvents, useChatToolApprovals, useChatTurnEvents, useResolvedLinks } from "@/lib/api/hooks";
-import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, quietFor, readableModelId, stepDetail, subagentBranches, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStatusKind, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
+import { readShowLiveThinking, subscribeShowLiveThinking } from "@/lib/chat-commands";
+import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedSummary, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, planProgress, quietFor, readableModelId, stepDetail, subagentBranches, thinkingBlocks, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStatusKind, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ThinkingBlock, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
 import { LinkTargets, WikiLink } from "@/components/domain/wikilink";
@@ -552,13 +553,223 @@ function SubagentWorkCards({ branches, now, stopping, onOpenStep }: { branches: 
  * few seconds the card switches to a contextual follow-up phase instead of repeating that call; after
  * a long silence it says so, and offers to ask what it's doing (an aside) or to stop.
  */
+/** Subscribes to the persistent `showLiveThinking` chat preference (default false). */
+export function useShowLiveThinking(): boolean {
+  return useSyncExternalStore(
+    subscribeShowLiveThinking,
+    () => readShowLiveThinking(),
+    () => false,
+  );
+}
+
+/** Inline live reasoning stream panel shown during a running turn when `showLiveThinking` is on. */
+function LiveThinkingStream({
+  blocks,
+  activeDetail,
+  isActivelyThinking,
+  thinkingDurationMs,
+}: {
+  blocks: ThinkingBlock[];
+  activeDetail?: string;
+  isActivelyThinking: boolean;
+  thinkingDurationMs: number;
+}) {
+  const [open, setOpen] = useState(true);
+  const scrollerRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!open || !scrollerRef.current) return;
+    scrollerRef.current.scrollTop = scrollerRef.current.scrollHeight;
+  }, [open, blocks.length, activeDetail]);
+
+  return (
+    <div
+      data-testid="live-thinking-stream"
+      className={`w-full max-w-[min(540px,100%)] overflow-hidden rounded-xl border bg-surface-sunken/70 transition-colors duration-(--motion-fast) ${isActivelyThinking ? "border-accent/40" : "border-border"}`}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-12"
+      >
+        <Icon name="bulb" size={13} className={isActivelyThinking ? "text-accent" : "text-fg-tertiary"} />
+        <span className={`font-medium ${isActivelyThinking ? "text-fg" : "text-fg-secondary"}`}>
+          {isActivelyThinking ? "Thinking…" : "Thought"}
+        </span>
+        {thinkingDurationMs >= 1000 && (
+          <span className="font-mono text-11 tabular-nums text-fg-tertiary">{formatSpan(thinkingDurationMs)}</span>
+        )}
+        {!open && activeDetail && (
+          <span className="min-w-0 flex-1 truncate text-fg-tertiary">· {activeDetail}</span>
+        )}
+        <span aria-hidden className="ml-auto flex-none text-10 text-fg-tertiary">{open ? "▴" : "▾"}</span>
+      </button>
+      {open && (
+        <div
+          ref={scrollerRef}
+          className="max-h-[220px] overflow-y-auto border-t border-border-subtle px-3 py-2 text-12 leading-relaxed text-fg-secondary"
+        >
+          <div className="flex flex-col gap-2">
+            {blocks.map((block, idx) => (
+              <div key={block.seq} className={idx > 0 ? "border-t border-border-subtle pt-2" : undefined}>
+                <p className="whitespace-pre-wrap">{block.text}</p>
+              </div>
+            ))}
+            {isActivelyThinking && (
+              <p className="flex items-center gap-1.5 italic text-fg-tertiary">
+                <span aria-hidden className="size-1.5 flex-none rounded-full bg-accent motion-safe:animate-pulse" />
+                <span className="truncate">{activeDetail || "Reasoning…"}</span>
+              </p>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/** Collapsible disclosure block for a finished turn's reasoning blocks when `showLiveThinking` is on. */
+function FinishedThinkingDisclosure({
+  blocks,
+  thinkingDurationMs,
+}: {
+  blocks: ThinkingBlock[];
+  thinkingDurationMs?: number;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = thinkingDurationMs !== undefined && thinkingDurationMs >= 1000
+    ? `Thought for ${formatSpan(thinkingDurationMs)}`
+    : "Thinking";
+
+  return (
+    <div
+      data-testid="finished-thinking-disclosure"
+      className={`w-full max-w-[min(720px,100%)] rounded-xl border border-border bg-surface-sunken/60 ${open ? "" : "sm:w-fit sm:min-w-[240px]"}`}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-12"
+      >
+        <Icon name="bulb" size={13} className="text-fg-tertiary" />
+        <span className="font-medium text-fg-secondary">{label}</span>
+        {blocks.length > 1 && <span className="text-11 text-fg-tertiary">· {blocks.length} blocks</span>}
+        <span className="ml-auto flex-none pl-3 text-11 text-fg-tertiary">{open ? "Hide ‹" : "Show ›"}</span>
+      </button>
+      {open && (
+        <div className="max-h-[280px] overflow-y-auto border-t border-border-subtle px-3.5 py-2.5 text-12 leading-relaxed text-fg-secondary">
+          <div className="flex flex-col gap-2.5">
+            {blocks.map((block, idx) => (
+              <div key={block.seq} className={idx > 0 ? "border-t border-border-subtle pt-2.5" : undefined}>
+                <p className="whitespace-pre-wrap">{block.text}</p>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/**
+ * Compact pinned bar above the chat composer when a running turn has a `TodoWrite` / `TaskCreate` plan.
+ * Shows progress (`N/M steps`, plus failed count if any) with an expandable checklist (~7 visible rows,
+ * scrollable if more) and auto-hides once the turn completes.
+ */
+export function PinnedPlanBar({ runId, since }: { runId?: string; since?: string }) {
+  const q = useChatRunEvents(runId);
+  const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
+  const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
+  const { steps, planned } = useMemo(() => chatSteps(calls, undefined, { activity }), [calls, activity]);
+  const progress = useMemo(() => planProgress(steps, planned), [steps, planned]);
+  const [open, setOpen] = useState(false);
+
+  if (!progress) return null;
+
+  const doneCount = progress.completed + progress.failed;
+  const pct = progress.total > 0 ? Math.min(100, Math.round((doneCount / progress.total) * 100)) : 0;
+
+  return (
+    <div
+      data-testid="pinned-plan-bar"
+      className={`w-full overflow-hidden rounded-xl border bg-surface transition-colors duration-(--motion-fast) ${progress.failed > 0 ? "border-[var(--state-blocked)]/40" : "border-border"}`}
+    >
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center gap-2 px-3 py-1.5 text-left text-12 hover:bg-hover/60"
+      >
+        <Icon
+          name={progress.activeStep ? "list" : progress.failed > 0 ? "alert" : "check"}
+          size={13}
+          className={progress.failed > 0 && !progress.activeStep ? "text-pill-blocked-fg" : progress.activeStep ? "text-accent" : "text-state-done"}
+        />
+        <span data-testid="pinned-plan-progress" className="flex-none font-mono text-11 font-semibold tabular-nums text-fg">
+          {progress.completed}/{progress.total} {progress.total === 1 ? "step" : "steps"}
+        </span>
+        {progress.failed > 0 && (
+          <span className="flex-none font-medium tabular-nums text-pill-blocked-fg">
+            · {progress.failed} failed
+          </span>
+        )}
+        {!open && progress.activeStep && (
+          <span className="min-w-0 flex-1 truncate text-fg-secondary">
+            — {progress.activeStep.title}
+          </span>
+        )}
+        <span aria-hidden className="ml-auto flex flex-none items-center gap-2">
+          <span className="h-1 w-9 overflow-hidden rounded-full bg-border-subtle">
+            <span
+              className={`block h-full rounded-full transition-all duration-(--motion-fast) ${progress.failed > 0 ? "bg-state-blocked" : "bg-accent"}`}
+              style={{ width: `${pct}%` }}
+            />
+          </span>
+          <span className="text-10 text-fg-tertiary">{open ? "▾" : "▴"}</span>
+        </span>
+      </button>
+      {open && (
+        <ol
+          data-testid="pinned-plan-checklist"
+          className="flex max-h-[196px] flex-col gap-1 overflow-y-auto border-t border-border-subtle px-3 py-2 text-12"
+        >
+          {progress.steps.map((step) => (
+            <li key={step.key} data-step-state={step.state} className="flex min-w-0 items-center gap-2 py-0.5">
+              <StepGlyph step={step} />
+              <span
+                className={`min-w-0 truncate ${
+                  step.state === "active"
+                    ? "font-medium text-fg"
+                    : step.state === "failed"
+                      ? "text-pill-blocked-fg"
+                      : step.state === "done"
+                        ? "text-fg-secondary"
+                        : "text-fg-tertiary"
+                }`}
+              >
+                {step.title}
+              </span>
+              {step.state === "active" && step.detail && (
+                <span className="min-w-0 truncate text-11 text-fg-tertiary">· {step.detail}</span>
+              )}
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
+
 export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, folded = false, onOpenStep, onAsk, onStop }: { chatId: string; disabled?: boolean; runId?: string; since?: string; persona: PersonaLook; stopping?: boolean; folded?: boolean; onOpenStep?: (key: string) => void; onAsk?: () => void; onStop?: () => void }) {
   const q = useChatRunEvents(runId);
   const now = useNow();
+  const showLiveThinking = useShowLiveThinking();
   const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
   const branches = useMemo(() => subagentBranches(q.data, since), [q.data, since]);
   const clock = useMemo(() => turnClock(q.data, since), [q.data, since]);
   const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
+  const blocks = useMemo(() => thinkingBlocks(q.data, since), [q.data, since]);
   const pulse = turnPulse(calls, clock, now);
   const status = useMemo(() => chatStatus(calls, pulse.between, activity, branches), [calls, pulse.between, activity, branches]);
   const notes = useMemo(() => turnNotes(q.data, since), [q.data, since]);
@@ -584,12 +795,14 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   const current = steps.find((s) => s.state === "active") ?? steps.findLast((s) => s.state !== "planned");
   const characterSvg = usePersonaCharacterSvg(persona);
   const characterState = characterStateForStatus(scene.current, { awaiting, stopping });
+  const phaseTimerMs = pulse.phaseElapsed ?? pulse.elapsed;
+  const showThinkingStream = showLiveThinking && !stopping && (blocks.length > 0 || pulse.phase === "thinking");
   // The chat's persona companion acts out what this card shows; it goes back to idle when the card goes.
   useEffect(() => {
     setCompanionWork(chatId, characterState);
   }, [chatId, characterState]);
   useEffect(() => () => setCompanionWork(chatId, undefined), [chatId]);
-  return (
+  const card = (
     <div data-testid="chat-status-card" data-folded={collapsed || undefined} data-awaiting={awaiting || undefined} data-quiet={quiet || undefined}
       className={`@container w-full max-w-[min(540px,100%)] overflow-hidden rounded-[13px] border bg-surface transition-[border-color,box-shadow] duration-(--motion-slow) ${awaiting ? "border-pill-human-fg/60 shadow-[0_0_0_3px_var(--pill-human-bg)]" : quiet ? "border-[var(--state-progress)]/50" : "border-border"}`}>
       <div className="flex items-center gap-3.5 px-3 py-2.5">
@@ -612,15 +825,22 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
           <PersonaAvatar persona={persona} size={24} state={characterState} />
         </span>
         <div className="flex min-w-0 flex-1 flex-col justify-center gap-1">
-          <p role="status" aria-live="polite" className={`truncate text-14 font-medium leading-[1.2] ${awaiting ? "text-pill-human-fg" : "text-fg"}`} data-testid="chat-status">
-            {stopping
-              ? "Stopping…"
-              : awaiting
-                ? `${persona.name} needs your approval`
-                : quiet
-                  ? `${persona.name} has been quiet for ${quietFor(pulse.idle ?? 0)}`
-                  : `${persona.name} is ${status.phrase}…`}
-          </p>
+          <div className="flex min-w-0 items-baseline gap-1.5">
+            <p role="status" aria-live="polite" className={`min-w-0 truncate text-14 font-medium leading-[1.2] ${awaiting ? "text-pill-human-fg" : "text-fg"}`} data-testid="chat-status">
+              {stopping
+                ? "Stopping…"
+                : awaiting
+                  ? `${persona.name} needs your approval`
+                  : quiet
+                    ? `${persona.name} has been quiet for ${quietFor(pulse.idle ?? 0)}`
+                    : `${persona.name} is ${status.phrase}…`}
+            </p>
+            {!stopping && !awaiting && !quiet && phaseTimerMs !== undefined && (
+              <span data-testid="chat-phase-timer" className="flex-none font-mono text-12 tabular-nums text-fg-tertiary">
+                {formatSpan(phaseTimerMs)}
+              </span>
+            )}
+          </div>
           <p aria-hidden data-testid="chat-pulse" className="flex min-w-0 items-center gap-1.5 truncate text-12 leading-[1.2] text-fg-tertiary tabular-nums">
             {awaiting ? (
               "Paused until you decide"
@@ -693,6 +913,18 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
       )}
     </div>
   );
+  if (!showThinkingStream) return card;
+  return (
+    <div className="flex w-full max-w-[min(540px,100%)] flex-col gap-2">
+      {card}
+      <LiveThinkingStream
+        blocks={blocks}
+        activeDetail={activity?.phase === "thinking" ? activity.detail : undefined}
+        isActivelyThinking={pulse.phase === "thinking"}
+        thinkingDurationMs={pulse.thinkingDurationMs}
+      />
+    </div>
+  );
 }
 
 /**
@@ -722,8 +954,6 @@ export function ChatPresence({ runId, since, persona, dotOnly = false, onOpen }:
  */
 export const OpenTurnStep = createContext<((key: string) => void) | undefined>(undefined);
 
-const OUTCOME_VERB: Record<TurnOutcome, string> = { done: "Worked for", failed: "Failed after", stopped: "Stopped after" };
-
 /** Every step of a finished turn: the person opened the strip to see them, so nothing folds. */
 const showAll = (steps: ChatStep[]) => ({ earlier: 0, shown: steps, later: 0 });
 /** A failed turn opens on where it failed: the steps before the first failure fold into a count. */
@@ -734,46 +964,55 @@ const fromFailure = (steps: ChatStep[]) => {
 
 /**
  * What the live card leaves behind once its turn ends: a one-line strip above the reply
- * ("Worked for 2m 14s · 7 steps") that opens to the steps the card showed, all finished.
+ * ("Worked for 2m 14s · Thought for 32s · 7 steps") that opens to the steps the card showed, all finished,
+ * plus an inline collapsible thinking disclosure block when `showLiveThinking` is enabled.
  * A failed turn opens on its failed step; a stopped one says so. `replyId` names the reply in
  * the Activity tab, so "View reasoning" can open there; turns without a reply have no entry.
  */
 export function TurnSteps({ runId, outcome, since, until, end, replyId }: { runId?: string; outcome: TurnOutcome; since?: string; until?: string; end?: number; replyId?: string }) {
   const q = useChatTurnEvents(runId, since, until);
   const turn = useMemo(() => finishedTurn(q.data, outcome, since, until, end), [q.data, outcome, since, until, end]);
+  const showLiveThinking = useShowLiveThinking();
   const openStep = useContext(OpenTurnStep);
   const [open, setOpen] = useState(outcome === "failed");
-  if (turn.steps.length === 0) return null;
-  const count = `${turn.steps.length} ${turn.steps.length === 1 ? "step" : "steps"}`;
-  const took = turn.duration !== undefined && turn.duration >= 1000 ? ` ${formatSpan(turn.duration)}` : "";
+  const showThinking = showLiveThinking && turn.thinkingBlocks.length > 0;
+  if (turn.steps.length === 0 && !showThinking) return null;
   const view = replyOpen(openStep, replyId);
+  const summary = finishedSummary(outcome, turn.steps.length, turn.duration, turn.thinkingDurationMs);
   return (
     <>
-      <div data-testid="turn-steps" data-outcome={outcome}
-        className={`w-full max-w-[min(720px,100%)] rounded-xl border bg-surface ${outcome === "failed" ? "border-[var(--state-blocked)]/40" : "border-border"} ${open ? "" : "sm:w-fit sm:min-w-[320px]"}`}>
-        <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-13">
-          {outcome === "stopped" ? (
-            <span aria-hidden className="grid size-4 flex-none place-items-center rounded-full bg-fg-tertiary text-surface"><Icon name="pause" size={10} /></span>
-          ) : (
-            <StepGlyph step={{ state: outcome === "failed" ? "failed" : "done" }} />
-          )}
-          <span data-testid="turn-steps-summary" className="min-w-0 flex-1 truncate text-fg-secondary">
-            {took ? `${OUTCOME_VERB[outcome]}${took}` : OUTCOME_VERB[outcome].split(" ")[0]} · {count}
-          </span>
-          <span className="flex-none pl-3 text-12 text-fg-tertiary">{open ? "Hide steps ‹" : "Show steps ›"}</span>
-        </button>
-        {open && (
-          <>
-            <StepRail steps={turn.steps} now={0} fold={outcome === "failed" ? fromFailure : showAll} onOpenStep={view} />
-            {view && (
-              <button type="button" onClick={() => view(turn.steps[0].key)} className="px-3.5 pb-2.5 text-12 text-fg-tertiary hover:text-fg-secondary">
-                All tool calls in Activity ›
-              </button>
+      {showThinking && (
+        <FinishedThinkingDisclosure blocks={turn.thinkingBlocks} thinkingDurationMs={turn.thinkingDurationMs} />
+      )}
+      {turn.steps.length > 0 && (
+        <>
+          <div data-testid="turn-steps" data-outcome={outcome}
+            className={`w-full max-w-[min(720px,100%)] rounded-xl border bg-surface ${outcome === "failed" ? "border-[var(--state-blocked)]/40" : "border-border"} ${open ? "" : "sm:w-fit sm:min-w-[320px]"}`}>
+            <button type="button" aria-expanded={open} onClick={() => setOpen((o) => !o)} className="flex w-full items-center gap-2.5 px-3.5 py-2 text-left text-13">
+              {outcome === "stopped" ? (
+                <span aria-hidden className="grid size-4 flex-none place-items-center rounded-full bg-fg-tertiary text-surface"><Icon name="pause" size={10} /></span>
+              ) : (
+                <StepGlyph step={{ state: outcome === "failed" ? "failed" : "done" }} />
+              )}
+              <span data-testid="turn-steps-summary" className="min-w-0 flex-1 truncate text-fg-secondary">
+                {summary}
+              </span>
+              <span className="flex-none pl-3 text-12 text-fg-tertiary">{open ? "Hide steps ‹" : "Show steps ›"}</span>
+            </button>
+            {open && (
+              <>
+                <StepRail steps={turn.steps} now={0} fold={outcome === "failed" ? fromFailure : showAll} onOpenStep={view} />
+                {view && (
+                  <button type="button" onClick={() => view(turn.steps[0].key)} className="px-3.5 pb-2.5 text-12 text-fg-tertiary hover:text-fg-secondary">
+                    All tool calls in Activity ›
+                  </button>
+                )}
+              </>
             )}
-          </>
-        )}
-      </div>
-      {outcome === "stopped" && <p className="text-12 italic text-fg-tertiary">Stopped before it replied.</p>}
+          </div>
+          {outcome === "stopped" && <p className="text-12 italic text-fg-tertiary">Stopped before it replied.</p>}
+        </>
+      )}
     </>
   );
 }
@@ -785,9 +1024,18 @@ const replyOpen = (openStep: ((key: string) => void) | undefined, replyId: strin
 /** Only show "last activity Xs ago" once the turn has been idle long enough that it's useful signal, not per-second churn. */
 const IDLE_HINT_MS = 10_000;
 
-/** "● Step 2 of 3 · 4m 12s" (plus "· last activity 14s ago" after a brief pause). */
+/** "● Step 2 of 3 · Total 4m 12s · Thought for 32s" (plus "· last activity 14s ago" after a brief pause). */
 function PulseLine({ planned, work, pulse, heard, stopping }: { planned?: string; work: number; pulse: TurnPulse; heard: boolean; stopping?: boolean }) {
-  const parts = [planned, work > 1 && `${work} steps`, pulse.elapsed !== undefined && formatSpan(pulse.elapsed)].filter(Boolean);
+  const showTotal = pulse.elapsed !== undefined && (pulse.phaseElapsed === undefined || pulse.elapsed - pulse.phaseElapsed >= 1000);
+  const sameAsLiveThinking =
+    pulse.phase === "thinking" && pulse.phaseElapsed !== undefined && Math.abs(pulse.thinkingDurationMs - pulse.phaseElapsed) < 1000;
+  const showThinking = pulse.thinkingDurationMs >= 1000 && !sameAsLiveThinking;
+  const parts = [
+    planned,
+    work > 1 && `${work} steps`,
+    showTotal && (pulse.phaseElapsed !== undefined ? `Total ${formatSpan(pulse.elapsed!)}` : formatSpan(pulse.elapsed!)),
+    showThinking && `Thought for ${formatSpan(pulse.thinkingDurationMs)}`,
+  ].filter(Boolean);
   const showIdle = heard && pulse.idle !== undefined && pulse.idle >= IDLE_HINT_MS;
   return (
     <>

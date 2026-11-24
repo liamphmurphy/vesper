@@ -14,6 +14,7 @@ struct ChatComposerSubmission: Sendable {
 struct ChatComposerView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
 
     let chatId: String?
     let session: API.ChatSession?
@@ -44,6 +45,9 @@ struct ChatComposerView: View {
     /// Text to draft without sending; `onPrefillApplied` gets its token once it is in the composer.
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
+    /// Active TodoWrite/TaskCreate plan progress pinned above the composer while a turn runs.
+    var livePlanProgress: ChatPlanProgress? = nil
+    var livePlanTurnKey: String = ""
     /// When true, omits the bottom-docked bar chrome (outer padding, background, and top divider)
     /// so the composer can sit inline inside a scrollable screen such as a Space hub.
     var inline: Bool = false
@@ -112,6 +116,13 @@ struct ChatComposerView: View {
                 ChatRunningStatusStrip(
                     activeTicketRuns: activeTicketRuns,
                     onOpenRun: { runId in context.navigate("/runs/\(runId)") }
+                )
+            }
+
+            if isRunning, let livePlanProgress {
+                ChatPinnedPlanChecklistBar(
+                    progress: livePlanProgress,
+                    turnKey: livePlanTurnKey
                 )
             }
 
@@ -991,6 +1002,23 @@ struct ChatComposerView: View {
                         applyValue: $0.name
                     )
                 }
+        case "thinking":
+            let options: [(value: String, subtitle: String)] = [
+                ("on", "Stream thinking blocks live in the transcript"),
+                ("off", "Keep full reasoning in the Activity tab"),
+            ]
+            return options
+                .filter { q.isEmpty || $0.value.contains(q) }
+                .map { opt in
+                    ChatCompletionItem(
+                        id: "thinking:\(opt.value)",
+                        title: opt.value,
+                        subtitle: opt.subtitle,
+                        badge: (opt.value == "on") == showLiveThinking ? "current" : nil,
+                        personaId: nil,
+                        applyValue: opt.value
+                    )
+                }
         default:
             return []
         }
@@ -1052,6 +1080,18 @@ struct ChatComposerView: View {
         case "outline":
             clearComposer()
             onOpenOutline?()
+        case "thinking":
+            switch ChatSlashCommandLogic.resolveThinkingToggle(raw: cmd.arg, current: showLiveThinking) {
+            case .set(let next):
+                showLiveThinking = next
+                clearComposer()
+                context.showToast(ToastItemModel(
+                    id: "chat.live-thinking",
+                    title: next ? "Live thinking enabled" : "Live thinking hidden"
+                ))
+            case .error(let msg):
+                errorMessage = msg
+            }
         case "compact":
             let focus = cmd.arg.isEmpty ? nil : cmd.arg
             clearComposer()

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { CHAT_COMMANDS, CREATE_KINDS, commandMenu, designRequest, literalBody, parseCommand, resolveCompareTarget } from "./chat-commands.ts";
+import { CHAT_COMMANDS, CREATE_KINDS, SHOW_LIVE_THINKING_KEY, commandMenu, designRequest, literalBody, parseCommand, readShowLiveThinking, resolveCompareTarget, resolveThinkingToggle, writeShowLiveThinking } from "./chat-commands.ts";
 
 test("parseCommand reads a one-line /command and its argument", () => {
   assert.deepEqual(parseCommand("/stop"), { name: "stop", arg: "" });
@@ -106,4 +106,31 @@ test("compact parses with or without focus and leaves argument menu closed", () 
   });
   assert.equal(commandMenu("/compact "), null);
   assert.equal(commandMenu("/compact keep"), null);
+});
+
+test("/thinking offers on/off completions, resolves toggle/on/off, and persists preference with default false", () => {
+  assert.deepEqual(commandMenu("/th"), { stage: "command", query: "th" });
+  assert.deepEqual(commandMenu("/thinking "), { stage: "arg", name: "thinking", query: "" });
+  assert.deepEqual(commandMenu("/thinking o"), { stage: "arg", name: "thinking", query: "o" });
+  assert.deepEqual(parseCommand("/thinking"), { name: "thinking", arg: "" });
+  assert.deepEqual(parseCommand("/thinking on"), { name: "thinking", arg: "on" });
+  assert.deepEqual(parseCommand("/thinking OFF"), { name: "thinking", arg: "OFF" });
+
+  assert.deepEqual(resolveThinkingToggle("", false), { next: true });
+  assert.deepEqual(resolveThinkingToggle("", true), { next: false });
+  assert.deepEqual(resolveThinkingToggle("on", false), { next: true });
+  assert.deepEqual(resolveThinkingToggle("off", true), { next: false });
+  assert.deepEqual(resolveThinkingToggle("bogus", false), { error: "Usage: /thinking [on|off]" });
+
+  const map = new Map();
+  const storage = {
+    getItem: (k) => map.get(k) ?? null,
+    setItem: (k, v) => { map.set(k, v); },
+  };
+  assert.equal(readShowLiveThinking(storage), false);
+  writeShowLiveThinking(true, storage);
+  assert.equal(map.get(SHOW_LIVE_THINKING_KEY), "true");
+  assert.equal(readShowLiveThinking(storage), true);
+  writeShowLiveThinking(false, storage);
+  assert.equal(readShowLiveThinking(storage), false);
 });

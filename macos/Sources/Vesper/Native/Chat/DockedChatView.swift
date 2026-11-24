@@ -26,6 +26,8 @@ private enum DockedChatRequests {
 struct DockedChatView<ContextChips: View>: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @Environment(\.vesperWindowVisible) private var windowVisible
+    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
 
     let chatId: String?
     let sections: [DockedChatSection]
@@ -54,6 +56,7 @@ struct DockedChatView<ContextChips: View>: View {
     @State private var selectedRepoUrl: String?
     @State private var watchedKeys: [QueryKey] = []
     @State private var wasRunning = false
+    @State private var lastDockFetch = Date()
 
     private var sessionRequest: APIRequest<API.ChatSession>? {
         chatId.map { API.getChat(id: $0) }
@@ -88,6 +91,18 @@ struct DockedChatView<ContextChips: View>: View {
         }()
         let allKnownChats = sections.flatMap(\.chats)
         let currentSummary = allKnownChats.first(where: { $0.id == chatId }) ?? session
+        let liveSince = ChatTurnActivity.runningSince(for: messages)
+        let livePlanProgress: ChatPlanProgress? = {
+            guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
+            let events = store.entry(API.listRunEvents(id: runId)).data?.events ?? []
+            guard !events.isEmpty else { return nil }
+            let activity = ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: liveSince)
+            return ChatTurnActivity.planProgress(steps: activity.steps, planned: activity.planned)
+        }()
+        let longTurnUsageRefreshKey: String = {
+            guard session?.state == .running, windowVisible, AppPowerState.shared.isActive else { return "" }
+            return "\(chatId ?? "")|\(session?.currentRunId ?? "")|\(liveSince ?? "")"
+        }()
 
         VStack(spacing: 0) {
             if chatId != nil || !allKnownChats.isEmpty {
@@ -156,7 +171,9 @@ struct DockedChatView<ContextChips: View>: View {
                             onOpenFullChat(chatId)
                         },
                         prefill: composerPrefill,
-                        onPrefillApplied: onComposerPrefillApplied
+                        onPrefillApplied: onComposerPrefillApplied,
+                        livePlanProgress: livePlanProgress,
+                        livePlanTurnKey: "\(chatId)|\(liveSince ?? "")"
                     )
                 }
                 .padding(.top, 4)
@@ -166,6 +183,31 @@ struct DockedChatView<ContextChips: View>: View {
         }
         .task(id: "\(chatId ?? "")|\(session?.currentRunId ?? "")|\(session?.state.rawValue ?? "")") {
             syncWatches(session: session)
+        }
+        .task(id: longTurnUsageRefreshKey) {
+            guard !longTurnUsageRefreshKey.isEmpty else { return }
+            let intervalMs = ChatTurnActivity.longTurnUsageRefreshIntervalMs
+            let sinceMs = liveSince.map { Int((APIDate.epoch($0) * 1000).rounded()) }
+            let nowMs = Int((Date().timeIntervalSince1970 * 1000).rounded())
+            var initialDelayMs = ChatTurnActivity.longTurnUsageRefreshDelayMs(
+                sinceEpochMs: sinceMs,
+                nowEpochMs: nowMs,
+                intervalMs: intervalMs
+            )
+            if initialDelayMs == 0 {
+                let sinceLastFetchMs = Int((Date().timeIntervalSince(lastDockFetch) * 1000).rounded())
+                if sinceLastFetchMs < intervalMs {
+                    initialDelayMs = max(0, intervalMs - sinceLastFetchMs)
+                }
+            }
+            if initialDelayMs > 0 {
+                try? await Task.sleep(for: .milliseconds(initialDelayMs))
+            }
+            while !Task.isCancelled {
+                lastDockFetch = Date()
+                _ = await context.store.refetch(DockedChatRequests.dock)
+                try? await Task.sleep(for: .milliseconds(intervalMs))
+            }
         }
         .onChange(of: session?.state == .running) { _, isRunning in
             if wasRunning && !isRunning {
@@ -234,6 +276,19 @@ struct DockedChatView<ContextChips: View>: View {
             .fixedSize(horizontal: false, vertical: true)
 
             Spacer(minLength: 4)
+
+            Button {
+                showLiveThinking.toggle()
+            } label: {
+                Image(systemName: "brain.head.profile")
+                    .font(.system(size: 12))
+                    .foregroundStyle(showLiveThinking ? p.accent : p.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .background(showLiveThinking ? p.selected : Color.clear, in: RoundedRectangle(cornerRadius: 5))
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(showLiveThinking ? "Hide live thinking (/thinking off)" : "Show live thinking (/thinking on)")
 
             Button {
                 onNewChat()

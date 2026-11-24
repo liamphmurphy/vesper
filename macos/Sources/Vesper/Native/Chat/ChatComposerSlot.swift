@@ -32,6 +32,8 @@ struct ChatComposerSlot: View {
     var onOpenOutline: (@MainActor () -> Void)? = nil
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
+    var livePlanProgress: ChatPlanProgress? = nil
+    var livePlanTurnKey: String = ""
     var inline: Bool = false
     var placeholderOverride: String? = nil
 
@@ -62,6 +64,8 @@ struct ChatComposerSlot: View {
             onOpenOutline: onOpenOutline,
             prefill: prefill,
             onPrefillApplied: onPrefillApplied,
+            livePlanProgress: livePlanProgress,
+            livePlanTurnKey: livePlanTurnKey,
             inline: inline,
             placeholderOverride: placeholderOverride
         )

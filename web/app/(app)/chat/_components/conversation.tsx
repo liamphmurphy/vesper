@@ -35,7 +35,8 @@ import {
   useStartSecondOpinion,
   useSteerChat,
 } from "@/lib/api/hooks";
-import { DOC_DRAFT, designRequest, resolveCompareTarget, type CreateKind } from "@/lib/chat-commands";
+import { DOC_DRAFT, designRequest, resolveCompareTarget, resolveThinkingToggle, writeShowLiveThinking, type CreateKind } from "@/lib/chat-commands";
+import { toast } from "@/lib/toast";
 import { asidesInWindow, commandSendMode, cycleSendMode, SEND_MODE_ENTER, SEND_MODE_HINT, SEND_MODE_LABEL, sendModeAction, sendModePlaceholder, type SendMode } from "@/lib/send-mode";
 import { SEND_TONE, SendModeSwitch } from "./send-modes";
 import { FollowupTray } from "./followups";
@@ -63,7 +64,7 @@ import { linkedItems, openItem, type LinkedItem } from "@/lib/chat-panels";
 import { LinkedRow, OpenLinkedItem } from "./item-panel";
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import { addChip, chipFromRef, chipFromTarget, parseAttach, toContextRefs, typedText, type Chip } from "@/lib/chat-context";
-import { chatTitle, endedTurns, needsSwitchConfirm, runningSince, turnWindows, type EndedTurn, type TurnWindow } from "@/lib/chat-ui";
+import { LONG_TURN_USAGE_REFRESH_INTERVAL_MS, chatTitle, endedTurns, longTurnUsageRefreshDelayMs, needsSwitchConfirm, runningSince, turnWindows, type EndedTurn, type TurnWindow } from "@/lib/chat-ui";
 import { cx } from "@/lib/cx";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -99,7 +100,7 @@ import { summaryUrlsForTurns } from "@/lib/chat-recommend";
 import { hostOf } from "@/lib/web-search";
 import { timelineTime } from "@/lib/format";
 import { ModelEffortPicker, effortLabel, modelEffortSummary, modelEfforts, modelLabel, sameSelection, type Effort, type Selection } from "./model-picker";
-import { ChatPresence, ChatStatus, InterimReply, OpenTurnStep, RunActivity, TurnSteps, TurnToolCalls } from "./activity";
+import { ChatPresence, ChatStatus, InterimReply, OpenTurnStep, PinnedPlanBar, RunActivity, TurnSteps, TurnToolCalls, useShowLiveThinking } from "./activity";
 import { MemoryNotices } from "./memory-notices";
 import { DropOverlay, ReplyAttachments, SentAttachments, useAttachments, useFileDrop } from "./attachments";
 import { useSnippets } from "./snippets";
@@ -721,6 +722,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const bookmarkMessage = useSetChatMessageBookmark(id);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const showLiveThinking = useShowLiveThinking();
   const [forkTarget, setForkTarget] = useState<ForkTarget | null>(null);
   const boot = useBootstrap();
   const personas = usePersonas();
@@ -951,6 +953,26 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   // The running turn starts after the newest message, which may be a reply, not
   // the person's: a persona handing on, or the image follow-up.
   const since = runningSince(list) ?? lastUser?.created_at;
+  // While a turn runs past 60s, periodically refresh harness usage/quota so popovers stay fresh
+  // mid-turn instead of waiting for completion. Cleared immediately on turn end or unmount.
+  useEffect(() => {
+    if (!running) return;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const refreshUsage = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void qc.refetchQueries({ queryKey: ["dock"] });
+    };
+    const sinceMs = since ? Date.parse(since) : undefined;
+    const initialDelay = longTurnUsageRefreshDelayMs(sinceMs, Date.now(), LONG_TURN_USAGE_REFRESH_INTERVAL_MS);
+    const timeoutId = setTimeout(() => {
+      refreshUsage();
+      intervalId = setInterval(refreshUsage, LONG_TURN_USAGE_REFRESH_INTERVAL_MS);
+    }, initialDelay);
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId !== undefined) clearInterval(intervalId);
+    };
+  }, [running, since, qc]);
   const drop = useFileDrop(files.add, !!c && !c.archived && !locked);
   // From the playground: Send to chat's report and screenshot, or an ask to map its API.
   const addFiles = useRef(files.add);
@@ -1453,6 +1475,23 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         return (c.speaker ?? c.persona)?.capabilities?.code
           ? (savedRepos.data ?? []).map((r) => ({ name: r.name, run: () => selectRepo.mutate(r.url) }))
           : [];
+      case "thinking":
+        return [
+          {
+            name: "on",
+            run: () => {
+              writeShowLiveThinking(true);
+              toast({ title: "Live thinking enabled" });
+            },
+          },
+          {
+            name: "off",
+            run: () => {
+              writeShowLiveThinking(false);
+              toast({ title: "Live thinking hidden" });
+            },
+          },
+        ];
       default:
         return [];
     }
@@ -1557,6 +1596,20 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           >
             <Icon name="list" size={14} />
             {(list?.some((m) => m.bookmarked) ?? false) && (
+              <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+          <button
+            type="button"
+            aria-pressed={showLiveThinking}
+            aria-label="Live thinking"
+            title={showLiveThinking ? "Hide live thinking (/thinking off)" : "Stream live thinking inline (/thinking on)"}
+            data-testid="toggle-live-thinking"
+            onClick={() => writeShowLiveThinking(!showLiveThinking)}
+            className={cx("relative grid size-7 flex-none place-items-center rounded-md", showLiveThinking ? "bg-selected text-accent" : "text-fg-tertiary hover:bg-hover hover:text-fg")}
+          >
+            <Icon name="bulb" size={14} />
+            {showLiveThinking && (
               <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-accent" />
             )}
           </button>
@@ -1964,6 +2017,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </div>
           ) : (
             <>
+            {running && (
+              <PinnedPlanBar
+                key={`${c.current_run_id ?? ""}:${since ?? ""}`}
+                runId={c.current_run_id}
+                since={since}
+              />
+            )}
             {context?.composer}
             <DraftComposer
               draft={draft}
@@ -2019,6 +2079,12 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                   model: res.option.model,
                   body: res.question || undefined,
                 });
+              },
+              thinking: (arg: string) => {
+                const res = resolveThinkingToggle(arg, showLiveThinking);
+                if ("error" in res) return res.error;
+                writeShowLiveThinking(res.next);
+                toast({ title: res.next ? "Live thinking enabled" : "Live thinking hidden" });
               },
               repository: (arg) => { if (!(c.speaker ?? c.persona)?.capabilities?.code) return "This persona cannot write code."; if (arg) selectRepo.mutate(arg); else setRepoSignal((n) => n + 1); }, hasWorkflows: published.length > 0 }}
               personas={personas.data?.personas ?? []}
