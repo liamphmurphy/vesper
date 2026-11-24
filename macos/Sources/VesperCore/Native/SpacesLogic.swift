@@ -375,4 +375,151 @@ public enum SpacesLogic {
             return nil
         }
     }
+
+    // MARK: - Knowledge Link Autocomplete
+
+    public struct KnowledgeLinkSuggestion: Sendable, Equatable, Hashable, Identifiable {
+        public var id: String { "\(kind.rawValue):\(path)" }
+        public var kind: API.ChatSpaceKnowledgeLinkKind
+        public var path: String
+        public var title: String
+        public var subtitle: String?
+        public var pageCount: Int?
+
+        public init(
+            kind: API.ChatSpaceKnowledgeLinkKind,
+            path: String,
+            title: String,
+            subtitle: String? = nil,
+            pageCount: Int? = nil
+        ) {
+            self.kind = kind
+            self.path = path
+            self.title = title
+            self.subtitle = subtitle
+            self.pageCount = pageCount
+        }
+    }
+
+    /// Filters and ranks Knowledge folder or page suggestions for the Space Knowledge-link input.
+    public static func knowledgeLinkSuggestions(
+        query: String,
+        kind: API.ChatSpaceKnowledgeLinkKind,
+        pages: [KnowledgePageRow],
+        existingLinks: [API.ChatSpaceKnowledgeLink] = [],
+        limit: Int = 8
+    ) -> [KnowledgeLinkSuggestion] {
+        guard limit > 0 else { return [] }
+        let trimmed = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedQuery = KnowledgeShellLogic.normalizeFolderPath(trimmed)
+        let qLower = (normalizedQuery.isEmpty ? trimmed : normalizedQuery).lowercased()
+        let existingPaths = Set(
+            existingLinks
+                .filter { $0.kind == kind }
+                .map { KnowledgeShellLogic.normalizeFolderPath($0.path).lowercased() }
+        )
+
+        if kind == .folder {
+            let tree = KnowledgeShellLogic.buildTree(from: pages, prioritizeInbox: false)
+            var folders: [(path: String, name: String, count: Int)] = []
+            func walk(_ node: KnowledgeTreeFolder) {
+                for child in node.folders {
+                    folders.append((path: child.path, name: child.name, count: child.count))
+                    walk(child)
+                }
+            }
+            walk(tree)
+
+            var scored: [(rank: Int, path: String, count: Int)] = []
+            for f in folders {
+                let pathLower = f.path.lowercased()
+                if existingPaths.contains(pathLower) { continue }
+                if qLower.isEmpty {
+                    scored.append((0, f.path, f.count))
+                    continue
+                }
+                let nameLower = f.name.lowercased()
+                let rank: Int
+                if pathLower == qLower || nameLower == qLower {
+                    rank = 0
+                } else if nameLower.hasPrefix(qLower) {
+                    rank = 1
+                } else if pathLower.hasPrefix(qLower) {
+                    rank = 2
+                } else if nameLower.contains(qLower) {
+                    rank = 3
+                } else if pathLower.contains(qLower) {
+                    rank = 4
+                } else {
+                    continue
+                }
+                scored.append((rank, f.path, f.count))
+            }
+
+            scored.sort { lhs, rhs in
+                if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+                let cmp = lhs.path.localizedStandardCompare(rhs.path)
+                return cmp == .orderedSame ? lhs.path < rhs.path : cmp == .orderedAscending
+            }
+
+            return scored.prefix(limit).map { item in
+                KnowledgeLinkSuggestion(
+                    kind: .folder,
+                    path: item.path,
+                    title: "\(item.path)/",
+                    subtitle: "\(item.count) page\(item.count == 1 ? "" : "s")",
+                    pageCount: item.count
+                )
+            }
+        }
+
+        // Page suggestions
+        var seenPaths = Set<String>()
+        var scored: [(rank: Int, updatedAt: String, path: String, title: String, parent: String)] = []
+        for page in pages {
+            let normPath = KnowledgeShellLogic.normalizeFolderPath(page.path)
+            guard !normPath.isEmpty else { continue }
+            let pathLower = normPath.lowercased()
+            if existingPaths.contains(pathLower) || !seenPaths.insert(pathLower).inserted { continue }
+
+            let trimmedTitle = page.title.trimmingCharacters(in: .whitespacesAndNewlines)
+            let displayTitle = trimmedTitle.isEmpty ? KnowledgeShellLogic.nameOf(normPath) : trimmedTitle
+            let titleLower = displayTitle.lowercased()
+            let parent = KnowledgeShellLogic.parentOf(normPath)
+
+            let rank: Int
+            if qLower.isEmpty {
+                rank = 0
+            } else if titleLower == qLower || pathLower == qLower {
+                rank = 0
+            } else if titleLower.hasPrefix(qLower) {
+                rank = 1
+            } else if pathLower.hasPrefix(qLower) {
+                rank = 2
+            } else if titleLower.contains(qLower) {
+                rank = 3
+            } else if pathLower.contains(qLower) {
+                rank = 4
+            } else {
+                continue
+            }
+            scored.append((rank, page.updatedAt, normPath, displayTitle, parent))
+        }
+
+        scored.sort { lhs, rhs in
+            if lhs.rank != rhs.rank { return lhs.rank < rhs.rank }
+            if lhs.updatedAt != rhs.updatedAt { return lhs.updatedAt > rhs.updatedAt }
+            let cmp = lhs.path.localizedStandardCompare(rhs.path)
+            return cmp == .orderedSame ? lhs.path < rhs.path : cmp == .orderedAscending
+        }
+
+        return scored.prefix(limit).map { item in
+            KnowledgeLinkSuggestion(
+                kind: .page,
+                path: item.path,
+                title: item.title,
+                subtitle: item.parent.isEmpty ? nil : item.parent
+            )
+        }
+    }
 }

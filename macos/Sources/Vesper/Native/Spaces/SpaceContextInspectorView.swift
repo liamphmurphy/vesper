@@ -24,8 +24,15 @@ struct SpaceContextInspectorView: View {
     @State private var newKnowledgePinned = false
     @State private var savingKnowledge = false
     @State private var knowledgeError: String?
+    @State private var knowledgePages: [KnowledgePageRow] = []
+    @State private var loadingKnowledgePages = false
+    @State private var selectedSuggestionIndex = 0
+    @State private var suggestionsDismissed = false
+    @State private var suppressNextPathChange = false
+    @FocusState private var knowledgePathFocused: Bool
 
     private static let personasRequest = API.listPersonas()
+    private static let knowledgePagesRequest = KnowledgeAPI.listPages(includeAgent: true, limit: 200)
 
     private var spaceRequest: APIRequest<API.ChatSpace> { API.getChatSpace(spaceId: spaceId) }
     private var reposRequest: APIRequest<API.ListChatSpaceRepositoriesResponse> { API.listChatSpaceRepositories(spaceId: spaceId) }
@@ -63,6 +70,10 @@ struct SpaceContextInspectorView: View {
             .padding(14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: addingKnowledge) {
+            guard addingKnowledge else { return }
+            await loadKnowledgePages()
+        }
     }
 
     // MARK: - Persona, Memory & Instructions
@@ -242,6 +253,11 @@ struct SpaceContextInspectorView: View {
                 Button {
                     addingKnowledge.toggle()
                     knowledgeError = nil
+                    if addingKnowledge {
+                        suggestionsDismissed = false
+                        selectedSuggestionIndex = 0
+                        knowledgePathFocused = true
+                    }
                 } label: {
                     Image(systemName: addingKnowledge ? "xmark" : "plus")
                         .font(.system(size: 11, weight: .medium))
@@ -321,6 +337,21 @@ struct SpaceContextInspectorView: View {
             }
 
             if addingKnowledge {
+                let catalogPages = knowledgePages.isEmpty
+                    ? (context.store.entry(Self.knowledgePagesRequest).data?.rows ?? [])
+                    : knowledgePages
+                let suggestions = SpacesLogic.knowledgeLinkSuggestions(
+                    query: newKnowledgePath,
+                    kind: newKnowledgeKind,
+                    pages: catalogPages,
+                    existingLinks: links
+                )
+                let trimmedPath = KnowledgeShellLogic.normalizeFolderPath(
+                    newKnowledgePath.trimmingCharacters(in: .whitespacesAndNewlines)
+                )
+                let showSuggestions = !suggestionsDismissed && !suggestions.isEmpty
+                let activeIdx = suggestions.isEmpty ? 0 : min(max(0, selectedSuggestionIndex), suggestions.count - 1)
+
                 VStack(alignment: .leading, spacing: 6) {
                     Picker("Kind", selection: $newKnowledgeKind) {
                         Text("Folder").tag(API.ChatSpaceKnowledgeLinkKind.folder)
@@ -328,14 +359,110 @@ struct SpaceContextInspectorView: View {
                     }
                     .pickerStyle(.segmented)
                     .controlSize(.small)
+                    .onChange(of: newKnowledgeKind) { _, _ in
+                        selectedSuggestionIndex = 0
+                        suggestionsDismissed = false
+                        knowledgeError = nil
+                    }
 
                     TextField(
-                        newKnowledgeKind == .folder ? "Folder path (e.g. Umbra)" : "Page path (e.g. Umbra/Campaign Bible)",
+                        newKnowledgeKind == .folder ? "Search folders (e.g. Umbra)" : "Search pages (e.g. Umbra/Campaign Bible)",
                         text: $newKnowledgePath
                     )
                     .textFieldStyle(.roundedBorder)
                     .font(.system(size: 12))
-                    .onSubmit { addKnowledgeLink() }
+                    .focused($knowledgePathFocused)
+                    .onChange(of: newKnowledgePath) { _, _ in
+                        if suppressNextPathChange {
+                            suppressNextPathChange = false
+                            return
+                        }
+                        selectedSuggestionIndex = 0
+                        suggestionsDismissed = false
+                        knowledgeError = nil
+                    }
+                    .onKeyPress(.downArrow) {
+                        guard showSuggestions else { return .ignored }
+                        selectedSuggestionIndex = (activeIdx + 1) % suggestions.count
+                        return .handled
+                    }
+                    .onKeyPress(.upArrow) {
+                        guard showSuggestions else { return .ignored }
+                        selectedSuggestionIndex = (activeIdx - 1 + suggestions.count) % suggestions.count
+                        return .handled
+                    }
+                    .onKeyPress(.tab) {
+                        guard showSuggestions else { return .ignored }
+                        applyKnowledgeSuggestion(suggestions[activeIdx])
+                        return .handled
+                    }
+                    .onKeyPress(.escape) {
+                        if showSuggestions {
+                            suggestionsDismissed = true
+                            return .handled
+                        }
+                        return .ignored
+                    }
+                    .onSubmit {
+                        if showSuggestions, !trimmedPath.isEmpty,
+                           suggestions[activeIdx].path != trimmedPath {
+                            applyKnowledgeSuggestion(suggestions[activeIdx])
+                        } else {
+                            addKnowledgeLink()
+                        }
+                    }
+
+                    if showSuggestions {
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 2) {
+                                ForEach(Array(suggestions.enumerated()), id: \.element.id) { idx, item in
+                                    Button {
+                                        applyKnowledgeSuggestion(item)
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: item.kind == .folder ? "folder" : "doc.text")
+                                                .font(.system(size: 10.5))
+                                                .foregroundStyle(idx == activeIdx ? p.accent : p.secondaryText)
+                                                .frame(width: 13)
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(item.title)
+                                                    .font(.system(size: 11.5, weight: .medium))
+                                                    .foregroundStyle(p.text)
+                                                    .lineLimit(1)
+                                                if let subtitle = item.subtitle, !subtitle.isEmpty {
+                                                    Text(subtitle)
+                                                        .font(.system(size: 10))
+                                                        .foregroundStyle(p.tertiaryText)
+                                                        .lineLimit(1)
+                                                }
+                                            }
+                                            Spacer(minLength: 4)
+                                        }
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 4)
+                                        .background(
+                                            idx == activeIdx ? p.accent.opacity(0.14) : Color.clear,
+                                            in: RoundedRectangle(cornerRadius: 5)
+                                        )
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                            .padding(3)
+                        }
+                        .frame(maxHeight: 176)
+                        .background(theme.swiftUIColor("surface-sunken", fallback: p.background), in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+                    } else if loadingKnowledgePages && catalogPages.isEmpty {
+                        Text("Loading Knowledge\u{2026}")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(p.tertiaryText)
+                    } else if !trimmedPath.isEmpty && suggestions.isEmpty && !suggestionsDismissed {
+                        Text("No matching \(newKnowledgeKind == .folder ? "folders" : "pages") — you can still link this path.")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(p.tertiaryText)
+                    }
 
                     HStack {
                         if newKnowledgeKind == .page {
@@ -541,6 +668,43 @@ struct SpaceContextInspectorView: View {
             } catch {
                 context.showToast(ToastItemModel(id: "space.repo.del", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
             }
+        }
+    }
+
+    private func applyKnowledgeSuggestion(_ suggestion: SpacesLogic.KnowledgeLinkSuggestion) {
+        suppressNextPathChange = true
+        newKnowledgePath = suggestion.path
+        suggestionsDismissed = true
+        selectedSuggestionIndex = 0
+        knowledgeError = nil
+        knowledgePathFocused = true
+    }
+
+    private func loadKnowledgePages() async {
+        guard let client = context.store.client else { return }
+        loadingKnowledgePages = true
+        defer { loadingKnowledgePages = false }
+        var loaded: [KnowledgePageRow] = []
+        var offset = 0
+        while offset <= 20_000 {
+            guard !Task.isCancelled else { return }
+            do {
+                let table = try await client.send(
+                    KnowledgeAPI.listPages(includeAgent: true, limit: 200, offset: offset)
+                )
+                if offset == 0 {
+                    context.store.setData(table, for: Self.knowledgePagesRequest)
+                }
+                loaded.append(contentsOf: table.rows)
+                if !table.hasMore || table.rows.isEmpty { break }
+                offset += 200
+            } catch {
+                break
+            }
+        }
+        guard !Task.isCancelled else { return }
+        if !loaded.isEmpty || knowledgePages.isEmpty {
+            knowledgePages = loaded
         }
     }
 
