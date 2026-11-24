@@ -174,4 +174,15 @@ final class SpacesLogicTests: XCTestCase {
         let sorted = SpacesLogic.sortSpacesByActivity([older, newest, fallback])
         XCTAssertEqual(sorted.map(\.name), ["Vesper", "Umbra", "Alpha"])
     }
+
+    func testSpaceChatRequestsIncludeAllPersonas() {
+        XCTAssertEqual(
+            SpacesLogic.spaceChatsRequest(spaceId: "sp-1").pathAndQuery,
+            "/api/v1/chats?persona_id=all&space=sp-1"
+        )
+        XCTAssertEqual(
+            SpacesLogic.allSpaceChatsRequest.pathAndQuery,
+            "/api/v1/chats?persona_id=all&space=all"
+        )
+    }
 }

@@ -450,11 +450,11 @@ func (s *Server) ListChats(ctx context.Context, req api.ListChatsRequestObject) 
 	if offset < 0 || offset > 100000 {
 		return nil, apperr.Invalid("offset", "must be between 0 and 100000")
 	}
-	filter, personaID, err := s.chatPersonaFilter(ctx, req.Params.PersonaId)
+	spaceFilter, spaceID, err := s.chatSpaceFilter(ctx, req.Params.Space)
 	if err != nil {
 		return nil, err
 	}
-	spaceFilter, spaceID, err := s.chatSpaceFilter(ctx, req.Params.Space)
+	filter, personaID, err := s.chatPersonaFilter(ctx, req.Params.PersonaId, spaceFilter != "none")
 	if err != nil {
 		return nil, err
 	}
@@ -482,11 +482,15 @@ func (s *Server) ListChats(ctx context.Context, req api.ListChatsRequestObject) 
 }
 
 // chatPersonaFilter resolves GET /chats?persona_id= to ListChatsForUser's
-// filter: `all`, `none`, or one of the caller's personas. Omitted means the
-// caller's default persona, or `none` when they have no default.
-func (s *Server) chatPersonaFilter(ctx context.Context, raw *string) (string, *uuid.UUID, error) {
+// filter: `all`, `none`, or one of the caller's personas. Omitted means `all`
+// when listing chats in a space (or across all spaces), and otherwise the
+// caller's default persona (or `none` when they have no default).
+func (s *Server) chatPersonaFilter(ctx context.Context, raw *string, inSpace bool) (string, *uuid.UUID, error) {
 	o := personaOwner(ctx)
 	if raw == nil {
+		if inSpace {
+			return "all", nil, nil
+		}
 		p, err := s.personas().Default(ctx, o)
 		if err != nil || p == nil {
 			return "none", nil, err

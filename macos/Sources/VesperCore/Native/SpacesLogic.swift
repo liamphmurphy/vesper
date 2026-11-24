@@ -13,6 +13,17 @@ public enum SpacesLogic {
     public static let pageChatsLimit = 5
     public static let maxInstructions = 4000
 
+    /// Request for every chat in a space regardless of persona.
+    public static func spaceChatsRequest(spaceId: String) -> APIRequest<API.ListChatsResponse> {
+        API.listChats(personaId: "all", space: spaceId)
+    }
+
+    /// Request for every chat across spaces regardless of persona.
+    public static let allSpaceChatsRequest: APIRequest<API.ListChatsResponse> = API.listChats(
+        personaId: "all",
+        space: "all"
+    )
+
     public static func colorHex(for color: API.ChatSpaceColor) -> String {
         switch color {
         case .green: "#34D399"

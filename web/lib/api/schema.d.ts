@@ -14672,8 +14672,9 @@ export interface operations {
                  * @description Only chats with this persona (as host or a participant who joined
                  *     it): a persona id of the caller's, `all`
                  *     for every persona, or `none` for chats without one (the built-in
-                 *     Assistant). Omitted: the caller's default persona, or `none` when
-                 *     they have no default. 422 for an unknown id or another person's.
+                 *     Assistant). Omitted: `all` when `space` is a space id or `all`,
+                 *     otherwise the caller's default persona (or `none` when they have
+                 *     no default). 422 for an unknown id or another person's.
                  */
                 persona_id?: string;
                 /**

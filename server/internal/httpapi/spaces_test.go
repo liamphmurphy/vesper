@@ -253,3 +253,52 @@ func TestMemoriesBySpace(t *testing.T) {
 	}
 	e.invalid("GET", "/memories?space_id="+uuid.NewString(), nil, "space_id", "unknown space")
 }
+
+// Listing a space's chats (or all spaces) without persona_id returns chats from
+// every persona even after switching the default persona; explicit persona_id
+// still filters, and plain GET /chats keeps defaulting to the default persona.
+func TestListSpaceChatsIgnoresDefaultPersona(t *testing.T) {
+	e := newChatEnv(t)
+	alice := e.want("POST", "/personas", map[string]any{"name": "Alice", "is_default": true}, http.StatusCreated)["id"].(string)
+	bob := e.want("POST", "/personas", map[string]any{"name": "Bob"}, http.StatusCreated)["id"].(string)
+	carol := e.want("POST", "/personas", map[string]any{"name": "Carol"}, http.StatusCreated)["id"].(string)
+	spaceID := e.want("POST", "/chat-spaces", map[string]any{"name": "Vesper"}, http.StatusCreated)["id"].(string)
+
+	inSpaceAlice := e.want("POST", "/chats", map[string]any{"space_id": spaceID, "persona_id": alice}, http.StatusCreated)["id"].(string)
+	inSpaceCarol := e.want("POST", "/chats", map[string]any{"space_id": spaceID, "persona_id": carol}, http.StatusCreated)["id"].(string)
+	plainAlice := e.want("POST", "/chats", map[string]any{"persona_id": alice}, http.StatusCreated)["id"].(string)
+	plainBob := e.want("POST", "/chats", map[string]any{"persona_id": bob}, http.StatusCreated)["id"].(string)
+
+	// Switch the default persona to Bob, who has zero chats in the space.
+	e.want("POST", "/personas/"+bob+"/default", nil, http.StatusOK)
+
+	// Omitting persona_id for a specific space still returns all of its chats.
+	inSpace := ids(e.want("GET", "/chats?space="+spaceID, nil, http.StatusOK)["chats"], "id")
+	if len(inSpace) != 2 || !slices.Contains(inSpace, inSpaceAlice) || !slices.Contains(inSpace, inSpaceCarol) {
+		t.Fatalf("GET /chats?space=%s = %v, want [%s %s]", spaceID, inSpace, inSpaceAlice, inSpaceCarol)
+	}
+
+	// Omitting persona_id for space=all returns chats across every persona.
+	allSpaces := ids(e.want("GET", "/chats?space=all", nil, http.StatusOK)["chats"], "id")
+	for _, want := range []string{inSpaceAlice, inSpaceCarol, plainAlice, plainBob} {
+		if !slices.Contains(allSpaces, want) {
+			t.Fatalf("GET /chats?space=all missing %s in %v", want, allSpaces)
+		}
+	}
+
+	// Explicit persona_id inside a space still filters to that persona.
+	onlyAlice := ids(e.want("GET", "/chats?space="+spaceID+"&persona_id="+alice, nil, http.StatusOK)["chats"], "id")
+	if len(onlyAlice) != 1 || onlyAlice[0] != inSpaceAlice {
+		t.Fatalf("GET /chats?space=%s&persona_id=%s = %v, want [%s]", spaceID, alice, onlyAlice, inSpaceAlice)
+	}
+	onlyBob := ids(e.want("GET", "/chats?space="+spaceID+"&persona_id="+bob, nil, http.StatusOK)["chats"], "id")
+	if len(onlyBob) != 0 {
+		t.Fatalf("GET /chats?space=%s&persona_id=%s = %v, want empty", spaceID, bob, onlyBob)
+	}
+
+	// Plain GET /chats (outside spaces) still defaults to the current default persona.
+	plain := ids(e.want("GET", "/chats", nil, http.StatusOK)["chats"], "id")
+	if len(plain) != 1 || plain[0] != plainBob {
+		t.Fatalf("GET /chats = %v, want only default persona's chat [%s]", plain, plainBob)
+	}
+}
