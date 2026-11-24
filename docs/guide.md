@@ -163,17 +163,22 @@ A company proxy that inspects HTTPS re-signs every connection with its own root
 certificate. Your Mac trusts it; agent VMs don't, so turns fail with errors like
 `self-signed certificate in certificate chain`. Give the VMs that root:
 
-1. Export it as PEM:
+1. Gather the root and any intermediate certificates (`.pem`, `.crt`, or `.cer`
+   in either PEM or binary DER format), or export them from Keychain as PEM:
    `security find-certificate -a -c Zscaler -p /Library/Keychains/System.keychain > ~/zscaler-root.pem`
    (change `Zscaler` to the certificate's name in Keychain Access for another proxy).
-2. Choose that file in **Settings → Power & Stack → Corporate root certificate**,
-   or set `RUNNER_EXTRA_CA_FILE` to its absolute path, then restart the local stack.
+2. Choose one or more certificate files in **Settings → Power & Stack → Corporate root certificates**,
+   or set `RUNNER_EXTRA_CA_FILE` to their colon-separated absolute paths, then restart the local stack.
 
-Each VM adds it to its system bundle when it boots, and turns get
-`NODE_EXTRA_CA_CERTS`, `CODEX_CA_CERTIFICATE` and `REQUESTS_CA_BUNDLE`. A file
-holding anything but certificates is refused; the app logs why and starts the
-runner without it. Containers that a turn starts with Docker keep their own trust
-store. This only fixes trust: a proxy that blocks a host still blocks it.
+Each VM (including utility VMs used for harness sign-in, model listing, and
+usage checks) adds the certificates to its system bundle when it boots, writes
+`ssl-cert-file` into `/etc/nix/nix.conf` for `nix` and `nix-daemon`, and sets
+`NODE_EXTRA_CA_CERTS`, `CODEX_CA_CERTIFICATE`, `REQUESTS_CA_BUNDLE`,
+`SSL_CERT_FILE`, `NIX_SSL_CERT_FILE`, `CURL_CA_BUNDLE`, and `GIT_SSL_CAINFO`. A
+file holding anything other than certificates is refused; the app logs why and
+starts the runner without extra roots. Containers that a turn starts with Docker
+keep their own trust store. This only fixes trust: a proxy that blocks a host
+still blocks it.
 
 ### Open a run's code
 

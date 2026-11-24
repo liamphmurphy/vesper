@@ -434,9 +434,11 @@ func runAppMicroVMRunner(
 	// A bad file shouldn't take the runner down with it: turns still reach
 	// every host the proxy doesn't inspect, and the log says why the rest fail.
 	var extraCA []byte
-	if cfg.Runner.ExtraCAFile != "" {
-		if extraCA, err = runner.LoadExtraCACerts(cfg.Runner.ExtraCAFile); err != nil {
+	if len(cfg.Runner.ExtraCAFiles) > 0 {
+		if extraCA, err = runner.LoadExtraCACerts(cfg.Runner.ExtraCAFiles...); err != nil {
 			log.Error("vesper app extra CA certificates ignored", "err", err)
+		} else {
+			log.Info("vesper app extra CA certificates loaded", "files", len(cfg.Runner.ExtraCAFiles), "bytes", len(extraCA))
 		}
 	}
 

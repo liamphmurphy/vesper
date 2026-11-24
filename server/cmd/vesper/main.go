@@ -365,8 +365,8 @@ func runRunner(ctx context.Context, log *slog.Logger) error {
 	switch rc.Backend {
 	case "microvm":
 		var extraCA []byte
-		if rc.ExtraCAFile != "" {
-			if extraCA, err = runner.LoadExtraCACerts(rc.ExtraCAFile); err != nil {
+		if len(rc.ExtraCAFiles) > 0 {
+			if extraCA, err = runner.LoadExtraCACerts(rc.ExtraCAFiles...); err != nil {
 				return err
 			}
 		}

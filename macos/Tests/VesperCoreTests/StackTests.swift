@@ -151,10 +151,15 @@ final class StackLaunchTests: XCTestCase {
         XCTAssertNil(none["RUNNER_MAX_CONCURRENT"])
     }
 
-    func testExtraCaFileSetsRunnerVariableUnlessTheEnvironmentHasOne() {
-        let launch = StackLaunch(resources: resources(), dataDirectory: URL(fileURLWithPath: "/data"), secretsKey: "k", extraCaFile: "/Users/me/ca.pem")
-        XCTAssertEqual(launch.environment(base: [:])["RUNNER_EXTRA_CA_FILE"], "/Users/me/ca.pem")
-        XCTAssertEqual(launch.environment(base: ["RUNNER_EXTRA_CA_FILE": "/etc/corp.pem"])["RUNNER_EXTRA_CA_FILE"], "/etc/corp.pem")
+    func testExtraCaFilesSetsRunnerVariableUnlessTheEnvironmentHasOne() {
+        let single = StackLaunch(resources: resources(), dataDirectory: URL(fileURLWithPath: "/data"), secretsKey: "k", extraCaFiles: ["/Users/me/ca.pem"])
+        XCTAssertEqual(single.environment(base: [:])["RUNNER_EXTRA_CA_FILE"], "/Users/me/ca.pem")
+        let multi = StackLaunch(
+            resources: resources(), dataDirectory: URL(fileURLWithPath: "/data"), secretsKey: "k",
+            extraCaFiles: ["/Users/me/ca.pem", "/Users/me/int.cer", "/Users/me/corp.crt"]
+        )
+        XCTAssertEqual(multi.environment(base: [:])["RUNNER_EXTRA_CA_FILE"], "/Users/me/ca.pem:/Users/me/int.cer:/Users/me/corp.crt")
+        XCTAssertEqual(multi.environment(base: ["RUNNER_EXTRA_CA_FILE": "/etc/corp.pem"])["RUNNER_EXTRA_CA_FILE"], "/etc/corp.pem")
         let none = StackLaunch(resources: resources(), dataDirectory: URL(fileURLWithPath: "/data"), secretsKey: "k").environment(base: [:])
         XCTAssertNil(none["RUNNER_EXTRA_CA_FILE"])
     }

@@ -57,6 +57,7 @@ func (b *MicroVM) bootUtilityVM(ctx context.Context) (microvm.VM, *microvm.Egres
 		_ = eg.Close()
 		return nil, nil, err
 	}
+	b.trustNewVM(ctx, vm.Client())
 	return vm, eg, nil
 }
 
@@ -68,6 +69,7 @@ func (b *MicroVM) utilityBaseEnv(extra map[string]string) map[string]string {
 		"TMPDIR":  "/tmp",
 		"PATH":    homePath + "/.nix-profile/bin:/usr/local/go/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/nix/var/nix/profiles/default/bin",
 	}
+	b.applyTrustEnv(env)
 	for k, v := range extra {
 		env[k] = v
 	}
