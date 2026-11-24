@@ -38,7 +38,8 @@ cleanup() {
 }
 trap cleanup EXIT
 
-if ! docker image inspect "${base_image}" >/dev/null 2>&1; then
+# Only the rootfs is built from the base image; a kernel-only build skips it.
+if [[ "${build_rootfs}" = true ]] && ! docker image inspect "${base_image}" >/dev/null 2>&1; then
   echo "Building base image ${base_image}..."
   docker build --platform linux/arm64 -t "${base_image}" "${repo_root}/deploy/agent-base"
 fi

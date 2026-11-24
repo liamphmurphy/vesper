@@ -1,0 +1,54 @@
+name: kernel-cache
+
+# Keeps the guest kernel (vmlinux) cached for mac-release.
+#
+# mac-release runs on tags, and a cache saved from one tag can't be restored by
+# another, so its kernel cache never hit: every release rebuilt the kernel
+# (about 12 minutes). Any run can restore a cache saved from the default branch,
+# so this workflow saves it from main, and mac-release only restores it.
+#
+# The key must stay identical to the one in mac-release.yml.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - deploy/microvm/kernel.Dockerfile
+      - deploy/microvm/kernel.fragment.config
+      - deploy/microvm/build-images.sh
+      - .github/workflows/kernel-cache.yml
+  # GitHub evicts a cache nobody has restored for 7 days. Restoring it twice a
+  # week keeps it for releases that come further apart.
+  schedule:
+    - cron: "23 6 * * 1,4"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-cache
+  cancel-in-progress: false
+
+jobs:
+  kernel:
+    # Same runner as mac-release's images job, so the cache entry matches.
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 60
+    env:
+      VESPER_IMAGES_DIR: ${{ github.workspace }}/.images
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        id: kernel
+        with:
+          path: |
+            .images/vmlinux
+            .images/vmlinux.sha256
+            .images/kernel.config
+          key: vmlinux-${{ hashFiles('deploy/microvm/kernel.Dockerfile', 'deploy/microvm/kernel.fragment.config', 'deploy/microvm/build-images.sh') }}
+      - uses: docker/setup-buildx-action@v3
+        if: steps.kernel.outputs.cache-hit != 'true'
+      - name: Build kernel
+        if: steps.kernel.outputs.cache-hit != 'true'
+        run: bash deploy/microvm/build-images.sh --kernel

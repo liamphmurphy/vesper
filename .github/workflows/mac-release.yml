@@ -77,7 +77,11 @@ jobs:
           cache-dependency-path: server/go.sum
       - uses: docker/setup-buildx-action@v3
       # The kernel only changes with its Dockerfile, config fragment or version.
-      - uses: actions/cache@v4
+      # Restore only: a cache saved from a tag can't be read by the next tag, so
+      # kernel-cache.yml saves it from main. Keep the key identical to the one
+      # there. On a miss (say, a tag pushed before that run finished) the
+      # kernel is built below as before.
+      - uses: actions/cache/restore@v4
         with:
           path: |
             .images/vmlinux
