@@ -142,6 +142,9 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
             shellHost?.closeCommandPalette()
         case .quickLook(let items, let index):
             shellHost?.showQuickLook(items: items, index: index)
+        case .openCustomAppWindow(let slug):
+            guard AppsHomeLogic.validateSlug(slug) == nil else { return }
+            shellHost?.openCustomAppWindow(slug: slug)
         }
     }
 
@@ -291,6 +294,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .commandPaletteOpen(let req): "commandPaletteOpen \(req?.scope?.rawValue ?? "all")"
         case .commandPaletteClose: "commandPaletteClose"
         case .quickLook(let items, let idx): "quickLook \(items.count) items index=\(idx.map(String.init) ?? "nil")"
+        case .openCustomAppWindow(let slug): "openCustomAppWindow \(slug)"
         }
     }
 }

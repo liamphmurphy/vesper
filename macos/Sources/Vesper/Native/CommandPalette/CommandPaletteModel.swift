@@ -75,6 +75,7 @@ struct PaletteRow: Identifiable {
     var message: CommandPaletteMessageMatch?
     var moreOf: CommandPaletteType?
     var facet: String?
+    var customAppSlug: String?
     var isChildMessage: Bool { message != nil }
     var perform: (() -> Void)?
 }
@@ -105,6 +106,7 @@ final class CommandPaletteModel {
     @ObservationIgnored var onOpenSettings: ((_ destination: SettingsDestination?) -> Void)?
     @ObservationIgnored var onShowShortcuts: (() -> Void)?
     @ObservationIgnored var onNewWindow: (() -> Void)?
+    @ObservationIgnored var onOpenCustomAppWindow: ((_ slug: String) -> Void)?
     @ObservationIgnored var onToggleSidebar: (() -> Void)?
     @ObservationIgnored var onToggleInspector: (() -> Void)?
     @ObservationIgnored var onToast: ((_ title: String, _ tone: ToastTone) -> Void)?
@@ -312,6 +314,11 @@ final class CommandPaletteModel {
         return store?.entry(API.getWikiPage(path: path)).data
     }
 
+    var currentCustomApp: API.CustomAppDetail? {
+        guard case .customApp(let slug) = pageContext else { return nil }
+        return store?.entry(API.getCustomApp(slug: slug)).data
+    }
+
     var counts: [CommandPaletteType: Int] {
         var out = CommandPaletteLogic.typeCounts(allSearchResponse?.counts)
         let appCount = matchingApps.count
@@ -432,6 +439,8 @@ final class CommandPaletteModel {
             store.load(KnowledgeAPI.getPage(id: id))
         case .wiki(let path):
             store.load(API.getWikiPage(path: path))
+        case .customApp(let slug):
+            store.load(API.getCustomApp(slug: slug))
         case .artifact, .none:
             break
         }
@@ -774,9 +783,15 @@ final class CommandPaletteModel {
             return
         }
         guard let row = selectedRow else { return }
-        if attach, let attachRef = row.attach {
-            attachToChat(attachRef, recent: row.recent)
-            return
+        if attach {
+            if let attachRef = row.attach {
+                attachToChat(attachRef, recent: row.recent)
+                return
+            }
+            if let slug = row.customAppSlug {
+                openCustomAppStandalone(slug: slug, recent: row.recent)
+                return
+            }
         }
         activate(row, newTab: newTab)
     }
@@ -869,6 +884,13 @@ final class CommandPaletteModel {
             list.append(PalettePreviewAction(id: "attach", label: "Attach to chat", keys: "⌥↵", tone: .secondary) { [weak self] in
                 self?.attachToChat(attach, recent: row.recent)
             })
+        } else if let slug = row.customAppSlug {
+            list.append(PalettePreviewAction(id: "standalone", label: "Standalone window", keys: "⌥↵", tone: .secondary) { [weak self] in
+                self?.openCustomAppStandalone(slug: slug, recent: row.recent)
+            })
+            list.append(PalettePreviewAction(id: "new-tab", label: "New tab", keys: "⌘↵", tone: .secondary) { [weak self] in
+                self?.activate(row, newTab: true)
+            })
         } else if row.href != nil {
             list.append(PalettePreviewAction(id: "new-tab", label: "New tab", keys: "⌘↵", tone: .secondary) { [weak self] in
                 self?.activate(row, newTab: true)
@@ -890,6 +912,12 @@ final class CommandPaletteModel {
     private func rememberProject(_ key: String) {
         rememberedProject = key
         UserDefaults.standard.set(key, forKey: Self.rememberedProjectKey)
+    }
+
+    private func openCustomAppStandalone(slug: String, recent recentItem: CommandPaletteLink? = nil) {
+        if let recentItem { remember(recentItem) }
+        close(restoreFocus: false)
+        onOpenCustomAppWindow?(slug)
     }
 
     private func attachToChat(_ attach: PaletteAttachRef, recent recentItem: CommandPaletteLink?) {
@@ -1081,6 +1109,12 @@ final class CommandPaletteModel {
                 } else {
                     preview = .item(label: item.kind, title: item.title, detail: item.meta, updatedAt: nil)
                 }
+                let customAppSlug: String?
+                if case .customApp(let slug) = CommandPaletteLogic.pageContext(path: item.href) {
+                    customAppSlug = slug
+                } else {
+                    customAppSlug = nil
+                }
                 return PaletteRow(
                     id: "recent-\(item.href)",
                     title: item.title,
@@ -1088,7 +1122,8 @@ final class CommandPaletteModel {
                     sfSymbol: symbol,
                     href: item.href,
                     recent: item,
-                    preview: preview
+                    preview: preview,
+                    customAppSlug: customAppSlug
                 )
             }
             result.append(PaletteSection(id: "recent", label: "Recent", rows: rows))
@@ -1108,6 +1143,7 @@ final class CommandPaletteModel {
         var aliases: String
         var kind: String
         var sfSymbol: String
+        var customAppSlug: String? = nil
     }
 
     private var allAppJumps: [AppJump] {
@@ -1134,9 +1170,10 @@ final class CommandPaletteModel {
             items.append(AppJump(
                 label: app.name,
                 href: "/apps/\(app.slug)",
-                aliases: app.slug,
+                aliases: "\(app.slug) standalone",
                 kind: "custom app",
-                sfSymbol: "square.grid.2x2"
+                sfSymbol: SidebarIcons.symbolName(AppsHomeLogic.resolveIcon(app.icon)),
+                customAppSlug: app.slug
             ))
         }
         return items
@@ -1187,7 +1224,8 @@ final class CommandPaletteModel {
                     score: 50,
                     highlightTitle: true,
                     type: .app,
-                    preview: .item(label: app.kind.capitalized, title: app.label, detail: app.href, updatedAt: nil)
+                    preview: .item(label: app.kind.capitalized, title: app.label, detail: app.href, updatedAt: nil),
+                    customAppSlug: app.customAppSlug
                 )
             }
             if !apps.isEmpty { byType[.app] = apps }
@@ -1607,6 +1645,27 @@ final class CommandPaletteModel {
                 )),
                 perform: { [weak self] in self?.attachToChat(attach, recent: nil) }
             ))
+        } else if case .customApp(let slug) = pageContext {
+            let appName = currentCustomApp?.name
+                ?? customApps.first(where: { $0.slug == slug })?.name
+                ?? slug
+            contextRows.append(PaletteRow(
+                id: "cmd-standalone-current-\(slug)",
+                title: "Open \(appName) in Standalone Window",
+                subtitle: "Chromeless window for /apps/\(slug)",
+                sfSymbol: "macwindow.on.rectangle",
+                tone: .accent,
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Current App",
+                    title: "Open \(appName) in Standalone Window",
+                    description: "Opens \(appName) in its own lightweight macOS window with Reload, Permissions, and Open in Vesper controls.",
+                    shortcut: "↵",
+                    contextLabel: "App",
+                    contextValue: "/apps/\(slug)"
+                )),
+                perform: { [weak self] in self?.openCustomAppStandalone(slug: slug) }
+            ))
         }
 
         var workspaceRows: [PaletteRow] = [
@@ -1749,8 +1808,27 @@ final class CommandPaletteModel {
                     shortcut: "↵",
                     contextLabel: "Route",
                     contextValue: app.href
-                ))
+                )),
+                customAppSlug: app.customAppSlug
             )
+        }
+        for app in customApps {
+            goToRows.append(PaletteRow(
+                id: "cmd-standalone-\(app.slug)",
+                title: "Open \(app.name) in Standalone Window",
+                subtitle: "/apps/\(app.slug) · standalone window",
+                sfSymbol: "macwindow.on.rectangle",
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Command · Custom App",
+                    title: "Open \(app.name) in Standalone Window",
+                    description: "Launches or focuses \(app.name) in its dedicated standalone macOS window.",
+                    shortcut: "↵",
+                    contextLabel: "Custom App",
+                    contextValue: "/apps/\(app.slug)"
+                )),
+                perform: { [weak self] in self?.openCustomAppStandalone(slug: app.slug) }
+            ))
         }
 
         if !q.isEmpty {

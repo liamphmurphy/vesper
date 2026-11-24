@@ -474,7 +474,8 @@ export type PageMessage =
   | { v: 1; type: "showShortcuts" }
   | { v: 1; type: "commandPalette.open"; request?: CommandPaletteRequest }
   | { v: 1; type: "commandPalette.close" }
-  | { v: 1; type: "quickLook"; items: QuickLookItem[]; index?: number };
+  | { v: 1; type: "quickLook"; items: QuickLookItem[]; index?: number }
+  | { v: 1; type: "openCustomAppWindow"; slug: string };
 
 /** Shell → page. */
 export type NativeCommand =
@@ -547,6 +548,7 @@ const PAGE_TYPES = new Set([
   "commandPalette.open",
   "commandPalette.close",
   "quickLook",
+  "openCustomAppWindow",
 ]);
 const COMMAND_TYPES = new Set([
   "navigate",
@@ -573,6 +575,10 @@ const COMMAND_TYPES = new Set([
   "toast.event",
   "palette.open",
 ]);
+
+const RESERVED_CUSTOM_APP_SLUGS = new Set(["new", "api", "slides", "designs", "docs"]);
+const isValidCustomAppSlug = (s: unknown): s is string =>
+  typeof s === "string" && /^[a-z0-9][a-z0-9-]{0,47}$/.test(s) && !RESERVED_CUSTOM_APP_SLUGS.has(s);
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 const isInAppPath = (p: unknown): p is string => typeof p === "string" && p.startsWith("/") && !p.startsWith("//");
@@ -634,6 +640,7 @@ export function isPageMessage(v: unknown): v is PageMessage {
       (v.index === undefined || (typeof v.index === "number" && Number.isInteger(v.index) && v.index >= 0))
     );
   }
+  if (v.type === "openCustomAppWindow") return isValidCustomAppSlug(v.slug);
   return true;
 }
 

@@ -14,6 +14,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     let state: ShellState
     let bridge: ShellBridge?
     let services: WebPageServices?
+    let osBridge: CustomAppOSBridge?
+    let standaloneSlug: String?
     let webView: WKWebView
     weak var host: MainWindowController?
 
@@ -26,11 +28,12 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     /// The native screen drawn over the web view for the current path, if one is registered.
     private var nativeHost: NativeScreenHostController?
 
-    init(app: AppModel, kind: WindowKind, state: ShellState, path: String) {
+    init(app: AppModel, kind: WindowKind, state: ShellState, path: String, standaloneSlug: String? = nil) {
         self.app = app
         self.kind = kind
         self.state = state
         self.pendingPath = path
+        self.standaloneSlug = standaloneSlug
         if kind == .vesper {
             let bridge = ShellBridge(
                 state: state,
@@ -44,12 +47,16 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             self.bridge = bridge
             let services = WebPageServices()
             self.services = services
-            self.webView = WebViewFactory.makeWebView(kind: .vesper, bridge: bridge, services: services)
+            let osBridge = CustomAppOSBridge(app: app)
+            self.osBridge = osBridge
+            self.webView = WebViewFactory.makeWebView(kind: .vesper, bridge: bridge, services: services, osBridge: osBridge)
             bridge.webView = webView
             services.webView = webView
+            osBridge.webView = webView
         } else {
             self.bridge = nil
             self.services = nil
+            self.osBridge = nil
             self.webView = WebViewFactory.makeWebView(kind: .playground, bridge: nil)
             self.playgroundURL = URL(string: path)
         }
@@ -131,6 +138,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         base = conn.baseURL
         bridge?.baseURL = conn.baseURL
         services?.baseURL = conn.baseURL
+        osBridge?.baseURL = conn.baseURL
         state.loadError = nil
         if sameServer, webView.url != nil {
             webView.reload()
@@ -223,7 +231,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     /// none. The web view keeps running underneath, so history, the sidebar and the page's own
     /// chrome stay current for when it shows again.
     private func syncNativeScreen(path: String) {
-        guard kind == .vesper else { return }
+        guard kind == .vesper, standaloneSlug == nil else { return }
         let match = app.nativeRoutes.resolve(path)
         if let match {
             state.route = match.path
@@ -245,6 +253,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             context.onInspectorViewChange = { [weak self] builder in self?.state.nativeInspectorView = builder }
             context.window = { [weak self] in self?.host }
             context.baseURL = { [weak self] in self?.app.connection?.baseURL }
+            context.openCustomAppWindow = { [weak self] slug in self?.app.aux.openCustomAppWindow(slug: slug) }
+            context.closeCustomAppWindow = { [weak self] slug in self?.app.aux.closeCustomAppWindow(slug: slug) }
             state.native = context.chrome
             state.nativeSidebar = context.sidebarView
             state.nativeInspectorView = context.inspectorView
@@ -289,6 +299,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         removeNativeHost()
         bridge?.teardown(from: webView.configuration.userContentController)
         services?.teardown(from: webView.configuration.userContentController)
+        osBridge?.teardown(from: webView.configuration.userContentController)
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
         observations.removeAll()
@@ -311,6 +322,13 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             if let q = url.query { path += "?" + q }
             if let f = url.fragment { path += "#" + f }
             if app.handleSettingsPath(path, from: ownerWindow) { return false }
+            if let standaloneSlug {
+                if !openingTab && CustomAppStandaloneLogic.shouldStayInStandaloneWindow(url: url, baseURL: base, slug: standaloneSlug) {
+                    return true
+                }
+                app.aux.openInMainWindow(path)
+                return false
+            }
             if kind == .vesper && !openingTab { return true }
             app.openVesperTab(path: path, nextTo: ownerWindow)
         case .playground:

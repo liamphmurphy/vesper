@@ -3,9 +3,16 @@ import test from "node:test";
 import { typedText } from "./chat-context.ts";
 import {
   buildCustomAppSrcDoc,
+  buildNativeOSBridgePayload,
+  callNativeOSBridge,
   CUSTOM_APP_ICONS,
+  formatOSApprovalSummary,
+  hasCustomAppOSBridge,
   hlsRelayStreamId,
+  isOSBridgeMessage,
+  isStandaloneCustomAppRoute,
   localMediaEmbed,
+  osCapabilityForMessage,
   parseBridgeMessage,
   parseHlsRelayUrl,
   parseLocalMediaUrl,
@@ -410,4 +417,129 @@ test("parseBridgeMessage validates ws-open, ws-send, and ws-close", () => {
       payload: { connId: "ws_1", code: 1000, reason: "bye" },
     },
   );
+});
+
+test("isStandaloneCustomAppRoute matches only valid custom app slugs with standalone=1", () => {
+  assert.equal(isStandaloneCustomAppRoute("/apps/finance", "?standalone=1"), true);
+  assert.equal(isStandaloneCustomAppRoute("/apps/finance", "standalone=1&foo=bar"), true);
+  assert.equal(isStandaloneCustomAppRoute("/apps/finance", ""), false);
+  assert.equal(isStandaloneCustomAppRoute("/apps/finance", "?standalone=0"), false);
+  assert.equal(isStandaloneCustomAppRoute("/apps/docs", "?standalone=1"), false);
+  assert.equal(isStandaloneCustomAppRoute("/apps/slides", "?standalone=1"), false);
+  assert.equal(isStandaloneCustomAppRoute("/apps/finance/extra", "?standalone=1"), false);
+  assert.equal(isStandaloneCustomAppRoute("/chat/123", "?standalone=1"), false);
+});
+
+test("parseBridgeMessage validates macOS OS capability messages and sanitizes bounds", () => {
+  const notify = parseBridgeMessage({
+    channel: "vesper:custom-app",
+    id: "req_n1",
+    type: "os-notify",
+    payload: { title: "  Done  ", subtitle: "Sync", body: "4 rows added", silent: true },
+  });
+  assert.deepEqual(notify, {
+    channel: "vesper:custom-app",
+    id: "req_n1",
+    type: "os-notify",
+    payload: { title: "Done", subtitle: "Sync", body: "4 rows added", silent: true },
+  });
+  assert.ok(notify && isOSBridgeMessage(notify));
+  assert.equal(osCapabilityForMessage(notify), "os.notifications");
+  assert.equal(formatOSApprovalSummary(notify), "Send macOS notification: “Done”");
+
+  assert.equal(
+    parseBridgeMessage({ channel: "vesper:custom-app", id: "req_n2", type: "os-notify", payload: { title: "   " } }),
+    null,
+  );
+  assert.equal(
+    parseBridgeMessage({ channel: "vesper:custom-app", id: "", type: "os-notify", payload: { title: "Hi" } }),
+    null,
+  );
+
+  const clipRead = parseBridgeMessage({ channel: "vesper:custom-app", id: "req_c1", type: "os-clipboard-read", payload: {} });
+  assert.deepEqual(clipRead, { channel: "vesper:custom-app", id: "req_c1", type: "os-clipboard-read", payload: {} });
+  assert.ok(clipRead && isOSBridgeMessage(clipRead));
+  assert.equal(osCapabilityForMessage(clipRead), "os.clipboard");
+
+  const clipWrite = parseBridgeMessage({
+    channel: "vesper:custom-app",
+    id: "req_c2",
+    type: "os-clipboard-write",
+    payload: { text: "hello" },
+  });
+  assert.deepEqual(clipWrite, {
+    channel: "vesper:custom-app",
+    id: "req_c2",
+    type: "os-clipboard-write",
+    payload: { text: "hello" },
+  });
+  assert.equal(
+    parseBridgeMessage({
+      channel: "vesper:custom-app",
+      id: "req_c3",
+      type: "os-clipboard-write",
+      payload: { text: "a".repeat(1_000_001) },
+    }),
+    null,
+  );
+
+  const pick = parseBridgeMessage({
+    channel: "vesper:custom-app",
+    id: "req_f1",
+    type: "os-file-pick",
+    payload: { multiple: true, extensions: [".CSV", "json", "../etc", "csv", "bad ext"], title: "Import" },
+  });
+  assert.deepEqual(pick, {
+    channel: "vesper:custom-app",
+    id: "req_f1",
+    type: "os-file-pick",
+    payload: { multiple: true, extensions: ["csv", "json"], title: "Import" },
+  });
+  assert.ok(pick && isOSBridgeMessage(pick));
+  assert.equal(osCapabilityForMessage(pick), "os.file_picker");
+  assert.deepEqual(buildNativeOSBridgePayload({ requestId: "os_1", slug: "budget", msg: pick, approved: true }), {
+    v: 1,
+    requestId: "os_1",
+    slug: "budget",
+    approved: true,
+    action: "filePicker",
+    multiple: true,
+    extensions: ["csv", "json"],
+    title: "Import",
+  });
+});
+
+test("callNativeOSBridge posts to vesperCustomAppOS and resolves matching CustomEvent reply", async () => {
+  const posted = [];
+  const fakeWindow = new EventTarget();
+  fakeWindow.webkit = {
+    messageHandlers: {
+      vesperCustomAppOS: {
+        postMessage(msg) {
+          posted.push(msg);
+          queueMicrotask(() => {
+            fakeWindow.dispatchEvent(
+              new CustomEvent("vesper-custom-app-os", {
+                detail: { v: 1, requestId: msg.requestId, ok: true, data: { text: "pasted" } },
+              }),
+            );
+          });
+        },
+      },
+    },
+  };
+  assert.equal(hasCustomAppOSBridge(fakeWindow), true);
+  assert.equal(hasCustomAppOSBridge({}), false);
+
+  const res = await callNativeOSBridge({
+    slug: "budget",
+    msg: { channel: "vesper:custom-app", id: "req_1", type: "os-clipboard-read", payload: {} },
+    approved: false,
+    targetWindow: fakeWindow,
+  });
+  assert.equal(posted.length, 1);
+  assert.equal(posted[0].action, "clipboard.read");
+  assert.equal(posted[0].slug, "budget");
+  assert.equal(posted[0].approved, false);
+  assert.deepEqual(res, { v: 1, requestId: posted[0].requestId, ok: true, data: { text: "pasted" } });
 });

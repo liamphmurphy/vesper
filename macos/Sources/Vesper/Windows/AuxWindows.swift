@@ -43,6 +43,7 @@ final class AuxWindows {
     private(set) lazy var commandPalette = CommandPaletteController(aux: self)
     private(set) lazy var quickLook = QuickLookController(aux: self)
 
+    private var customAppWindows: [String: CustomAppWindowController] = [:]
     private var launchedAtLoginFlag = false
     private var exportTimer: Timer?
     private var updateTimer: Timer?
@@ -138,6 +139,50 @@ final class AuxWindows {
     func cleanupQuickLook() { quickLook.cleanup() }
     func checkForUpdates() { Task { await runUpdateCheck(manual: true) } }
 
+    /// Opens a Custom App in its dedicated standalone window, focusing it if already open.
+    func openCustomAppWindow(slug: String) {
+        guard AppsHomeLogic.validateSlug(slug) == nil, let app else { return }
+        if NSApp.activationPolicy() != .regular { NSApp.setActivationPolicy(.regular) }
+        if let existing = customAppWindows[slug] {
+            existing.focus()
+            return
+        }
+        let controller = CustomAppWindowController(app: app, slug: slug) { [weak self] in
+            self?.customAppWindows.removeValue(forKey: slug)
+        }
+        customAppWindows[slug] = controller
+        controller.focus()
+    }
+
+    /// Closes an open standalone Custom App window (e.g. after deleting the app).
+    func closeCustomAppWindow(slug: String) {
+        customAppWindows[slug]?.close()
+    }
+
+    /// Reconnects open standalone Custom App windows when the server session changes.
+    func connectCustomAppWindows(_ conn: Connection) {
+        for controller in customAppWindows.values {
+            controller.connect(conn)
+        }
+    }
+
+    /// Propagates appearance updates to open standalone Custom App windows.
+    func broadcastAppearanceToCustomAppWindows(_ command: NativeCommand) {
+        for controller in customAppWindows.values {
+            controller.applyAppearanceCommand(command)
+        }
+    }
+
+    /// Focuses an app's standalone window when open, otherwise opens it in the main window.
+    func focusCustomAppOrOpenInMain(slug: String) {
+        guard AppsHomeLogic.validateSlug(slug) == nil else { return }
+        if let existing = customAppWindows[slug] {
+            existing.focus()
+        } else {
+            openInMainWindow(CustomAppStandaloneLogic.workbenchPath(slug: slug))
+        }
+    }
+
     /// Files opened with the app (Open With, Dock drop, Quick Actions) or dropped on a window.
     func openFiles(_ urls: [URL]) { files.open(urls) }
 
@@ -199,13 +244,16 @@ final class AuxWindows {
 
     /// Show/Hide: bring Vesper forward from another app, or hide it when it's already in front.
     func toggleVesper() {
-        if NSApp.isActive, !NSApp.isHidden, app?.windows.contains(where: { $0.window?.isVisible == true }) == true {
+        let hasVisibleWindow = (app?.windows.contains(where: { $0.window?.isVisible == true }) == true)
+            || customAppWindows.values.contains(where: { $0.window?.isVisible == true })
+        if NSApp.isActive, !NSApp.isHidden, hasVisibleWindow {
             NSApp.hide(nil)
             return
         }
         NSApp.unhide(nil)
         NSApp.activate()
-        if let visible = app?.windows.first(where: { $0.window?.isVisible == true })?.window {
+        if let visible = app?.windows.first(where: { $0.window?.isVisible == true })?.window
+            ?? customAppWindows.values.first(where: { $0.window?.isVisible == true })?.window {
             visible.makeKeyAndOrderFront(nil)
         } else {
             app?.newWindow()

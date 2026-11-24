@@ -24,7 +24,7 @@ enum SidebarIcons {
         "doc": "doc.text", "pin": "pin", "more": "ellipsis", "panel-right": "sidebar.right", "star": "star", "home": "house",
         "compose": "square.and.pencil", "eye": "eye", "copy": "doc.on.doc", "external": "arrow.up.right.square",
         "outline": "list.bullet.indent", "list": "list.bullet", "mic": "mic", "table": "tablecells", "reviews": "checkmark.bubble", "calendar": "calendar",
-        "checklist": "checklist",
+        "checklist": "checklist", "window": "macwindow.on.rectangle",
     ]
 
     static func symbolName(_ icon: String) -> String { table[icon] ?? "circle" }

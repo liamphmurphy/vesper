@@ -5,6 +5,7 @@ import { findNavItem, routeNavCommand } from "./nav-model.ts";
 import { buildShellModel, protocolArea } from "./shell-model.ts";
 import { stripVesperSuffix } from "./title.ts";
 import { createNavigatorPublisher } from "./publisher.ts";
+import { buildCustomAppActions } from "./models/custom-app.ts";
 import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "./models/custom-app-inspector.ts";
 
 const NOW = Date.parse("2026-01-02T12:00:00Z");
@@ -226,6 +227,27 @@ test("buildCustomAppCapabilities surfaces configured API secrets without manifes
       requested: undefined,
     },
     {
+      key: "os.notifications",
+      label: "macOS · Notifications",
+      hint: "Post native macOS Notification Center alerts",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "os.clipboard",
+      label: "macOS · Clipboard",
+      hint: "Read and write plain text on the macOS clipboard",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
+      key: "os.file_picker",
+      label: "macOS · File picker",
+      hint: "Open a macOS file dialog to import selected files",
+      mode: "denied",
+      requested: undefined,
+    },
+    {
       key: "mcp:github:*",
       label: "MCP · GitHub",
       hint: "12 tools · connected",
@@ -275,25 +297,28 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     "app.ws:outbound",
     "app.media:download",
     "app.media:relay",
+    "os.notifications",
+    "os.clipboard",
+    "os.file_picker",
     "secret:youtube-data-api",
     "secret:missing-key",
     "nix:yt-dlp",
   ]);
-  assert.deepEqual(caps[6], {
+  assert.deepEqual(caps[9], {
     key: "secret:youtube-data-api",
     label: "Secret · YouTube Data API",
     hint: "youtube-data-api · www.googleapis.com",
     mode: "denied",
     requested: "requires_approval",
   });
-  assert.deepEqual(caps[7], {
+  assert.deepEqual(caps[10], {
     key: "secret:missing-key",
     label: "Secret · missing-key",
     hint: "Authenticated secretFetch calls using this Vesper secret",
     mode: "denied",
     requested: "requires_approval",
   });
-  assert.deepEqual(caps[8], {
+  assert.deepEqual(caps[11], {
     key: "nix:yt-dlp",
     label: "Nix · yt-dlp",
     hint: "Run nixpkgs#yt-dlp in a background tool job",
@@ -334,4 +359,22 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     ],
   );
   assert.equal(mountsSection?.items[1]?.placeholder, "Firefox profile (/path or ~/...)");
+});
+
+test("buildCustomAppActions includes Open in Standalone Window when callback is provided", () => {
+  const withoutStandalone = buildCustomAppActions({ reload: () => {}, permissions: () => {} });
+  assert.deepEqual(withoutStandalone.map((a) => a.id), ["app.reload", "app.permissions"]);
+
+  let opened = false;
+  const withStandalone = buildCustomAppActions({
+    reload: () => {},
+    permissions: () => {},
+    openStandalone: () => {
+      opened = true;
+    },
+  });
+  assert.deepEqual(withStandalone.map((a) => a.id), ["app.reload", "app.standalone", "app.permissions"]);
+  assert.equal(withStandalone[1].icon, "window");
+  withStandalone[1].run();
+  assert.equal(opened, true);
 });

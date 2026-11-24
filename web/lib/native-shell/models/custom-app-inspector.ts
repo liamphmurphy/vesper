@@ -45,7 +45,17 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
         : `${s.handle} · authenticated secretFetch calls`,
   }));
 
-  const knownKeys = new Set<string>(["vesper.api:read", "vesper.api:write", "app.http:outbound", "app.ws:outbound", "app.media:download", "app.media:relay"]);
+  const knownKeys = new Set<string>([
+    "vesper.api:read",
+    "vesper.api:write",
+    "app.http:outbound",
+    "app.ws:outbound",
+    "app.media:download",
+    "app.media:relay",
+    "os.notifications",
+    "os.clipboard",
+    "os.file_picker",
+  ]);
   for (const c of connectorRows) knownKeys.add(c.key);
   for (const s of secretRows) knownKeys.add(s.key);
   for (const k of Object.keys(input.requestedCapabilities ?? {})) {
@@ -74,7 +84,13 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
                 ? "Download videos"
                 : capKey === "app.media:relay"
                   ? "AirPlay / HLS relay"
-                  : capKey.startsWith("nix:")
+                  : capKey === "os.notifications"
+                    ? "macOS · Notifications"
+                    : capKey === "os.clipboard"
+                      ? "macOS · Clipboard"
+                      : capKey === "os.file_picker"
+                        ? "macOS · File picker"
+                        : capKey.startsWith("nix:")
                 ? `Nix · ${capKey.slice("nix:".length)}`
                 : sInfo?.label ??
                   (capKey.startsWith("secret:")
@@ -93,7 +109,13 @@ export function buildCustomAppCapabilities(input: BuildCustomAppCapabilitiesInpu
                 ? "Save direct video files into Vesper so they play locally"
                 : capKey === "app.media:relay"
                   ? "Serve filtered HLS playlists on your local network so the player and AirPlay can play live streams"
-                  : capKey.startsWith("nix:")
+                  : capKey === "os.notifications"
+                    ? "Post native macOS Notification Center alerts"
+                    : capKey === "os.clipboard"
+                      ? "Read and write plain text on the macOS clipboard"
+                      : capKey === "os.file_picker"
+                        ? "Open a macOS file dialog to import selected files"
+                        : capKey.startsWith("nix:")
                 ? `Run nixpkgs#${capKey.slice("nix:".length)} in a background tool job`
                 : sInfo?.hint ??
                   (capKey.startsWith("secret:")

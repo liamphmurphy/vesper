@@ -181,7 +181,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: Edit / View / History
 
-    private var web: WKWebView? { app.keyController?.webView }
+    private var web: WKWebView? {
+        (NSApp.keyWindow?.windowController as? CustomAppWindowController)?.webView ?? app.keyController?.webView
+    }
 
     @objc func find(_ sender: Any?) { app.keyController?.showFindBar() }
     @objc func findNext(_ sender: Any?) { app.keyController?.findNext() }
@@ -298,7 +300,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             let isOpen = (controller.state.inspector?.open ?? false) || !controller.isInspectorCollapsed
             item.title = isOpen ? "Hide Inspector" : "Show Inspector"
             return true
-        case #selector(find(_:)), #selector(useSelectionForFind(_:)), #selector(reload(_:)), #selector(forceReload(_:)),
+        case #selector(find(_:)), #selector(useSelectionForFind(_:)):
+            return (NSApp.keyWindow?.windowController as? MainWindowController) != nil
+        case #selector(reload(_:)), #selector(forceReload(_:)),
              #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(zoomReset(_:)), #selector(showInspector(_:)):
             return web != nil
         case #selector(findNext(_:)), #selector(findPrevious(_:)):

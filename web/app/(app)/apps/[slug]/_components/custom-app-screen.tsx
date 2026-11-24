@@ -1,6 +1,7 @@
 "use client";
 
 import { useQueryClient } from "@tanstack/react-query";
+import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Conversation, type ConversationContext, type DockWelcome } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_components/persona";
@@ -10,7 +11,7 @@ import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/nat
 import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
 import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
-import { post as postToShell } from "@/lib/native-shell/bridge";
+import { isNativeShell, post as postToShell } from "@/lib/native-shell/bridge";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { CustomAppPlayerStage, type StageVideo } from "./custom-app-player";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
@@ -35,7 +36,12 @@ import { chatKeys, useChat, useCreateChat } from "@/lib/api/hooks";
 import { useSpaceChats } from "@/lib/api/space-hooks";
 import {
   buildCustomAppSrcDoc,
+  callNativeOSBridge,
+  formatOSApprovalSummary,
+  hasCustomAppOSBridge,
   hlsRelayStreamId,
+  isOSBridgeMessage,
+  osCapabilityForMessage,
   parseBridgeMessage,
   readThemeVarsFrom,
   resolveAppIcon,
@@ -44,6 +50,8 @@ import {
   resolveVideoEmbed,
   withCustomAppContext,
   type CustomAppNavSpec,
+  type CustomAppOSCapability,
+  type OSBridgeMessage,
 } from "@/lib/custom-app-bridge";
 import { cx } from "@/lib/cx";
 import type { DockState } from "@/lib/editor-layout";
@@ -93,23 +101,49 @@ type PendingApproval =
       kind: "ws";
       capability: "app.ws:outbound";
       summary: string;
+    }
+  | {
+      seq: number;
+      reload: number;
+      reqId: string;
+      kind: "os";
+      msg: OSBridgeMessage;
+      capability: CustomAppOSCapability;
+      summary: string;
     };
 
 export function CustomAppScreen({ slug }: { slug: string }) {
+  const searchParams = useSearchParams();
+  const standalone = searchParams.get("standalone") === "1";
   const query = useCustomApp(slug);
 
   if (query.error instanceof ApiError && query.error.status === 404) {
     return (
       <>
-        <TopBar crumbs={[{ label: "Custom Apps", href: "/apps" }, { label: slug, mono: true }]} />
+        {!standalone && <TopBar crumbs={[{ label: "Custom Apps", href: "/apps" }, { label: slug, mono: true }]} />}
         <Content>
           <EmptyState
             icon="dashboard"
             title="Custom app not found"
             actions={
-              <ButtonLink variant="primary" href="/apps">
-                Back to Custom Apps
-              </ButtonLink>
+              standalone ? (
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    if (isNativeShell()) {
+                      postToShell({ v: 1, type: "openInMain", path: "/apps" });
+                    } else {
+                      window.location.assign("/apps");
+                    }
+                  }}
+                >
+                  Open Vesper Custom Apps
+                </Button>
+              ) : (
+                <ButtonLink variant="primary" href="/apps">
+                  Back to Custom Apps
+                </ButtonLink>
+              )
             }
           >
             No custom app exists at <span className="font-mono">/apps/{slug}</span>. Create it from Custom Apps or ask a persona to build it.
@@ -122,7 +156,7 @@ export function CustomAppScreen({ slug }: { slug: string }) {
   if (query.isError) {
     return (
       <>
-        <TopBar crumbs={[{ label: "Custom Apps", href: "/apps" }, { label: slug, mono: true }]} />
+        {!standalone && <TopBar crumbs={[{ label: "Custom Apps", href: "/apps" }, { label: slug, mono: true }]} />}
         <Content>
           <Banner tone="blocked" title="Couldn’t load custom app">
             {errorText(query.error)}
@@ -135,7 +169,7 @@ export function CustomAppScreen({ slug }: { slug: string }) {
   if (!query.data) {
     return (
       <>
-        <TopBar crumbs={[{ label: "Custom Apps", href: "/apps" }, { label: slug, mono: true }]} />
+        {!standalone && <TopBar crumbs={[{ label: "Custom Apps", href: "/apps" }, { label: slug, mono: true }]} />}
         <Content>
           <Skeleton className="h-[60vh] w-full rounded-xl" />
         </Content>
@@ -143,10 +177,22 @@ export function CustomAppScreen({ slug }: { slug: string }) {
     );
   }
 
+  if (standalone) {
+    return <StandaloneCustomAppScreen key={query.data.id} app={query.data} />;
+  }
+
   return <CustomAppWorkbench key={query.data.id} app={query.data} />;
 }
 
-function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
+function useCustomAppRuntime({
+  app,
+  standalone,
+  askDockRef,
+}: {
+  app: CustomAppDetail;
+  standalone: boolean;
+  askDockRef: React.RefObject<(prompt: string) => void | Promise<void>>;
+}) {
   const qc = useQueryClient();
   const frameRef = useRef<HTMLIFrameElement>(null);
   const [initialThemeVars] = useState<Record<string, string>>(() => readThemeVars());
@@ -166,12 +212,6 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     capabilitiesRef.current = app.capabilities;
   }, [app.capabilities]);
   const pendingImageQueueRef = useRef<Map<string, Array<{ id: string; url: string }>>>(new Map());
-
-  const [show, setShow] = useState({ tab: "chat", n: 0 });
-  const openDockTab = useCallback((tab: string) => {
-    setShow((s) => ({ tab, n: s.n + 1 }));
-  }, []);
-  const [dock, setDock] = useState<DockState>();
 
   const postToFrame = useCallback((msg: unknown, transfer?: Transferable[]) => {
     frameRef.current?.contentWindow?.postMessage(msg, "*", transfer);
@@ -207,8 +247,8 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     postToFrame({ type: "vesper:player", open: playerUrl !== null, theater, sidePanel: sidePanelLayout && sidePanelOpen });
   }, [playerUrl, theater, sidePanelLayout, sidePanelOpen, postToFrame]);
 
-  // Theater wants the whole window: fold the native sidebar while it lasts (a no-op in a browser).
-  const wantsWholeWindow = playerUrl !== null && theater;
+  // Theater wants the whole window: fold the native sidebar while it lasts (a no-op in a browser or standalone window).
+  const wantsWholeWindow = !standalone && playerUrl !== null && theater;
   useEffect(() => {
     if (!wantsWholeWindow) return;
     postToShell({ v: 1, type: "sidebarHidden", hidden: true });
@@ -349,69 +389,52 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   );
   const headApproval = visibleApprovals[0];
 
-  // ---- Dock chat wiring (`app:custom:<slug>` + app's space)
-  const dockChat = useCustomAppDockChat({
-    app,
-    currentNav,
-    runtimeError,
-  });
-  const {
-    chatId,
-    chat,
-    running,
-    startingPersona,
-    createChat,
-    selectChat,
-  } = dockChat;
-
-  const chatShowing = !dock || (dock.open && !dock.hidden && dock.tab === "chat");
-  const lastReply = chat?.last_message_at;
-  const [seenReply, setSeenReply] = useState<{ chat?: string; at?: string }>({});
-  if (lastReply && (seenReply.chat !== chatId || ((chatShowing || seenReply.at === undefined) && seenReply.at !== lastReply))) {
-    setSeenReply({ chat: chatId, at: lastReply });
-  }
-  const unread = !chatShowing && !!lastReply && seenReply.chat === chatId && !!seenReply.at && seenReply.at !== lastReply && !running;
-
-  const handleAskDock = useCallback(
-    async (prompt: string) => {
-      openDockTab("chat");
-      const formatted = withCustomAppContext(prompt, {
-        slug: app.slug,
-        name: app.name,
-        seq: app.current_seq,
-        activeNav: currentNav,
-        error: runtimeError ?? undefined,
-      });
+  const executeOSBridge = useCallback(
+    async (msg: OSBridgeMessage, approved: boolean) => {
+      const capability = osCapabilityForMessage(msg);
+      if (!hasCustomAppOSBridge()) {
+        postToFrame({
+          type: "vesper:response",
+          id: msg.id,
+          ok: false,
+          error: `macOS capability ${capability} requires the Vesper Mac app`,
+        });
+        return;
+      }
       try {
-        if (chatId) {
-          if (running) {
-            await unwrap(api.POST("/chats/{id}/followups", { params: { path: { id: chatId } }, body: { body: formatted } }));
-          } else {
-            await unwrap(api.POST("/chats/{id}/messages", { params: { path: { id: chatId } }, body: { body: formatted } }));
-          }
-          await qc.invalidateQueries({ queryKey: chatKeys.all });
+        const res = await callNativeOSBridge({ slug: app.slug, msg, approved });
+        if (res.approvalRequired) {
+          void qc.invalidateQueries({ queryKey: customAppKeys.detail(app.slug) });
+          setPendingApprovals((prev) => [
+            ...prev,
+            {
+              seq: app.current_seq,
+              reload: reloadKey,
+              reqId: msg.id,
+              kind: "os",
+              msg,
+              capability: res.capability ?? capability,
+              summary: res.summary ?? formatOSApprovalSummary(msg),
+            },
+          ]);
           return;
         }
-        const created = await createChat.mutateAsync({
-          title: app.name,
-          hidden: true,
-          ...(app.space_id ? { space_id: app.space_id } : {}),
-          ...(startingPersona.id ? { persona_id: startingPersona.id } : {}),
-          message: { body: formatted },
-        });
-        selectChat(created.id);
-        await qc.invalidateQueries({ queryKey: chatKeys.all });
+        if (!res.ok) {
+          postToFrame({
+            type: "vesper:response",
+            id: msg.id,
+            ok: false,
+            error: res.error || `Capability ${capability} request failed`,
+          });
+          return;
+        }
+        postToFrame({ type: "vesper:response", id: msg.id, ok: true, data: res.data ?? null });
       } catch (err) {
-        toast({ id: `ask-${app.slug}`, tone: "error", title: "Couldn’t send to chat", description: errorText(err) });
+        postToFrame({ type: "vesper:response", id: msg.id, ok: false, error: errorText(err) });
       }
     },
-    [app.slug, app.name, app.current_seq, app.space_id, currentNav, runtimeError, chatId, running, qc, createChat, startingPersona.id, selectChat, openDockTab],
+    [app.slug, app.current_seq, reloadKey, postToFrame, qc],
   );
-
-  const askDockRef = useRef(handleAskDock);
-  useEffect(() => {
-    askDockRef.current = handleAskDock;
-  }, [handleAskDock]);
 
   // Listen to bridge postMessages from the sandboxed iframe.
   useEffect(() => {
@@ -576,6 +599,46 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         return;
       }
 
+      if (isOSBridgeMessage(msg)) {
+        const capability = osCapabilityForMessage(msg);
+        const mode = capabilitiesRef.current[capability] ?? "denied";
+        if (mode === "denied") {
+          postToFrame({
+            type: "vesper:response",
+            id: msg.id,
+            ok: false,
+            error: `capability ${capability} is denied for custom app "${app.slug}"`,
+          });
+          return;
+        }
+        if (!hasCustomAppOSBridge()) {
+          postToFrame({
+            type: "vesper:response",
+            id: msg.id,
+            ok: false,
+            error: `macOS capability ${capability} requires the Vesper Mac app`,
+          });
+          return;
+        }
+        if (mode === "requires_approval") {
+          setPendingApprovals((prev) => [
+            ...prev,
+            {
+              seq: app.current_seq,
+              reload: reloadKey,
+              reqId: msg.id,
+              kind: "os",
+              msg,
+              capability,
+              summary: formatOSApprovalSummary(msg),
+            },
+          ]);
+          return;
+        }
+        void executeOSBridge(msg, false);
+        return;
+      }
+
       const reqBody: CustomAppInvokeRequest =
         msg.type === "sql"
           ? { kind: "sql", query: msg.payload.query, params: msg.payload.params }
@@ -612,11 +675,39 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
 
     window.addEventListener("message", onMessage);
     return () => window.removeEventListener("message", onMessage);
-  }, [app.slug, app.current_seq, reloadKey, postToFrame, serveProxyImage, openProxyWS, qc]);
+  }, [app.slug, app.current_seq, reloadKey, postToFrame, serveProxyImage, openProxyWS, executeOSBridge, askDockRef, qc]);
 
   const decideApproval = useCallback(
     async (decision: "once" | "always" | "decline") => {
       if (!headApproval || decidingApproval) return;
+      if (headApproval.kind === "os") {
+        if (decision === "decline") {
+          setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
+          postToFrame({ type: "vesper:response", id: headApproval.reqId, ok: false, error: "Capability request declined" });
+          return;
+        }
+        setDecidingApproval(true);
+        try {
+          if (decision === "always") {
+            const updated = await unwrap(
+              api.PATCH("/custom-apps/{slug}", {
+                params: { path: { slug: app.slug } },
+                body: { capabilities: { ...capabilitiesRef.current, [headApproval.capability]: "allowed" } },
+              }),
+            );
+            capabilitiesRef.current = updated.capabilities;
+            void qc.invalidateQueries({ queryKey: customAppKeys.detail(app.slug) });
+            void qc.invalidateQueries({ queryKey: customAppKeys.list });
+          }
+          await executeOSBridge(headApproval.msg, decision === "once");
+        } catch (err) {
+          postToFrame({ type: "vesper:response", id: headApproval.reqId, ok: false, error: errorText(err) });
+        } finally {
+          setPendingApprovals((prev) => prev.filter((x) => x.reqId !== headApproval.reqId));
+          setDecidingApproval(false);
+        }
+        return;
+      }
       if (headApproval.kind === "ws") {
         const queueKey = `${headApproval.seq}:${headApproval.reload}`;
         if (decision === "decline") {
@@ -729,7 +820,7 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
         setDecidingApproval(false);
       }
     },
-    [headApproval, decidingApproval, app.slug, postToFrame, serveProxyImage, openProxyWS, qc],
+    [headApproval, decidingApproval, app.slug, postToFrame, serveProxyImage, openProxyWS, executeOSBridge, qc],
   );
 
   const decideRef = useRef(decideApproval);
@@ -774,32 +865,46 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
     setPendingApprovals([]);
     setReloadKey((k) => k + 1);
   }, []);
+  const selectNav = useCallback(
+    (id: string) => {
+      setActiveNav(id);
+      postToFrame({ type: "vesper:nav-select", id });
+    },
+    [postToFrame],
+  );
   useEffect(() => {
     const queue = pendingImageQueueRef.current;
     return () => {
       queue.clear();
     };
   }, [app.current_seq, reloadKey]);
-  const header: NativeEditorHeader = {
-    title: app.name,
-    subtitle: `v${app.current_seq}`,
-    actions: buildCustomAppActions({ reload, permissions: () => openDockTab("permissions") }),
-  };
-  const nativeLeft =
-    navItems.length > 0
-      ? {
-          model: buildCustomAppNav({ title: app.name, items: navItems.map((n) => ({ id: n.id, label: n.label, icon: n.icon ? resolveAppIcon(n.icon) : undefined })), currentId: currentNav }),
-          onCommand: (cmd: { type: string; itemId?: string }) => {
-            const id = cmd.type === "nav.activate" && cmd.itemId ? parseViewId(cmd.itemId) : null;
-            if (!id) return;
-            setActiveNav(id);
-            postToFrame({ type: "vesper:nav-select", id });
-          },
-        }
-      : undefined;
 
   const main = (
     <div className="flex min-h-0 flex-1 flex-col">
+      {standalone && navItems.length > 1 && (
+        <nav
+          aria-label={`${app.name} views`}
+          className="flex flex-none items-center gap-1 overflow-x-auto border-b border-border-subtle bg-surface px-2.5 py-1.5"
+        >
+          {navItems.map((item) => {
+            const active = item.id === currentNav;
+            return (
+              <button
+                key={item.id}
+                type="button"
+                onClick={() => selectNav(item.id)}
+                className={cx(
+                  "inline-flex h-7 flex-none items-center gap-1.5 rounded-md px-2.5 text-12 transition-colors",
+                  active ? "bg-selected font-medium text-fg" : "text-fg-secondary hover:bg-hover hover:text-fg",
+                )}
+              >
+                {item.icon ? <Icon name={resolveAppIcon(item.icon)} size={13} /> : null}
+                <span>{item.label}</span>
+              </button>
+            );
+          })}
+        </nav>
+      )}
       {(headApproval || runtimeError) && (
         <div className="flex flex-col gap-2 border-b border-border-subtle bg-surface p-3">
           {headApproval && (
@@ -847,12 +952,12 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
                     variant="secondary"
                     icon="msg"
                     onClick={() =>
-                      void handleAskDock(
+                      void askDockRef.current(
                         `Please fix this runtime error in custom app "${app.name}" (/apps/${app.slug}):\n\n${runtimeError}`,
                       )
                     }
                   >
-                    Ask persona to fix
+                    {standalone ? "Open in Vesper to fix" : "Ask persona to fix"}
                   </Button>
                   <Button variant="ghost" onClick={() => setRuntimeErrorState(null)}>
                     Dismiss
@@ -895,12 +1000,146 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
               ? sidePanelOpen
                 ? "h-full w-[340px] flex-none border-l border-border-subtle"
                 : "hidden"
-              : "h-full min-h-[420px] w-full flex-1",
+              : standalone
+                ? "h-full w-full flex-1"
+                : "h-full min-h-[420px] w-full flex-1",
           )}
         />
       </div>
     </div>
   );
+
+  return { reload, navItems, currentNav, selectNav, runtimeError, main };
+}
+
+function StandaloneCustomAppScreen({ app }: { app: CustomAppDetail }) {
+  const openInWorkbench = useCallback(() => {
+    const target = `/apps/${app.slug}`;
+    if (isNativeShell()) {
+      postToShell({ v: 1, type: "openInMain", path: target });
+    } else {
+      window.location.assign(target);
+    }
+  }, [app.slug]);
+  const askDockRef = useRef<(prompt: string) => void>(openInWorkbench);
+  useEffect(() => {
+    askDockRef.current = openInWorkbench;
+  }, [openInWorkbench]);
+
+  useEffect(() => {
+    document.title = app.name;
+    postToShell({ v: 1, type: "title", title: app.name });
+  }, [app.name]);
+
+  const runtime = useCustomAppRuntime({ app, standalone: true, askDockRef });
+
+  return (
+    <div data-standalone-app={app.slug} className="flex h-dvh min-h-0 min-w-0 flex-1 flex-col bg-bg">
+      {runtime.main}
+    </div>
+  );
+}
+
+function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
+  const qc = useQueryClient();
+  const [show, setShow] = useState({ tab: "chat", n: 0 });
+  const openDockTab = useCallback((tab: string) => {
+    setShow((s) => ({ tab, n: s.n + 1 }));
+  }, []);
+  const [dock, setDock] = useState<DockState>();
+  const askDockRef = useRef<(prompt: string) => void | Promise<void>>(() => {});
+
+  const runtime = useCustomAppRuntime({ app, standalone: false, askDockRef });
+  const { reload, navItems, currentNav, selectNav, runtimeError, main } = runtime;
+
+  // ---- Dock chat wiring (`app:custom:<slug>` + app's space)
+  const dockChat = useCustomAppDockChat({
+    app,
+    currentNav,
+    runtimeError,
+  });
+  const {
+    chatId,
+    chat,
+    running,
+    startingPersona,
+    createChat,
+    selectChat,
+  } = dockChat;
+
+  const chatShowing = !dock || (dock.open && !dock.hidden && dock.tab === "chat");
+  const lastReply = chat?.last_message_at;
+  const [seenReply, setSeenReply] = useState<{ chat?: string; at?: string }>({});
+  if (lastReply && (seenReply.chat !== chatId || ((chatShowing || seenReply.at === undefined) && seenReply.at !== lastReply))) {
+    setSeenReply({ chat: chatId, at: lastReply });
+  }
+  const unread = !chatShowing && !!lastReply && seenReply.chat === chatId && !!seenReply.at && seenReply.at !== lastReply && !running;
+
+  const handleAskDock = useCallback(
+    async (prompt: string) => {
+      openDockTab("chat");
+      const formatted = withCustomAppContext(prompt, {
+        slug: app.slug,
+        name: app.name,
+        seq: app.current_seq,
+        activeNav: currentNav,
+        error: runtimeError ?? undefined,
+      });
+      try {
+        if (chatId) {
+          if (running) {
+            await unwrap(api.POST("/chats/{id}/followups", { params: { path: { id: chatId } }, body: { body: formatted } }));
+          } else {
+            await unwrap(api.POST("/chats/{id}/messages", { params: { path: { id: chatId } }, body: { body: formatted } }));
+          }
+          await qc.invalidateQueries({ queryKey: chatKeys.all });
+          return;
+        }
+        const created = await createChat.mutateAsync({
+          title: app.name,
+          hidden: true,
+          ...(app.space_id ? { space_id: app.space_id } : {}),
+          ...(startingPersona.id ? { persona_id: startingPersona.id } : {}),
+          message: { body: formatted },
+        });
+        selectChat(created.id);
+        await qc.invalidateQueries({ queryKey: chatKeys.all });
+      } catch (err) {
+        toast({ id: `ask-${app.slug}`, tone: "error", title: "Couldn’t send to chat", description: errorText(err) });
+      }
+    },
+    [app.slug, app.name, app.current_seq, app.space_id, currentNav, runtimeError, chatId, running, qc, createChat, startingPersona.id, selectChat, openDockTab],
+  );
+  useEffect(() => {
+    askDockRef.current = handleAskDock;
+  }, [handleAskDock]);
+
+  const header: NativeEditorHeader = {
+    title: app.name,
+    subtitle: `v${app.current_seq}`,
+    actions: buildCustomAppActions({
+      reload,
+      permissions: () => openDockTab("permissions"),
+      openStandalone: () => {
+        if (isNativeShell()) {
+          postToShell({ v: 1, type: "openCustomAppWindow", slug: app.slug });
+        } else {
+          window.open(`/apps/${app.slug}?standalone=1`, `vesper-app-${app.slug}`, "noopener,noreferrer,width=960,height=700");
+        }
+      },
+    }),
+  };
+  const nativeLeft =
+    navItems.length > 0
+      ? {
+          model: buildCustomAppNav({ title: app.name, items: navItems.map((n) => ({ id: n.id, label: n.label, icon: n.icon ? resolveAppIcon(n.icon) : undefined })), currentId: currentNav }),
+          onCommand: (cmd: { type: string; itemId?: string }) => {
+            const id = cmd.type === "nav.activate" && cmd.itemId ? parseViewId(cmd.itemId) : null;
+            if (!id) return;
+            selectNav(id);
+          },
+        }
+      : undefined;
 
   const personaLookForTab = chat ? personaLook(chat.speaker ?? chat.persona) : startingPersona.look;
   const perms = useCustomAppPermissions(app);

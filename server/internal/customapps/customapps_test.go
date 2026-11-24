@@ -11,6 +11,52 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/testdb"
 )
 
+func TestOSCapabilitiesValidationAndBundle(t *testing.T) {
+	osCaps := []string{"os.notifications", "os.clipboard", "os.file_picker"}
+	for _, capKey := range osCaps {
+		if err := ValidCapabilityKey(capKey); err != nil {
+			t.Errorf("ValidCapabilityKey(%q) = %v, want nil", capKey, err)
+		}
+		if got := ModeFor(Capabilities{}, capKey); got != agentdef.Denied {
+			t.Errorf("ModeFor(empty, %q) = %q, want denied", capKey, got)
+		}
+		// Manifest requesting allowed must still be capped at requires_approval.
+		caps := DefaultCapabilities(Capabilities{capKey: agentdef.Allowed})
+		if caps[capKey] != agentdef.RequiresApproval {
+			t.Errorf("DefaultCapabilities(%q=allowed) = %q, want requires_approval", capKey, caps[capKey])
+		}
+		normalized, err := NormalizeCapabilities(Capabilities{capKey: agentdef.Allowed})
+		if err != nil || normalized[capKey] != agentdef.Allowed {
+			t.Errorf("NormalizeCapabilities(%q=allowed) = %v, %v", capKey, normalized, err)
+		}
+	}
+	for _, bad := range []string{"os.*", "os.shell", "os.fs", "os.notifications:send"} {
+		if err := ValidCapabilityKey(bad); err == nil {
+			t.Errorf("ValidCapabilityKey(%q) succeeded, want error", bad)
+		}
+	}
+
+	js, _, err := Bundle("app.tsx", map[string]string{
+		"app.tsx": `import { os } from "@vesper/bridge";
+export default function App() {
+  return <button onClick={async () => {
+    await os.notify({ title: "Done", body: "Synced" });
+    await os.clipboard.writeText("hello");
+    await os.clipboard.readText();
+    await os.pickFiles({ multiple: true, extensions: ["csv"] });
+  }}>run</button>;
+}`,
+	})
+	if err != nil {
+		t.Fatalf("Bundle OS bridge app: %v", err)
+	}
+	for _, needle := range []string{"os-notify", "os-clipboard-read", "os-clipboard-write", "os-file-pick"} {
+		if !strings.Contains(js, needle) {
+			t.Errorf("bundle missing %q", needle)
+		}
+	}
+}
+
 func TestSlugValidationAllowsFinanceRejectsReserved(t *testing.T) {
 	for _, valid := range []string{"finance", "my-crm", "v2-notes"} {
 		got, err := ValidSlug(valid)

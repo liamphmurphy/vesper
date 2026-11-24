@@ -140,7 +140,7 @@ func ValidMountName(name string) (string, error) {
 
 func ValidCapabilityKey(key string) error {
 	switch key {
-	case "app.sql:read", "app.sql:write", "app.http:outbound", "app.ws:outbound", "app.media:download", "app.media:relay", "vesper.api:read", "vesper.api:write":
+	case "app.sql:read", "app.sql:write", "app.http:outbound", "app.ws:outbound", "app.media:download", "app.media:relay", "vesper.api:read", "vesper.api:write", "os.notifications", "os.clipboard", "os.file_picker":
 		return nil
 	default:
 		if mcpCap.MatchString(key) || secretCap.MatchString(key) {
@@ -208,8 +208,8 @@ func NormalizeCapabilities(caps Capabilities) (Capabilities, error) {
 }
 
 // ModeFor returns the effective permission mode for key.
-// app.sql:read and app.sql:write default to allowed; all external capabilities
-// (vesper.api:*, app.http:outbound, mcp:*, secret:*) default to denied.
+// app.sql:read and app.sql:write default to allowed; all external and OS
+// capabilities (vesper.api:*, app.http:outbound, os.*, mcp:*, secret:*) default to denied.
 // mcp:<slug>:* and secret:* wildcards combine with exact matches via agentdef.Stricter.
 func ModeFor(caps Capabilities, key string) agentdef.Mode {
 	exact, hasExact := caps[key]

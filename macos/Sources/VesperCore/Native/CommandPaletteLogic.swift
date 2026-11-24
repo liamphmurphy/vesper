@@ -248,6 +248,7 @@ public enum CommandPalettePageContext: Sendable, Equatable, Hashable {
     case artifact(id: String)
     case knowledge(id: String)
     case wiki(path: String)
+    case customApp(slug: String)
 }
 
 public struct CommandPaletteFacet: Sendable, Equatable, Hashable, Identifiable {
@@ -577,6 +578,16 @@ public enum CommandPaletteLogic {
                     String(seg).removingPercentEncoding ?? String(seg)
                 }.joined(separator: "/")
                 return .wiki(path: decoded)
+            }
+        }
+        if path.hasPrefix("/apps/") {
+            let rest = String(path.dropFirst("/apps/".count))
+            let trimmed = rest.hasSuffix("/") ? String(rest.dropLast()) : rest
+            if !trimmed.contains("/") {
+                let slug = trimmed.removingPercentEncoding ?? trimmed
+                if AppsHomeLogic.validateSlug(slug) == nil {
+                    return .customApp(slug: slug)
+                }
             }
         }
         return nil

@@ -13,6 +13,7 @@ protocol ShellHostActions: AnyObject {
     func openCommandPalette(_ request: CommandPaletteRequest?)
     func closeCommandPalette()
     func showQuickLook(items: [QuickLookItem], index: Int?)
+    func openCustomAppWindow(slug: String)
 }
 
 /// Manages active toast pills for a single window, including hover-pause countdown timers and

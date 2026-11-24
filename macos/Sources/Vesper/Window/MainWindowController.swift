@@ -530,6 +530,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         app.aux.previewQuickLook(items: items, index: index, from: window)
     }
 
+    func openCustomAppWindow(slug: String) {
+        app.aux.openCustomAppWindow(slug: slug)
+    }
+
     // MARK: QLPreviewPanelController
 
     nonisolated override func acceptsPreviewPanelControl(_ panel: QLPreviewPanel!) -> Bool {

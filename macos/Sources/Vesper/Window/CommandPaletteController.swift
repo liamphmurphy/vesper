@@ -171,6 +171,9 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         model.onNewWindow = { [weak self] in
             self?.aux?.app?.newWindow()
         }
+        model.onOpenCustomAppWindow = { [weak self] slug in
+            self?.aux?.openCustomAppWindow(slug: slug)
+        }
         model.onToggleSidebar = { [weak self] in
             self?.targetController?.split.toggleSidebar(nil)
         }

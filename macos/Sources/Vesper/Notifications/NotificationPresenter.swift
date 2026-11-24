@@ -26,6 +26,7 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
     var onDecide: ((DesktopAlert, NotificationLogic.Decision) -> Void)?
     var onReply: ((DesktopAlert, String) -> Void)?
     var onOpenHref: ((String) -> Void)?
+    var onOpenCustomApp: ((String) -> Void)?
     var onShowLogs: (() -> Void)?
 
     private var center: UNUserNotificationCenter? {
@@ -99,6 +100,30 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
         Task { try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil)) }
     }
 
+    /// A notification requested by a Custom App via `os.notifications`; clicking focuses its
+    /// standalone window if open, else opens `/apps/<slug>` in the main window.
+    @discardableResult
+    func customAppNotice(slug: String, title: String, subtitle: String?, body: String, silent: Bool) -> Bool {
+        guard let center else { return false }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        if let subtitle, !subtitle.isEmpty, subtitle != title {
+            content.subtitle = subtitle
+        }
+        content.body = body
+        content.sound = silent ? nil : .default
+        content.threadIdentifier = "vesper.custom-app.\(slug)"
+        content.userInfo = ["notice": "customApp", "slug": slug]
+        Task {
+            let settings = await center.notificationSettings()
+            if settings.authorizationStatus == .notDetermined {
+                _ = try? await center.requestAuthorization(options: [.alert, .sound])
+            }
+            try? await center.add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+        }
+        return true
+    }
+
     /// Settings › Test notification: asks for permission when it hasn't been decided.
     func sendTest(silent: Bool) {
         guard let center else { return }
@@ -162,6 +187,7 @@ final class NotificationPresenter: NSObject, UNUserNotificationCenterDelegate {
     private func handle(action: String, text: String?, info: [String: String]) {
         if info["notice"] == "logs" { onShowLogs?(); return }
         if info["notice"] == "href", let href = info["href"] { onOpenHref?(href); return }
+        if info["notice"] == "customApp", let slug = info["slug"] { onOpenCustomApp?(slug); return }
         guard let alert = Self.decode(info) else { return }
         switch action {
         case ActionID.approve: onDecide?(alert, .approve)

@@ -825,5 +825,10 @@
     "v": 1,
     "type": "sidebarHidden",
     "hidden": false
+  },
+  {
+    "v": 1,
+    "type": "openCustomAppWindow",
+    "slug": "budget"
   }
 ]
