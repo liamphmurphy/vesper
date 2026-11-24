@@ -154,6 +154,143 @@ struct ChatRunningStatusStrip: View {
     }
 }
 
+// MARK: - Pinned Collapsible Live Step Checklist Bar
+
+/// Compact pinned bar above the composer while a running turn has a `TodoWrite` / `TaskCreate` plan.
+/// Shows progress (`N/M steps`, plus failed count if any) with an expandable checklist (~7 visible rows,
+/// scrollable if more), and auto-hides once the turn completes.
+struct ChatPinnedPlanChecklistBar: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let progress: ChatPlanProgress
+    let turnKey: String
+
+    @State private var isExpanded = false
+
+    private static let maxVisibleRows = 7
+    private static let approxRowHeight: CGFloat = 26
+
+    var body: some View {
+        let p = theme.palette
+        let failedColor = theme.swiftUIColor("pill-blocked-fg", fallback: .red)
+        let ratio: CGFloat = progress.total > 0 ? CGFloat(progress.completed + progress.failed) / CGFloat(progress.total) : 0
+        let listHeight = min(CGFloat(progress.steps.count) * Self.approxRowHeight + 12, CGFloat(Self.maxVisibleRows) * Self.approxRowHeight + 12)
+
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 8) {
+                    Image(systemName: progress.activeStep != nil ? "checklist" : (progress.failed > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"))
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(progress.failed > 0 && progress.activeStep == nil ? failedColor : (progress.activeStep != nil ? p.accent : .green))
+
+                    Text("\(progress.completed)/\(progress.total) \(progress.total == 1 ? "step" : "steps")")
+                        .font(.system(size: theme.pointSize(.micro), weight: .semibold, design: .monospaced))
+                        .foregroundStyle(p.text)
+
+                    if progress.failed > 0 {
+                        Text("· \(progress.failed) failed")
+                            .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                            .foregroundStyle(failedColor)
+                    }
+
+                    if !isExpanded, let active = progress.activeStep {
+                        Text("— \(active.title)")
+                            .font(.system(size: theme.pointSize(.micro)))
+                            .foregroundStyle(p.secondaryText)
+                            .lineLimit(1)
+                    }
+
+                    Spacer(minLength: 8)
+
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(p.border)
+                        Capsule()
+                            .fill(progress.failed > 0 ? failedColor : p.accent)
+                            .frame(width: max(ratio > 0 ? 4 : 0, 36 * min(1, ratio)))
+                    }
+                    .frame(width: 36, height: 4)
+
+                    Image(systemName: isExpanded ? "chevron.down" : "chevron.up")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(isExpanded ? "Collapse step checklist" : "Expand live step checklist (\(progress.progressLabel))")
+
+            if isExpanded {
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 5) {
+                        ForEach(progress.steps, id: \.key) { step in
+                            HStack(spacing: 7) {
+                                Image(systemName: stepIcon(step.state))
+                                    .imageScale(.small)
+                                    .foregroundStyle(stepColor(step.state, palette: p, failedColor: failedColor))
+                                Text(step.title)
+                                    .font(.system(size: theme.pointSize(.small), weight: step.state == .active ? .medium : .regular))
+                                    .foregroundStyle(stepTextColor(step.state, palette: p, failedColor: failedColor))
+                                    .lineLimit(1)
+                                if step.state == .active, let detail = step.detail, !detail.isEmpty {
+                                    Text("· \(detail)")
+                                        .font(.system(size: theme.pointSize(.micro)))
+                                        .foregroundStyle(p.tertiaryText)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 4)
+                            }
+                            .frame(minHeight: 20)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                }
+                .frame(height: listHeight)
+            }
+        }
+        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .background(p.surface.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(progress.failed > 0 ? failedColor.opacity(0.4) : p.border))
+        .onChange(of: turnKey) { _, _ in
+            isExpanded = false
+        }
+    }
+
+    private func stepIcon(_ state: ChatStepState) -> String {
+        switch state {
+        case .done: "checkmark.circle.fill"
+        case .active: "circle.dotted"
+        case .failed: "xmark.circle.fill"
+        case .planned: "circle"
+        }
+    }
+
+    private func stepColor(_ state: ChatStepState, palette p: NativePalette, failedColor: Color) -> Color {
+        switch state {
+        case .done: .green
+        case .active: p.accent
+        case .failed: failedColor
+        case .planned: p.tertiaryText
+        }
+    }
+
+    private func stepTextColor(_ state: ChatStepState, palette p: NativePalette, failedColor: Color) -> Color {
+        switch state {
+        case .done: p.secondaryText
+        case .active: p.text
+        case .failed: failedColor
+        case .planned: p.tertiaryText
+        }
+    }
+}
+
 // MARK: - Harness Usage Button & Popover
 
 struct ChatHarnessUsageButton: View {

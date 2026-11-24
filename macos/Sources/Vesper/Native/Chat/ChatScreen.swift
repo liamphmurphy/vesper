@@ -71,6 +71,7 @@ struct ChatScreen: View {
     @Environment(\.vesperTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
     @Environment(\.vesperWindowVisible) private var windowVisible
+    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
 
     @State private var model = ChatScreenModel()
     @State private var watched: [QueryKey] = []
@@ -87,6 +88,7 @@ struct ChatScreen: View {
     private static let dockRequest = API.getPersonaDock()
     private static let dockPollInterval: Duration = .seconds(180)
     private static let dockStaleAfter: TimeInterval = 60
+    private static let longTurnUsageRefreshIntervalMs = ChatTurnActivity.longTurnUsageRefreshIntervalMs
     private static let workflowsRequest = API.listWorkflows()
     private static let repositoriesRequest = API.searchRepositories()
 
@@ -163,13 +165,19 @@ struct ChatScreen: View {
         let canvases = canvasesRequest.flatMap { store.entry($0).data?.canvases } ?? []
         let messages = messagesRequest.flatMap { store.entry($0).data?.messages } ?? []
         let costs = costsRequest.flatMap { store.entry($0).data }
+        let liveSince = ChatTurnActivity.runningSince(for: messages)
         let liveActivity: ChatTurnActivity? = {
             guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
             if messages.isEmpty && (session?.messageCount ?? 0) > 0 { return nil }
             let events = store.entry(API.listRunEvents(id: runId)).data?.events ?? []
             guard !events.isEmpty else { return nil }
-            let since = ChatTurnActivity.runningSince(for: messages)
-            return ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: since)
+            return ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: liveSince)
+        }()
+        let livePlanProgress = liveActivity.flatMap { ChatTurnActivity.planProgress(steps: $0.steps, planned: $0.planned) }
+        let livePlanTurnKey = "\(chatId ?? "")|\(liveSince ?? "")"
+        let longTurnUsageRefreshKey: String = {
+            guard session?.state == .running, windowVisible, AppPowerState.shared.isActive else { return "" }
+            return "\(chatId ?? "")|\(session?.currentRunId ?? "")|\(liveSince ?? "")"
         }()
 
         VStack(spacing: 0) {
@@ -256,7 +264,9 @@ struct ChatScreen: View {
                     if model.composerPrefill?.token == token {
                         model.composerPrefill = nil
                     }
-                }
+                },
+                livePlanProgress: livePlanProgress,
+                livePlanTurnKey: livePlanTurnKey
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -345,6 +355,32 @@ struct ChatScreen: View {
                 guard !Task.isCancelled else { return }
                 lastDockFetch = Date()
                 _ = await context.store.refetch(Self.dockRequest)
+            }
+        }
+        .task(id: longTurnUsageRefreshKey) {
+            // While a turn runs past 60s, refresh harness usage/quota every 60s so popovers stay
+            // fresh mid-turn; SwiftUI cancels this task immediately when the turn ends or view leaves.
+            guard !longTurnUsageRefreshKey.isEmpty else { return }
+            let sinceMs = liveSince.map { Int((APIDate.epoch($0) * 1000).rounded()) }
+            let nowMs = Int((Date().timeIntervalSince1970 * 1000).rounded())
+            var initialDelayMs = ChatTurnActivity.longTurnUsageRefreshDelayMs(
+                sinceEpochMs: sinceMs,
+                nowEpochMs: nowMs,
+                intervalMs: Self.longTurnUsageRefreshIntervalMs
+            )
+            if initialDelayMs == 0 {
+                let sinceLastFetchMs = Int((Date().timeIntervalSince(lastDockFetch) * 1000).rounded())
+                if sinceLastFetchMs < Self.longTurnUsageRefreshIntervalMs {
+                    initialDelayMs = max(0, Self.longTurnUsageRefreshIntervalMs - sinceLastFetchMs)
+                }
+            }
+            if initialDelayMs > 0 {
+                try? await Task.sleep(for: .milliseconds(initialDelayMs))
+            }
+            while !Task.isCancelled {
+                lastDockFetch = Date()
+                _ = await context.store.refetch(Self.dockRequest)
+                try? await Task.sleep(for: .milliseconds(Self.longTurnUsageRefreshIntervalMs))
             }
         }
         .task(id: "\(chatId ?? "")|\(session?.unread ?? 0)|\(session?.messageCount ?? 0)") {
@@ -568,6 +604,26 @@ struct ChatScreen: View {
                     onCompact: { focus in await compactChat(focus: focus) }
                 )
             }
+
+            Button {
+                showLiveThinking.toggle()
+            } label: {
+                HStack(spacing: 4) {
+                    Image(systemName: "brain.head.profile")
+                        .imageScale(.small)
+                    Text("Thinking")
+                        .lineLimit(1)
+                }
+                .font(.system(size: theme.pointSize(.small), weight: showLiveThinking ? .semibold : .regular))
+                .foregroundStyle(showLiveThinking ? p.accent : p.secondaryText)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 4)
+                .background(showLiveThinking ? p.selected : p.surface, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(showLiveThinking ? p.accent.opacity(0.6) : p.border))
+            }
+            .buttonStyle(.plain)
+            .help(showLiveThinking ? "Hide live thinking blocks (/thinking off)" : "Stream live thinking blocks inline (/thinking on)")
+            .accessibilityLabel(showLiveThinking ? "Hide live thinking" : "Show live thinking")
 
             modelMenu(session: session, harnessModels: harnessModels)
 
