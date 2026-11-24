@@ -143,13 +143,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 onPopOutChanged: { [weak self] poppedOut in self?.inspectorPopOutChanged(poppedOut) },
                 onPanelEvent: { [weak self] tabId, event, payloadJson in self?.handlePanelEvent(tabId: tabId, event: event, payloadJson: payloadJson) }
             )
-            inspector.panelWeb.ownerWindow = { [weak self] in self?.window }
-            inspector.panelWeb.playgroundPorts = { [weak app] in app?.playgroundPorts ?? defaultPlaygroundPorts }
-            inspector.panelWeb.appearanceCommand = { [weak app] in
-                if let cmd = app?.currentAppearanceCommand() { return cmd }
-                let (accent, mode) = AppearanceMonitor.current()
-                return .appearance(accent: accent, mode: mode)
-            }
             if let conn = app.connection { inspector.connect(conn) }
             let inspItem = NSSplitViewItem(inspectorWithViewController: inspector)
             inspItem.allowsFullHeightLayout = true
@@ -563,7 +556,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func applyAppearanceCommand(_ command: NativeCommand) {
-        inspectorController?.panelWeb.sendAppearance(command)
+        _ = command
     }
 
     func connect(_ conn: Connection) {

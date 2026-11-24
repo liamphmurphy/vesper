@@ -161,10 +161,6 @@ struct ArtifactPreviewPane: View {
                     Button { context.openInNewTab("/print/artifacts/\(a.id)") } label: { Label("Export PDF", systemImage: "printer").frame(maxWidth: .infinity) }
                         .buttonStyle(.vesper())
                 }
-                if a.type == .prd || a.type == .spec, let project = a.project {
-                    Button { context.navigate("/plans?artifact=\(a.id)&project=\(project.key)") } label: { Text("Generate tickets").frame(maxWidth: .infinity) }
-                        .buttonStyle(.vesper())
-                }
             }
         }
         .vesperText(.body, theme)
