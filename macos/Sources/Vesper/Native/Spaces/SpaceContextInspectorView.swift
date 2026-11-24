@@ -31,9 +31,11 @@ struct SpaceContextInspectorView: View {
     @State private var suppressNextPathChange = false
     @State private var syncingBranches = false
     @State private var showClosedBranches = false
+    @State private var addingConnector = false
     @FocusState private var knowledgePathFocused: Bool
 
     private static let personasRequest = API.listPersonas()
+    private static let connectorsRequest = API.listConnectors()
     private static let knowledgePagesRequest = KnowledgeAPI.listPages(includeAgent: true, limit: 200)
 
     private var spaceRequest: APIRequest<API.ChatSpace> { API.getChatSpace(spaceId: spaceId) }
@@ -50,6 +52,7 @@ struct SpaceContextInspectorView: View {
         let sourcesData = context.store.entry(sourcesRequest).data
         let branches = context.store.entry(branchesRequest).data?.branches ?? []
         let personas = context.store.entry(Self.personasRequest).data?.personas ?? []
+        let connectors = context.store.entry(Self.connectorsRequest).data?.connectors ?? []
 
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
@@ -65,6 +68,8 @@ struct SpaceContextInspectorView: View {
                     knowledgeSection(links: links, p: p)
                     Divider()
                     if let space {
+                        connectorsSection(space: space, connectors: connectors, p: p)
+                        Divider()
                         sourcesSection(space: space, sourcesData: sourcesData, p: p)
                     }
                 }
@@ -72,6 +77,9 @@ struct SpaceContextInspectorView: View {
             .padding(14)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .onAppear {
+            context.store.load(Self.connectorsRequest)
+        }
         .task(id: addingKnowledge) {
             guard addingKnowledge else { return }
             await loadKnowledgePages()
@@ -125,6 +133,17 @@ struct SpaceContextInspectorView: View {
             }
             .toggleStyle(.switch)
             .controlSize(.mini)
+
+            if let memLabel = SpacesLogic.memoryCountLabel(space.memoryCount) {
+                HStack(spacing: 5) {
+                    Image(systemName: "brain")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(p.tertiaryText)
+                    Text(memLabel)
+                        .font(.system(size: 11))
+                        .foregroundStyle(p.secondaryText)
+                }
+            }
 
             let instr = space.instructions.trimmingCharacters(in: .whitespacesAndNewlines)
             if !instr.isEmpty {
@@ -482,6 +501,104 @@ struct SpaceContextInspectorView: View {
                         Text(knowledgeError)
                             .font(.system(size: 11))
                             .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+                    }
+                }
+                .padding(8)
+                .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
+                .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+            }
+        }
+    }
+
+    // MARK: - Connectors
+
+    private func connectorsSection(space: API.ChatSpace, connectors: [API.Connector], p: NativePalette) -> some View {
+        let attachedSet = Set(space.connectorIds)
+        let attached = connectors.filter { attachedSet.contains($0.id) }
+        let available = connectors.filter { !attachedSet.contains($0.id) }
+
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("CONNECTORS")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(p.tertiaryText)
+                if !attached.isEmpty {
+                    Text("\(attached.count)")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(p.tertiaryText)
+                }
+                Spacer()
+                if !available.isEmpty {
+                    Button {
+                        addingConnector.toggle()
+                    } label: {
+                        Image(systemName: addingConnector ? "xmark" : "plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(p.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Add a connector to this space")
+                }
+            }
+
+            if connectors.isEmpty {
+                Text("No connectors configured yet. Add one in Settings \u{2192} Connectors.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(p.tertiaryText)
+            } else if attached.isEmpty && !addingConnector {
+                Text("No connectors attached. Chats in this space won\u{2019}t inherit any connectors.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(p.tertiaryText)
+            }
+
+            ForEach(attached, id: \.id) { connector in
+                HStack(spacing: 6) {
+                    Image(systemName: "puzzlepiece.extension")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(p.secondaryText)
+                    Text(connector.name)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(p.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    Button {
+                        let next = SpacesLogic.toggledConnectorIds(space.connectorIds, toggling: connector.id)
+                        patchSpace(API.ChatSpacePatch(connectorIds: next))
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 10))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Remove connector")
+                }
+                .padding(.vertical, 3)
+            }
+
+            if addingConnector && !available.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(available, id: \.id) { connector in
+                        Button {
+                            let next = SpacesLogic.toggledConnectorIds(space.connectorIds, toggling: connector.id)
+                            patchSpace(API.ChatSpacePatch(connectorIds: next))
+                            if available.count == 1 {
+                                addingConnector = false
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: "plus.circle")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(p.accent)
+                                Text(connector.name)
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(p.text)
+                                    .lineLimit(1)
+                                Spacer()
+                            }
+                            .padding(.vertical, 3)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .padding(8)

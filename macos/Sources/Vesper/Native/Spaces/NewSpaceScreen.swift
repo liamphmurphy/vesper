@@ -11,16 +11,19 @@ struct NewSpaceScreen: View {
     @State private var description = ""
     @State private var instructions = ""
     @State private var personaId = ""
+    @State private var selectedConnectorIds: [String] = []
     @State private var spaceMemory = true
     @State private var creating = false
     @State private var errorMessage: String?
 
     private static let personasRequest = API.listPersonas()
+    private static let connectorsRequest = API.listConnectors()
     private static let spacesRequest = API.listChatSpaces()
 
     var body: some View {
         let p = theme.palette
         let personas = context.store.entry(Self.personasRequest).data?.personas ?? []
+        let connectors = context.store.entry(Self.connectorsRequest).data?.connectors ?? []
         let spaces = context.store.entry(Self.spacesRequest).data?.spaces ?? []
         let canCreate = !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !creating
 
@@ -96,6 +99,38 @@ struct NewSpaceScreen: View {
                             }
                         }
                         .labelsHidden()
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Connectors").font(.caption).foregroundStyle(p.secondaryText)
+                        if connectors.isEmpty {
+                            Text("No connectors yet. Add one under Settings \u{2192} Connectors.")
+                                .font(.system(size: 12))
+                                .foregroundStyle(p.tertiaryText)
+                        } else {
+                            VStack(alignment: .leading, spacing: 6) {
+                                ForEach(connectors, id: \.id) { connector in
+                                    Toggle(isOn: Binding(
+                                        get: { selectedConnectorIds.contains(connector.id) },
+                                        set: { _ in
+                                            selectedConnectorIds = SpacesLogic.toggledConnectorIds(
+                                                selectedConnectorIds,
+                                                toggling: connector.id
+                                            )
+                                        }
+                                    )) {
+                                        Text(connector.name)
+                                            .font(.system(size: 13))
+                                            .foregroundStyle(p.text)
+                                    }
+                                    .toggleStyle(.checkbox)
+                                }
+                            }
+                            .padding(10)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+                            .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+                        }
                     }
 
                     Toggle("Space memory (keep memories saved here isolated from general memory)", isOn: $spaceMemory)
@@ -188,6 +223,7 @@ struct NewSpaceScreen: View {
             }
             context.store.observe(Self.spacesRequest)
             context.store.load(Self.personasRequest)
+            context.store.load(Self.connectorsRequest)
             context.store.load(Self.spacesRequest)
         }
         .onDisappear {
@@ -207,6 +243,7 @@ struct NewSpaceScreen: View {
                 let created = try await context.store.mutate(
                     API.createChatSpace(body: API.NewChatSpace(
                         color: color,
+                        connectorIds: selectedConnectorIds,
                         description: description.trimmingCharacters(in: .whitespacesAndNewlines),
                         instructions: instructions.trimmingCharacters(in: .whitespacesAndNewlines),
                         name: trimmedName,

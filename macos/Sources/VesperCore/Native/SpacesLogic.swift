@@ -580,6 +580,30 @@ public enum SpacesLogic {
             )
         }
     }
+
+    // MARK: - Connectors & Memory helpers
+
+    /// Toggles `connectorId` in a space's connector list, preserving order and avoiding duplicates.
+    public static func toggledConnectorIds(_ current: [String], toggling connectorId: String) -> [String] {
+        if current.contains(connectorId) {
+            return current.filter { $0 != connectorId }
+        }
+        var next: [String] = []
+        var seen = Set<String>()
+        for id in current where seen.insert(id).inserted {
+            next.append(id)
+        }
+        if seen.insert(connectorId).inserted {
+            next.append(connectorId)
+        }
+        return next
+    }
+
+    /// Formats a space's saved memory count, or nil when zero.
+    public static func memoryCountLabel(_ count: Int) -> String? {
+        guard count > 0 else { return nil }
+        return count == 1 ? "1 saved memory" : "\(count) saved memories"
+    }
 }
 
 public extension API.ChatSpaceBranch {
