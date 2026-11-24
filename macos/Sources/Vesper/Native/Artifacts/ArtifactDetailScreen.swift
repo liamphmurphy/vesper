@@ -524,13 +524,6 @@ struct ArtifactDetailScreen: View {
                         }
                     }
                 }
-
-                if (artifact.type == .prd || artifact.type == .spec), let project = artifact.project {
-                    Button("Generate tickets") {
-                        context.navigate("/plans?artifact=\(artifact.id)&project=\(project.key)")
-                    }
-                    .buttonStyle(.vesper(.outline))
-                }
             }
             .padding(20)
         }

@@ -3,9 +3,9 @@ import ObjectiveC
 import VesperCore
 import WebKit
 
-enum WebViewKind { case vesper, inspectorPanel, playground }
+enum WebViewKind { case vesper, playground }
 
-/// Builds the web views. Vesper and inspector-panel pages share the default
+/// Builds the web views. Vesper pages share the default
 /// (persistent) data store and get the native bridge; playground pages get a separate
 /// non-persistent store (so the session cookie, which is not port-scoped, never reaches them)
 /// and neither the bridge nor the native-mode script.
@@ -25,11 +25,6 @@ enum WebViewFactory {
     document.documentElement.classList.add("native-mac");
     """
 
-    private static let inspectorPanelModeScript = """
-    window.__VESPER_NATIVE__ = {v:1, platform:"macos"};
-    document.documentElement.classList.add("native-mac", "native-inspector-panel", "native-inspector-glass");
-    """
-
     static func makeWebView(
         kind: WebViewKind,
         bridge: WKScriptMessageHandler?,
@@ -44,13 +39,9 @@ enum WebViewFactory {
             config.allowsAirPlayForMediaPlayback = true
         }
         switch kind {
-        case .vesper, .inspectorPanel:
+        case .vesper:
             config.websiteDataStore = WKWebsiteDataStore.default()
-            let source: String = switch kind {
-            case .inspectorPanel: inspectorPanelModeScript
-            case .vesper, .playground: nativeModeScript
-            }
-            let script = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: true)
+            let script = WKUserScript(source: nativeModeScript, injectionTime: .atDocumentStart, forMainFrameOnly: true)
             config.userContentController.addUserScript(script)
             if let bridge { config.userContentController.add(bridge, name: handlerName) }
             enablePrivateMediaPreferences(config.preferences)
@@ -58,17 +49,15 @@ enum WebViewFactory {
                 disable60FPSCap(config.preferences)
             }
             if let services { WebPageServices.install(on: config.userContentController, services: services) }
-            if kind == .vesper, let osBridge { CustomAppOSBridge.install(on: config.userContentController, bridge: osBridge) }
+            if let osBridge { CustomAppOSBridge.install(on: config.userContentController, bridge: osBridge) }
         case .playground:
             config.websiteDataStore = playgroundStore
         }
         let webView = WKWebView(frame: .zero, configuration: config)
         webView.isInspectable = true
-        webView.allowsBackForwardNavigationGestures = kind == .vesper || kind == .playground
+        webView.allowsBackForwardNavigationGestures = true
         webView.allowsMagnification = true
-        if kind == .inspectorPanel {
-            disableBackground(webView)
-        } else if kind != .playground, let background = lastPageBackground {
+        if kind != .playground, let background = lastPageBackground {
             webView.underPageBackgroundColor = background
         }
         return webView

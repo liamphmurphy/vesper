@@ -6,7 +6,8 @@ import { cx } from "@/lib/cx";
 import { Icon } from "@/components/ui/icon";
 import { floatPanel } from "@/components/domain/pickers";
 import { catalogModelLabel } from "@/lib/chat-ui";
-import { composerGhost } from "./reply-tools";
+const composerGhost =
+  "flex h-[30px] max-w-full items-center gap-1 rounded-full px-2 text-13 text-fg-secondary hover:bg-hover hover:text-fg disabled:cursor-not-allowed disabled:opacity-50";
 
 /** auto routes the model per message (the server's AutoModel); model is then the one it starts from. */
 export type Selection = { harness: Harness; model: string; auto?: boolean };

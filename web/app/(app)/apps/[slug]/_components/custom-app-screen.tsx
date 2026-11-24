@@ -3,7 +3,6 @@
 import { useQueryClient } from "@tanstack/react-query";
 import { useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Conversation, type ConversationContext, type DockWelcome } from "@/app/(app)/chat/_components/conversation";
 import { PersonaAvatar, personaLook, useDockPersona } from "@/app/(app)/chat/_components/persona";
 import { DockChatSwitcher, type DockChatSection } from "@/components/domain/dock-chat-switcher";
 import { DockContext, dockContextChip } from "@/components/domain/dock-context";
@@ -1727,17 +1726,6 @@ function useCustomAppDockChat({
     />
   );
 
-  const appWelcome: DockWelcome = {
-    where: `in ${app.name}`,
-    intro: "Ask me to build new views, evolve the SQLite tables, or wire in Vesper APIs and MCP connectors.",
-    label: "App ideas",
-    starters: [
-      { icon: "dashboard", title: "Add a view or chart", prompt: `Add a summary view and interactive filters to "${app.name}".` },
-      { icon: "server", title: "Inspect & evolve SQLite schema", prompt: `Inspect the SQLite schema in "${app.name}" and suggest useful columns or views.` },
-      { icon: "bolt", title: "Connect Vesper API data", prompt: `Show how to connect "${app.name}" to Vesper tickets, runs, or Knowledge via bridge.api.` },
-    ],
-  };
-
   const renderContext = (className?: string) => (
     <DockContext persona={personaName} label="Custom app context" className={className}>
       <span className={dockContextChip} title={`/apps/${app.slug}`}>
@@ -1746,31 +1734,6 @@ function useCustomAppDockChat({
       </span>
     </DockContext>
   );
-
-  const conversationContext: ConversationContext = {
-    hidden: true,
-    composer: renderContext(),
-    prepare: async (input) => ({
-      ...input,
-      body: withCustomAppContext(input.body, {
-        slug: app.slug,
-        name: app.name,
-        seq: app.current_seq,
-        activeNav: currentNav,
-        error: runtimeError ?? undefined,
-      }),
-    }),
-    prepareText: async (body) =>
-      withCustomAppContext(body, {
-        slug: app.slug,
-        name: app.name,
-        seq: app.current_seq,
-        activeNav: currentNav,
-        error: runtimeError ?? undefined,
-      }),
-    onSent: () => {},
-    welcome: appWelcome,
-  };
 
   return {
     knownChats,
@@ -1782,136 +1745,8 @@ function useCustomAppDockChat({
     selectChat,
     startChat,
     switcher,
-    conversationContext,
     renderContext,
   };
-}
-
-function CustomAppChatPane({
-  app,
-  knownChats,
-  chatId,
-  switcher,
-  conversationContext,
-  renderContext,
-  createPending,
-  createError,
-  onStartChat,
-  onSelectChat,
-}: {
-  app: CustomAppDetail;
-  knownChats: Schemas["ChatSession"][];
-  chatId?: string;
-  switcher: React.ReactNode;
-  conversationContext: ConversationContext;
-  renderContext: (className?: string) => React.ReactNode;
-  createPending: boolean;
-  createError: unknown;
-  onStartChat: () => void;
-  onSelectChat: (id: string) => void;
-}) {
-  if (chatId) {
-    return (
-      <Conversation
-        key={chatId}
-        id={chatId}
-        docked
-        hideTitle
-        onNew={onStartChat}
-        onReplace={onSelectChat}
-        context={conversationContext}
-        actions={switcher}
-      />
-    );
-  }
-  return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col">
-      {knownChats.length > 0 && switcher}
-      <div className="flex min-w-0 flex-1 flex-col items-center justify-center gap-3 p-6 text-center">
-        <Icon name="msg" size={22} className="text-fg-tertiary" />
-        {renderContext("justify-center")}
-        <p className="max-w-[260px] text-13 text-fg-secondary">
-          Talk to a persona about <span className="font-medium text-fg">{app.name}</span>. It can read its files, run SQLite queries, and ship new versions with you.
-        </p>
-        <Button variant="primary" disabled={createPending} onClick={onStartChat}>
-          {createPending ? "Starting…" : "Start a chat"}
-        </Button>
-        {createError ? <p className="text-12 text-pill-blocked-fg">{errorText(createError)}</p> : null}
-      </div>
-    </div>
-  );
-}
-
-function CustomAppChatPanelLoaded({
-  app,
-  activeNav,
-  runtimeError,
-  chatId: controlledChatId,
-  onSelectChat,
-}: {
-  app: CustomAppDetail;
-  activeNav?: string;
-  runtimeError?: string | null;
-  chatId?: string;
-  onSelectChat?: (id: string) => void;
-}) {
-  const dockChat = useCustomAppDockChat({
-    app,
-    currentNav: activeNav,
-    runtimeError,
-    controlledChatId,
-    onSelectChat,
-  });
-  return (
-    <CustomAppChatPane
-      app={app}
-      knownChats={dockChat.knownChats}
-      chatId={dockChat.chatId}
-      switcher={dockChat.switcher}
-      conversationContext={dockChat.conversationContext}
-      renderContext={dockChat.renderContext}
-      createPending={dockChat.createChat.isPending}
-      createError={dockChat.createChat.error}
-      onStartChat={dockChat.startChat}
-      onSelectChat={dockChat.selectChat}
-    />
-  );
-}
-
-export function CustomAppChatPanel({
-  slug,
-  activeNav,
-  runtimeError,
-  chatId,
-  onSelectChat,
-}: {
-  slug: string;
-  activeNav?: string;
-  runtimeError?: string | null;
-  chatId?: string;
-  onSelectChat?: (id: string) => void;
-}) {
-  const query = useCustomApp(slug);
-  if (query.isError) {
-    return (
-      <div className="p-4">
-        <Banner tone="blocked" title="Couldn’t load custom app">
-          {errorText(query.error)}
-        </Banner>
-      </div>
-    );
-  }
-  if (!query.data) return <Skeleton className="m-3 h-40" />;
-  return (
-    <CustomAppChatPanelLoaded
-      key={query.data.id}
-      app={query.data}
-      activeNav={activeNav}
-      runtimeError={runtimeError}
-      chatId={chatId}
-      onSelectChat={onSelectChat}
-    />
-  );
 }
 
 export function CustomAppCodePanel({ slug }: { slug: string }) {
