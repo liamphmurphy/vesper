@@ -111,7 +111,11 @@ SELECT s.id,
   (SELECT count(*) FROM memories m WHERE m.space_id = s.id AND m.superseded_by IS NULL)::int AS memory_count,
   (SELECT count(*) FROM chat_space_repositories r WHERE r.space_id = s.id)::int AS repo_count,
   (SELECT count(*) FROM chat_space_knowledge_links k WHERE k.space_id = s.id)::int AS knowledge_count,
-  (SELECT count(*) FROM chat_space_tasks t WHERE t.space_id = s.id AND NOT t.done)::int AS open_task_count
+  (SELECT count(*) FROM chat_space_tasks t WHERE t.space_id = s.id AND NOT t.done)::int AS open_task_count,
+  GREATEST(
+    s.updated_at,
+    COALESCE((SELECT max(coalesce(c.last_message_at, c.created_at)) FROM chat_sessions c WHERE c.space_id = s.id AND NOT c.archived AND NOT c.hidden), s.updated_at)
+  )::timestamptz AS last_activity_at
 FROM chat_spaces s WHERE s.id = ANY($1::uuid[])
 `
 
@@ -123,9 +127,10 @@ type ChatSpaceStatsRow struct {
 	RepoCount      int32
 	KnowledgeCount int32
 	OpenTaskCount  int32
+	LastActivityAt time.Time
 }
 
-// Per space: active chats, sources, live memories, repos, knowledge links and open tasks.
+// Per space: active chats, sources, live memories, repos, knowledge links, open tasks and latest activity.
 func (q *Queries) ChatSpaceStats(ctx context.Context, ids []uuid.UUID) ([]ChatSpaceStatsRow, error) {
 	rows, err := q.db.Query(ctx, chatSpaceStats, ids)
 	if err != nil {
@@ -143,6 +148,7 @@ func (q *Queries) ChatSpaceStats(ctx context.Context, ids []uuid.UUID) ([]ChatSp
 			&i.RepoCount,
 			&i.KnowledgeCount,
 			&i.OpenTaskCount,
+			&i.LastActivityAt,
 		); err != nil {
 			return nil, err
 		}
@@ -840,11 +846,146 @@ func (q *Queries) LinkChatSpaceTaskChat(ctx context.Context, arg LinkChatSpaceTa
 	return err
 }
 
-const listChatSpaceCodeReviews = `-- name: ListChatSpaceCodeReviews :many
-SELECT cr.chat_id, c.title AS chat_title, cr.repo_url, cr.branch, cr.dirty, cr.live, cr.updated_at
+const listAllChatSpaceCodeReviews = `-- name: ListAllChatSpaceCodeReviews :many
+SELECT cr.chat_id, c.title AS chat_title, s.id AS space_id, s.name AS space_name,
+       cr.repo_url, cr.branch, cr.head_sha, cr.dirty, cr.live, cr.updated_at
 FROM chat_code_reviews cr
 JOIN chat_sessions c ON c.id = cr.chat_id
-WHERE c.space_id = $1 AND c.workspace_id = $2 AND c.created_by = $3 AND NOT c.hidden
+JOIN chat_spaces s ON s.id = c.space_id AND s.app IS NULL
+WHERE c.workspace_id = $1 AND c.created_by = $2
+  AND NOT c.hidden AND NOT c.archived
+  AND cr.branch IS NOT NULL AND cr.branch <> ''
+ORDER BY cr.updated_at DESC
+LIMIT 100
+`
+
+type ListAllChatSpaceCodeReviewsParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type ListAllChatSpaceCodeReviewsRow struct {
+	ChatID    uuid.UUID
+	ChatTitle string
+	SpaceID   uuid.UUID
+	SpaceName string
+	RepoUrl   string
+	Branch    *string
+	HeadSha   *string
+	Dirty     bool
+	Live      bool
+	UpdatedAt time.Time
+}
+
+func (q *Queries) ListAllChatSpaceCodeReviews(ctx context.Context, arg ListAllChatSpaceCodeReviewsParams) ([]ListAllChatSpaceCodeReviewsRow, error) {
+	rows, err := q.db.Query(ctx, listAllChatSpaceCodeReviews, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllChatSpaceCodeReviewsRow{}
+	for rows.Next() {
+		var i ListAllChatSpaceCodeReviewsRow
+		if err := rows.Scan(
+			&i.ChatID,
+			&i.ChatTitle,
+			&i.SpaceID,
+			&i.SpaceName,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.HeadSha,
+			&i.Dirty,
+			&i.Live,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listAllChatSpacePushRequests = `-- name: ListAllChatSpacePushRequests :many
+SELECT pr.id, pr.chat_id, c.title AS chat_title, s.id AS space_id, s.name AS space_name,
+       pr.repo_url, pr.branch, pr.head_sha, pr.title AS pr_title, pr.state, pr.pr_state,
+       pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
+FROM push_requests pr
+JOIN chat_sessions c ON c.id = pr.chat_id
+JOIN chat_spaces s ON s.id = c.space_id AND s.app IS NULL
+WHERE c.workspace_id = $1 AND c.created_by = $2
+  AND NOT c.hidden AND NOT c.archived
+ORDER BY pr.created_at DESC
+LIMIT 100
+`
+
+type ListAllChatSpacePushRequestsParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type ListAllChatSpacePushRequestsRow struct {
+	ID        uuid.UUID
+	ChatID    uuid.UUID
+	ChatTitle string
+	SpaceID   uuid.UUID
+	SpaceName string
+	RepoUrl   string
+	Branch    string
+	HeadSha   *string
+	PrTitle   string
+	State     string
+	PrState   *string
+	PrUrl     *string
+	PrNumber  *int32
+	CreatedAt time.Time
+	DecidedAt *time.Time
+}
+
+func (q *Queries) ListAllChatSpacePushRequests(ctx context.Context, arg ListAllChatSpacePushRequestsParams) ([]ListAllChatSpacePushRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listAllChatSpacePushRequests, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListAllChatSpacePushRequestsRow{}
+	for rows.Next() {
+		var i ListAllChatSpacePushRequestsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatID,
+			&i.ChatTitle,
+			&i.SpaceID,
+			&i.SpaceName,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.HeadSha,
+			&i.PrTitle,
+			&i.State,
+			&i.PrState,
+			&i.PrUrl,
+			&i.PrNumber,
+			&i.CreatedAt,
+			&i.DecidedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpaceCodeReviews = `-- name: ListChatSpaceCodeReviews :many
+SELECT cr.chat_id, c.title AS chat_title, c.space_id, cr.repo_url, cr.branch, cr.head_sha, cr.dirty, cr.live, cr.updated_at
+FROM chat_code_reviews cr
+JOIN chat_sessions c ON c.id = cr.chat_id
+WHERE c.space_id = $1 AND c.workspace_id = $2 AND c.created_by = $3
+  AND NOT c.hidden AND NOT c.archived
   AND cr.branch IS NOT NULL AND cr.branch <> ''
 ORDER BY cr.updated_at DESC
 LIMIT 50
@@ -859,8 +1000,10 @@ type ListChatSpaceCodeReviewsParams struct {
 type ListChatSpaceCodeReviewsRow struct {
 	ChatID    uuid.UUID
 	ChatTitle string
+	SpaceID   *uuid.UUID
 	RepoUrl   string
 	Branch    *string
+	HeadSha   *string
 	Dirty     bool
 	Live      bool
 	UpdatedAt time.Time
@@ -878,8 +1021,10 @@ func (q *Queries) ListChatSpaceCodeReviews(ctx context.Context, arg ListChatSpac
 		if err := rows.Scan(
 			&i.ChatID,
 			&i.ChatTitle,
+			&i.SpaceID,
 			&i.RepoUrl,
 			&i.Branch,
+			&i.HeadSha,
 			&i.Dirty,
 			&i.Live,
 			&i.UpdatedAt,
@@ -959,11 +1104,12 @@ func (q *Queries) ListChatSpaceKnowledgeLinksBySpaceIDs(ctx context.Context, spa
 }
 
 const listChatSpacePushRequests = `-- name: ListChatSpacePushRequests :many
-SELECT pr.id, pr.chat_id, c.title AS chat_title, pr.repo_url, pr.branch, pr.title AS pr_title,
-       pr.state, pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
+SELECT pr.id, pr.chat_id, c.title AS chat_title, c.space_id, pr.repo_url, pr.branch, pr.head_sha,
+       pr.title AS pr_title, pr.state, pr.pr_state, pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
 FROM push_requests pr
 JOIN chat_sessions c ON c.id = pr.chat_id
-WHERE c.space_id = $1 AND c.workspace_id = $2 AND c.created_by = $3 AND NOT c.hidden
+WHERE c.space_id = $1 AND c.workspace_id = $2 AND c.created_by = $3
+  AND NOT c.hidden AND NOT c.archived
 ORDER BY pr.created_at DESC
 LIMIT 50
 `
@@ -978,10 +1124,13 @@ type ListChatSpacePushRequestsRow struct {
 	ID        uuid.UUID
 	ChatID    uuid.UUID
 	ChatTitle string
+	SpaceID   *uuid.UUID
 	RepoUrl   string
 	Branch    string
+	HeadSha   *string
 	PrTitle   string
 	State     string
+	PrState   *string
 	PrUrl     *string
 	PrNumber  *int32
 	CreatedAt time.Time
@@ -1001,10 +1150,13 @@ func (q *Queries) ListChatSpacePushRequests(ctx context.Context, arg ListChatSpa
 			&i.ID,
 			&i.ChatID,
 			&i.ChatTitle,
+			&i.SpaceID,
 			&i.RepoUrl,
 			&i.Branch,
+			&i.HeadSha,
 			&i.PrTitle,
 			&i.State,
+			&i.PrState,
 			&i.PrUrl,
 			&i.PrNumber,
 			&i.CreatedAt,

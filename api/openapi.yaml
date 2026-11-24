@@ -5143,16 +5143,53 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chat-spaces/branches:
+    get:
+      operationId: listAllChatSpaceBranches
+      summary: Active (in-flight) branches and pull requests across all spaces
+      tags: [spaces]
+      responses:
+        "200":
+          description: Active branches and PRs across the caller's spaces
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [branches]
+                properties:
+                  branches: { type: array, items: { $ref: "#/components/schemas/ChatSpaceBranch" } }
+        default: { $ref: "#/components/responses/Error" }
+
   /chat-spaces/{spaceId}/branches:
     parameters:
       - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
     get:
       operationId: listChatSpaceBranches
-      summary: Active branches and pull requests across a space's chats
+      summary: Active and recent branches and pull requests across a space's chats
       tags: [spaces]
       responses:
         "200":
           description: Space branches and PRs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [branches]
+                properties:
+                  branches: { type: array, items: { $ref: "#/components/schemas/ChatSpaceBranch" } }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/branches/sync:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      operationId: syncChatSpaceBranches
+      summary: Immediately refresh GitHub pull request states for a space's open PRs
+      tags: [spaces]
+      responses:
+        "200":
+          description: Refreshed space branches and PRs
           content:
             application/json:
               schema:
@@ -7671,17 +7708,21 @@ components:
         position: { type: integer }
     ChatSpaceBranch:
       type: object
-      required: [chat_id, chat_title, repo_url, branch, dirty, live, updated_at]
+      required: [chat_id, chat_title, repo_url, branch, dirty, live, active, updated_at]
       properties:
+        space_id: { type: string, format: uuid }
+        space_name: { type: string }
         chat_id: { type: string, format: uuid }
         chat_title: { type: string }
         repo_url: { type: string }
         branch: { type: string }
         dirty: { type: boolean }
         live: { type: boolean }
+        active: { type: boolean, description: "True while the branch or PR is still in flight (open/draft PR, pending push, or unpushed local work)" }
         pr_url: { type: string }
         pr_number: { type: integer }
         pr_title: { type: string }
+        pr_state: { $ref: "#/components/schemas/PullRequestState" }
         push_state: { type: string }
         updated_at: { type: string, format: date-time }
     ChatSpace:
@@ -7708,6 +7749,7 @@ components:
         repositories: { type: array, items: { $ref: "#/components/schemas/ChatSpaceRepository" } }
         knowledge_links: { type: array, items: { $ref: "#/components/schemas/ChatSpaceKnowledgeLink" } }
         inline_tokens: { type: integer, description: "Estimated tokens of the sources every turn may read" }
+        last_activity_at: { type: string, format: date-time, description: "Most recent chat activity or update in this space" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
     SpaceWork:

@@ -218,6 +218,10 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	if cfg.PRSyncInterval > 0 {
 		sync := &prsync.Syncer{Pool: pool, Secrets: secretsSvc, Tracker: trackerSvc, Log: log,
 			MinAge: time.Duration(cfg.PRSyncInterval) * time.Second}
+		srv.SyncSpacePRs = func(ctx context.Context, ws, user, space uuid.UUID) error {
+			_, err := sync.SyncSpace(ctx, ws, user, space)
+			return err
+		}
 		go sync.Run(ctx, time.Duration(cfg.PRSyncInterval)*time.Second)
 		approvals := &githubpr.ApprovalSyncer{Queries: q, Secrets: secretsSvc, GitHub: &githubpr.Service{BaseURL: srv.GitHubAPIURL}, Log: log}
 		go approvals.Run(ctx, time.Duration(cfg.PRSyncInterval)*time.Second)

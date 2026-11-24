@@ -247,6 +247,17 @@ WHERE p.pr_url IS NOT NULL AND coalesce(p.pr_state, 'open') IN ('draft', 'open')
 ORDER BY p.pr_synced_at NULLS FIRST
 LIMIT 50;
 
+-- name: SpacePushRequestsWithOpenPRs :many
+-- Open PRs in one space for on-demand refresh (bypasses min_age_s).
+SELECT p.id, p.workspace_id, p.chat_id, p.repo_url, p.branch, p.run_id, p.pr_url, p.pr_number, p.pr_state, cs.project_id
+FROM push_requests p
+JOIN chat_sessions cs ON cs.id = p.chat_id
+WHERE cs.space_id = @space_id AND cs.workspace_id = @workspace_id AND cs.created_by = @user_id
+  AND NOT cs.hidden AND NOT cs.archived
+  AND p.pr_url IS NOT NULL AND coalesce(p.pr_state, 'open') IN ('draft', 'open')
+ORDER BY p.pr_synced_at NULLS FIRST
+LIMIT 50;
+
 -- name: UpdatePushRequestPRSync :exec
 UPDATE push_requests SET pr_state = $2, pr_synced_at = now()
 WHERE id = $1;

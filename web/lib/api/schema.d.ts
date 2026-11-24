@@ -4241,6 +4241,23 @@ export interface paths {
         patch: operations["updateChatSpaceTask"];
         trace?: never;
     };
+    "/chat-spaces/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Active (in-flight) branches and pull requests across all spaces */
+        get: operations["listAllChatSpaceBranches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/chat-spaces/{spaceId}/branches": {
         parameters: {
             query?: never;
@@ -4250,10 +4267,29 @@ export interface paths {
             };
             cookie?: never;
         };
-        /** Active branches and pull requests across a space's chats */
+        /** Active and recent branches and pull requests across a space's chats */
         get: operations["listChatSpaceBranches"];
         put?: never;
         post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/branches/sync": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Immediately refresh GitHub pull request states for a space's open PRs */
+        post: operations["syncChatSpaceBranches"];
         delete?: never;
         options?: never;
         head?: never;
@@ -6316,15 +6352,21 @@ export interface components {
         };
         ChatSpaceBranch: {
             /** Format: uuid */
+            space_id?: string;
+            space_name?: string;
+            /** Format: uuid */
             chat_id: string;
             chat_title: string;
             repo_url: string;
             branch: string;
             dirty: boolean;
             live: boolean;
+            /** @description True while the branch or PR is still in flight (open/draft PR, pending push, or unpushed local work) */
+            active: boolean;
             pr_url?: string;
             pr_number?: number;
             pr_title?: string;
+            pr_state?: components["schemas"]["PullRequestState"];
             push_state?: string;
             /** Format: date-time */
             updated_at: string;
@@ -6365,6 +6407,11 @@ export interface components {
             knowledge_links?: components["schemas"]["ChatSpaceKnowledgeLink"][];
             /** @description Estimated tokens of the sources every turn may read */
             inline_tokens: number;
+            /**
+             * Format: date-time
+             * @description Most recent chat activity or update in this space
+             */
+            last_activity_at?: string;
             /** Format: date-time */
             created_at: string;
             /** Format: date-time */
@@ -18276,6 +18323,29 @@ export interface operations {
             default: components["responses"]["Error"];
         };
     };
+    listAllChatSpaceBranches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active branches and PRs across the caller's spaces */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        branches: components["schemas"]["ChatSpaceBranch"][];
+                    };
+                };
+            };
+            default: components["responses"]["Error"];
+        };
+    };
     listChatSpaceBranches: {
         parameters: {
             query?: never;
@@ -18288,6 +18358,32 @@ export interface operations {
         requestBody?: never;
         responses: {
             /** @description Space branches and PRs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        branches: components["schemas"]["ChatSpaceBranch"][];
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    syncChatSpaceBranches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Refreshed space branches and PRs */
             200: {
                 headers: {
                     [name: string]: unknown;
