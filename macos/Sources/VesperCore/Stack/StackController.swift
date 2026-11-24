@@ -135,8 +135,8 @@ public final class StackController {
     public var minFreeDiskGb = 10
     /// RUNNER_MAX_CONCURRENT for the next start (the environment variable still wins). nil: leave the runner's default.
     public var runnerSlotsOverride: Int?
-    /// RUNNER_EXTRA_CA_FILE for the next start (the environment variable still wins). nil: none.
-    public var extraCaFileOverride: String?
+    /// RUNNER_EXTRA_CA_FILE paths for the next start (the environment variable still wins). Empty: none.
+    public var extraCaFilesOverride: [String] = []
     /// Called when the process exits on its own after a successful start. `willRestart` says whether auto-restart will follow.
     public var onCrash: ((StackExitInfo, _ willRestart: Bool) -> Void)?
     /// Called whenever `session` changes (monitors start and stop from here).
@@ -191,7 +191,7 @@ public final class StackController {
         autoRestart = settings.autoRestart
         minFreeDiskGb = settings.minFreeDiskGb
         runnerSlotsOverride = settings.runnerSlots
-        extraCaFileOverride = settings.extraCaFile.isEmpty ? nil : settings.extraCaFile
+        extraCaFilesOverride = settings.extraCaFiles
         recomputeHealth()
     }
 
@@ -263,7 +263,7 @@ public final class StackController {
         let launch = StackLaunch(
             resources: resources, dataDirectory: dataDirectory, secretsKey: secretsKey, port: options.port,
             nodeBin: StackLaunch.resolveNode(resources: resources, environment: env), rootfsUrl: rootfsUrl,
-            runnerSlots: runnerSlotsOverride, extraCaFile: extraCaFileOverride
+            runnerSlots: runnerSlotsOverride, extraCaFiles: extraCaFilesOverride
         )
 
         generation += 1

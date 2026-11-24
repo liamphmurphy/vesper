@@ -77,12 +77,12 @@ public struct StackLaunch: Sendable {
     public var rootfsUrl: String?
     /// Runs the local runner executes at once (RUNNER_MAX_CONCURRENT). The variable in the environment wins.
     public var runnerSlots: Int?
-    /// A PEM file of roots agent VMs trust, for a TLS-inspecting proxy (RUNNER_EXTRA_CA_FILE). The variable in the environment wins.
-    public var extraCaFile: String?
+    /// PEM or DER files of roots agent VMs trust, for a TLS-inspecting proxy (RUNNER_EXTRA_CA_FILE). The variable in the environment wins.
+    public var extraCaFiles: [String]
 
     public init(
         resources: BundledResources, dataDirectory: URL, secretsKey: String, port: Int = 8080, nodeBin: String? = nil,
-        rootfsUrl: String? = nil, runnerSlots: Int? = nil, extraCaFile: String? = nil
+        rootfsUrl: String? = nil, runnerSlots: Int? = nil, extraCaFiles: [String] = []
     ) {
         self.resources = resources
         self.dataDirectory = dataDirectory
@@ -91,7 +91,7 @@ public struct StackLaunch: Sendable {
         self.nodeBin = nodeBin
         self.rootfsUrl = rootfsUrl
         self.runnerSlots = runnerSlots
-        self.extraCaFile = extraCaFile
+        self.extraCaFiles = extraCaFiles
     }
 
     public var address: String { "127.0.0.1:\(port)" }
@@ -114,8 +114,9 @@ public struct StackLaunch: Sendable {
         if let slots = runnerSlots, slots > 0, base["RUNNER_MAX_CONCURRENT"]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
             env["RUNNER_MAX_CONCURRENT"] = String(slots)
         }
-        if let ca = extraCaFile, !ca.isEmpty, base["RUNNER_EXTRA_CA_FILE"]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
-            env["RUNNER_EXTRA_CA_FILE"] = ca
+        let caPaths = extraCaFiles.filter { !$0.isEmpty }
+        if !caPaths.isEmpty, base["RUNNER_EXTRA_CA_FILE"]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
+            env["RUNNER_EXTRA_CA_FILE"] = caPaths.joined(separator: ":")
         }
         env["VESPER_APP_SIGN_IN_CODE"] = "stdout"
         env.removeValue(forKey: "VESPER_NO_SIGNIN")

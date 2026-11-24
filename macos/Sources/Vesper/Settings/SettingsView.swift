@@ -537,19 +537,36 @@ struct SettingsDetail: View {
                         range: 1...32, value: bind(\.stack.runnerSlots))
             LabeledContent {
                 HStack {
-                    Button("Choose…") { chooseExtraCaFile() }
-                    if !s.stack.extraCaFile.isEmpty {
+                    Button(s.stack.extraCaFiles.isEmpty ? "Choose…" : "Add…") { chooseExtraCaFiles() }
+                    if !s.stack.extraCaFiles.isEmpty {
                         Button("Clear") {
                             extraCaMessage = nil
-                            aux.update { $0.stack.extraCaFile = "" }
+                            aux.update { $0.stack.extraCaFiles = [] }
                         }
                     }
                 }
             } label: {
-                Text("Corporate root certificate")
-                Text(extraCaMessage ?? (s.stack.extraCaFile.isEmpty
-                    ? "Behind a proxy that inspects HTTPS, such as Zscaler, choose its root certificate (PEM) so agent VMs trust it. Applies when the runner next starts."
-                    : "\(s.stack.extraCaFile). Applies when the runner next starts."))
+                Text("Corporate root certificates")
+                if let extraCaMessage {
+                    Text(extraCaMessage).font(.callout).foregroundStyle(.red)
+                }
+                if s.stack.extraCaFiles.isEmpty {
+                    Text("Behind a proxy that inspects HTTPS, such as Zscaler, choose one or more root or intermediate certificates (PEM, CRT or CER) so agent VMs trust them. Applies when the runner next starts.")
+                } else {
+                    Text("Applies when the runner next starts.")
+                }
+            }
+            ForEach(s.stack.extraCaFiles, id: \.self) { path in
+                LabeledContent {
+                    Button("Remove") {
+                        extraCaMessage = nil
+                        aux.update { $0.stack.extraCaFiles.removeAll { $0 == path } }
+                    }
+                    .controlSize(.small)
+                } label: {
+                    Text(URL(fileURLWithPath: path).lastPathComponent)
+                    Text(path).font(.caption).foregroundStyle(.secondary).lineLimit(1).truncationMode(.middle)
+                }
             }
             LabeledContent {
                 Button("Restart Local Stack") {
@@ -804,21 +821,32 @@ struct SettingsDetail: View {
         if panel.runModal() == .OK, let url = panel.url { aux.update { $0.backups.export.folder = url.path } }
     }
 
-    /// Keeps only a file that holds a PEM certificate; the runner checks the rest when it starts.
-    private func chooseExtraCaFile() {
+    /// Keeps only files holding PEM or binary DER X.509 certificates; the runner verifies them again when it starts.
+    private func chooseExtraCaFiles() {
         let panel = NSOpenPanel()
-        panel.title = "Choose a Root Certificate (PEM)"
-        panel.message = "Export it with: security find-certificate -a -c Zscaler -p /Library/Keychains/System.keychain > ~/zscaler-root.pem"
+        panel.title = "Choose Root Certificates (PEM, CRT or CER)"
+        panel.message = "Select one or more .pem, .crt or .cer files, or export them with: security find-certificate -a -c Zscaler -p /Library/Keychains/System.keychain > ~/zscaler-root.pem"
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
-        panel.allowsMultipleSelection = false
-        guard panel.runModal() == .OK, let url = panel.url else { return }
-        guard let text = try? String(contentsOf: url, encoding: .utf8), text.contains("-----BEGIN CERTIFICATE-----") else {
-            extraCaMessage = "\(url.lastPathComponent) isn't a PEM certificate. Export it as PEM (the security command above does)."
-            return
+        panel.allowsMultipleSelection = true
+        guard panel.runModal() == .OK, !panel.urls.isEmpty else { return }
+        var accepted: [String] = []
+        var errors: [String] = []
+        for url in panel.urls {
+            if let err = ExtraCACertificate.validateFile(at: url) {
+                errors.append(err)
+            } else {
+                accepted.append(url.path)
+            }
         }
-        extraCaMessage = nil
-        aux.update { $0.stack.extraCaFile = url.path }
+        if !accepted.isEmpty {
+            aux.update {
+                for path in accepted where !$0.stack.extraCaFiles.contains(path) {
+                    $0.stack.extraCaFiles.append(path)
+                }
+            }
+        }
+        extraCaMessage = errors.isEmpty ? nil : errors.joined(separator: " ")
     }
 
     private func exportNow() {

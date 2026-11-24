@@ -136,8 +136,8 @@ public struct NativeSettings: Sendable, Codable, Equatable {
         public var autoRestart = true
         public var minFreeDiskGb = 10
         public var runnerSlots = 2
-        /// Absolute path of a PEM file of extra roots for agent VMs, or empty (RUNNER_EXTRA_CA_FILE).
-        public var extraCaFile = ""
+        /// Absolute paths of extra root certificate files (PEM or DER) for agent VMs (RUNNER_EXTRA_CA_FILE).
+        public var extraCaFiles: [String] = []
         public init() {}
     }
     public struct Files: Sendable, Codable, Equatable {
@@ -219,6 +219,25 @@ public func normalizeFolder(_ value: Any?, fallback: String) -> String {
     var trimmed = s
     while trimmed.hasSuffix("/") { trimmed.removeLast() }
     return trimmed.isEmpty ? "/" : trimmed
+}
+
+/// An absolute CA certificate file path (no colons, since RUNNER_EXTRA_CA_FILE is colon-separated).
+public func normalizeCaFilePath(_ value: Any?) -> String? {
+    guard let s = value as? String, !s.isEmpty, !s.contains(":") else { return nil }
+    let normalized = normalizeFolder(s, fallback: "")
+    return normalized.isEmpty ? nil : normalized
+}
+
+/// Normalizes a list of absolute CA certificate file paths, deduplicating in order.
+public func normalizeCaFilePaths(_ value: Any?, fallback: [String]) -> [String] {
+    guard let list = value as? [Any] else { return fallback }
+    var out: [String] = []
+    for item in list {
+        guard let path = normalizeCaFilePath(item), !out.contains(path) else { continue }
+        out.append(path)
+        if out.count >= 32 { break }
+    }
+    return out
 }
 
 /// Only https feeds (or http on loopback, for testing) are accepted.
@@ -353,7 +372,19 @@ extension NativeSettings {
             out.stack.minFreeDiskGb = base.stack.minFreeDiskGb
         }
         out.stack.runnerSlots = intIn(stack["runnerSlots"], 1, 32, base.stack.runnerSlots)
-        out.stack.extraCaFile = normalizeFolder(stack["extraCaFile"], fallback: base.stack.extraCaFile)
+        if let list = stack["extraCaFiles"] {
+            out.stack.extraCaFiles = normalizeCaFilePaths(list, fallback: base.stack.extraCaFiles)
+        } else if let legacy = stack["extraCaFile"] {
+            if let s = legacy as? String, s.isEmpty {
+                out.stack.extraCaFiles = []
+            } else if let path = normalizeCaFilePath(legacy) {
+                out.stack.extraCaFiles = [path]
+            } else {
+                out.stack.extraCaFiles = base.stack.extraCaFiles
+            }
+        } else {
+            out.stack.extraCaFiles = base.stack.extraCaFiles
+        }
 
         out.files.dockDrop = bool(files["dockDrop"], base.files.dockDrop)
 

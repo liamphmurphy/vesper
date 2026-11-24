@@ -115,14 +115,25 @@ final class NativeSettingsTests: XCTestCase {
         XCTAssertEqual(next.stack.minFreeDiskGb, 10, "other stack settings are kept")
     }
 
-    func testExtraCaFileKeepsAnAbsolutePathOrNothing() {
-        XCTAssertEqual(NativeSettings.defaults().stack.extraCaFile, "")
-        XCTAssertEqual(NativeSettings.normalize(["stack": ["extraCaFile": "/Users/me/zscaler-root.pem"]]).stack.extraCaFile, "/Users/me/zscaler-root.pem")
-        let bad: [Any] = ["zscaler-root.pem", "/bad\npath.pem", 3, NSNull()]
-        for b in bad { XCTAssertEqual(NativeSettings.normalize(["stack": ["extraCaFile": b]]).stack.extraCaFile, "", "\(b)") }
-        let set = NativeSettings.normalize([:]).applying(patch: ["stack": ["extraCaFile": "/Users/me/ca.pem"]])
-        XCTAssertEqual(set.stack.extraCaFile, "/Users/me/ca.pem")
-        XCTAssertEqual(set.applying(patch: ["stack": ["extraCaFile": ""]]).stack.extraCaFile, "", "Clear empties it")
+    func testExtraCaFilesKeepsAbsolutePathsAndMigratesLegacySingleFile() {
+        XCTAssertEqual(NativeSettings.defaults().stack.extraCaFiles, [])
+        // Legacy single-file config.json migrates cleanly.
+        XCTAssertEqual(
+            NativeSettings.normalize(["stack": ["extraCaFile": "/Users/me/zscaler-root.pem"]]).stack.extraCaFiles,
+            ["/Users/me/zscaler-root.pem"]
+        )
+        let badLegacy: [Any] = ["zscaler-root.pem", "/bad\npath.pem", "/bad:colon.pem", 3, NSNull()]
+        for b in badLegacy {
+            XCTAssertEqual(NativeSettings.normalize(["stack": ["extraCaFile": b]]).stack.extraCaFiles, [], "\(b)")
+        }
+        // Multiple paths: deduplicated, invalid entries dropped.
+        let multi = NativeSettings.normalize(["stack": [
+            "extraCaFiles": ["/Users/me/zscaler.pem", "/Users/me/zscaler.cer", "relative.crt", "/bad:colon.cer", "/Users/me/zscaler.pem"],
+        ]])
+        XCTAssertEqual(multi.stack.extraCaFiles, ["/Users/me/zscaler.pem", "/Users/me/zscaler.cer"])
+        let set = NativeSettings.normalize([:]).applying(patch: ["stack": ["extraCaFiles": ["/Users/me/ca.pem", "/Users/me/int.crt"]]])
+        XCTAssertEqual(set.stack.extraCaFiles, ["/Users/me/ca.pem", "/Users/me/int.crt"])
+        XCTAssertEqual(set.applying(patch: ["stack": ["extraCaFiles": []]]).stack.extraCaFiles, [], "Clear empties it")
     }
 
     func testShowHideAndDockSettingsDefaultSafelyAndRepair() {
