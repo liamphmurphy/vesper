@@ -12,6 +12,7 @@ import {
   isOSBridgeMessage,
   isStandaloneCustomAppRoute,
   localMediaEmbed,
+  localMediaId,
   osCapabilityForMessage,
   parseBridgeMessage,
   parseHlsRelayUrl,
@@ -259,8 +260,11 @@ test("downloaded videos play from Vesper, never from an outside URL", () => {
   const id = "01a1f7a0-1234-7abc-8def-0123456789ab";
   assert.equal(parseLocalMediaUrl(`vesper-media:${id}`), `vesper-media:${id}`);
   assert.equal(parseLocalMediaUrl(` VESPER-MEDIA:${id.toUpperCase()} `), `vesper-media:${id}`);
+  assert.equal(localMediaId(`vesper-media:${id}`), id);
+  assert.equal(localMediaId(` VESPER-MEDIA:${id.toUpperCase()} `), id);
   for (const bad of ["vesper-media:not-a-uuid", `vesper-media:${id}/../x`, `https://cdn.example/${id}.mp4`, 42, null]) {
     assert.equal(parseLocalMediaUrl(bad), null, String(bad));
+    assert.equal(localMediaId(bad), null, String(bad));
   }
 
   assert.deepEqual(localMediaEmbed(`vesper-media:${id}`, "feed"), {

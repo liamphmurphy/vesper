@@ -11,6 +11,7 @@ export type UpdateCustomApp = Schemas["UpdateCustomApp"];
 export type CustomAppInvokeRequest = Schemas["CustomAppInvokeRequest"];
 export type CustomAppInvokeResponse = Schemas["CustomAppInvokeResponse"];
 export type CustomAppHLSStream = Schemas["CustomAppHLSStream"];
+export type CustomAppMediaRelay = Schemas["CustomAppMediaRelay"];
 
 export const customAppKeys = {
   all: ["custom-apps"] as const,
@@ -85,6 +86,18 @@ export async function getCustomAppHlsStream(slug: string, streamId: string): Pro
 
 export function stopCustomAppHlsStream(slug: string, streamId: string): void {
   void fetch(`/api/v1/custom-apps/${encodeURIComponent(slug)}/hls/${encodeURIComponent(streamId)}`, {
+    method: "DELETE",
+    credentials: "same-origin",
+    keepalive: true,
+  }).catch(() => {});
+}
+
+export async function startCustomAppMediaRelay(slug: string, mediaId: string): Promise<CustomAppMediaRelay> {
+  return unwrap(api.POST("/custom-apps/{slug}/media/{mediaId}/relay", { params: { path: { slug, mediaId } } }));
+}
+
+export function stopCustomAppMediaRelay(slug: string, relayId: string): void {
+  void fetch(`/api/v1/custom-apps/${encodeURIComponent(slug)}/media-relays/${encodeURIComponent(relayId)}`, {
     method: "DELETE",
     credentials: "same-origin",
     keepalive: true,
