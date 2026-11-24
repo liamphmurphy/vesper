@@ -1,19 +1,10 @@
+import AppKit
 import SwiftUI
 import VesperCore
+import WebKit
 
-/// Native SwiftUI inspector panel host for `.panel` tabs that have moved off `/inspector-panel`.
+/// Native SwiftUI inspector panel host for all `.panel` tabs (zero web `/inspector-panel` dependency).
 enum NativeInspectorPanelRouter {
-    static let nativeKinds: Set<String> = [
-        "editor.chat",
-        "designs.chat",
-        "customApp.chat",
-    ]
-
-    static func isNative(_ spec: InspectorPanelSpec?) -> Bool {
-        guard let kind = spec?.kind else { return false }
-        return nativeKinds.contains(kind)
-    }
-
     static func parseProps(_ json: String) -> [String: Any] {
         guard let data = json.data(using: .utf8),
               let obj = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
@@ -26,6 +17,7 @@ enum NativeInspectorPanelRouter {
 struct NativeInspectorPanelHost: View {
     let tabs: TabsModel
     let screenContext: NativeScreenContext
+    let onOpenPlayground: (URL) -> Void
     let onPanelEvent: (String, String, String?) -> Void
 
     var body: some View {
@@ -35,7 +27,7 @@ struct NativeInspectorPanelHost: View {
         let activeTab = InspectorLogic.activeTab(in: state?.inspector)
 
         Group {
-            if activeTab?.kind == .panel, let spec = activeTab?.panel, NativeInspectorPanelRouter.isNative(spec) {
+            if activeTab?.kind == .panel, let spec = activeTab?.panel {
                 let props = NativeInspectorPanelRouter.parseProps(spec.propsJson)
                 let tabId = (props["tabId"] as? String) ?? activeTab?.id ?? ""
                 switch spec.kind {
@@ -66,6 +58,49 @@ struct NativeInspectorPanelHost: View {
                             runtimeError: props["runtimeError"] as? String,
                             initialChatId: props["chatId"] as? String,
                             onPanelEvent: onPanelEvent
+                        )
+                        .id(spec.key)
+                    }
+                case "customApp.code":
+                    if let slug = props["slug"] as? String, !slug.isEmpty {
+                        CustomAppCodePanelView(slug: slug)
+                            .id(spec.key)
+                    }
+                case "slides.review":
+                    if let chatId = props["chatId"] as? String, !chatId.isEmpty,
+                       let docId = props["docId"] as? String, !docId.isEmpty {
+                        SlidesReviewPanelView(
+                            tabId: tabId,
+                            chatId: chatId,
+                            docId: docId,
+                            baseSeq: (props["baseSeq"] as? Int) ?? 0,
+                            headSeq: (props["headSeq"] as? Int) ?? 0,
+                            persona: (props["persona"] as? String) ?? "Assistant",
+                            archived: (props["archived"] as? Bool) ?? false,
+                            onPanelEvent: onPanelEvent
+                        )
+                        .id(spec.key)
+                    }
+                case "chat.design":
+                    if let designId = props["designId"] as? String, !designId.isEmpty {
+                        let reviewing = (props["reviewing"] as? Bool) ?? false
+                        let path = reviewing ? "/apps/designs/\(designId)?review=1" : "/apps/designs/\(designId)"
+                        HostedWebPageView(path: path)
+                            .id(path)
+                    }
+                case "chat.canvas":
+                    if let chatId = props["chatId"] as? String, !chatId.isEmpty {
+                        ChatCanvasPanelView(
+                            chatId: chatId,
+                            canvasId: props["canvasId"] as? String
+                        )
+                        .id(spec.key)
+                    }
+                case "chat.playground":
+                    if let chatId = props["chatId"] as? String, !chatId.isEmpty {
+                        ChatPlaygroundPanelView(
+                            chatId: chatId,
+                            onOpenPlayground: onOpenPlayground
                         )
                         .id(spec.key)
                     }
@@ -380,5 +415,490 @@ private struct CustomAppChatPanelView: View {
         }
         let suffix = "\n\n<!-- vesper:custom-app-context -->\n" + parts.joined(separator: "\n")
         return body.hasSuffix(suffix) ? body : body + suffix
+    }
+}
+
+
+// MARK: - customApp.code
+
+private struct CustomAppCodePanelView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let slug: String
+    @State private var selectedFile: String?
+
+    private var appRequest: APIRequest<API.CustomAppDetail> {
+        API.getCustomApp(slug: slug)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        let entry = context.store.entry(appRequest)
+        let app = entry.data
+        let files = app?.current.files ?? [:]
+        let sortedKeys = files.keys.sorted()
+        let activeFile = selectedFile.flatMap { files[$0] != nil ? $0 : nil } ?? sortedKeys.first
+
+        VStack(spacing: 0) {
+            if let app {
+                HStack(spacing: 8) {
+                    if !sortedKeys.isEmpty {
+                        Picker("File", selection: Binding(
+                            get: { activeFile ?? "" },
+                            set: { selectedFile = $0 }
+                        )) {
+                            ForEach(sortedKeys, id: \.self) { name in
+                                Text(name).tag(name)
+                            }
+                        }
+                        .labelsHidden()
+                        .frame(maxWidth: 220)
+                    }
+                    Text("v\(app.currentSeq)")
+                        .font(.system(size: 11, design: .monospaced))
+                        .foregroundStyle(p.tertiaryText)
+                    Spacer(minLength: 0)
+                    if let activeFile, let content = files[activeFile] {
+                        Button("Copy") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(content, forType: .string)
+                        }
+                        .buttonStyle(.vesper())
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+                Divider().overlay(p.border)
+
+                if let activeFile, let content = files[activeFile] {
+                    ScrollView([.vertical, .horizontal]) {
+                        Text(content)
+                            .font(.system(size: theme.pointSize(.mono), design: .monospaced))
+                            .foregroundStyle(p.text)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .padding(12)
+                    }
+                } else {
+                    Text("No source files in this version.")
+                        .font(.system(size: theme.pointSize(.small)))
+                        .foregroundStyle(p.tertiaryText)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else if entry.error == nil {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Text("Couldn't load custom app code.")
+                    .font(.system(size: theme.pointSize(.small)))
+                    .foregroundStyle(p.tertiaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: slug) {
+            context.store.observe(appRequest)
+            context.store.load(appRequest)
+        }
+        .onDisappear {
+            context.store.stopObserving(appRequest.key)
+        }
+    }
+}
+
+// MARK: - slides.review
+
+private struct SlidesReviewPanelView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let tabId: String
+    let chatId: String
+    let docId: String
+    let baseSeq: Int
+    let headSeq: Int
+    let persona: String
+    let archived: Bool
+    let onPanelEvent: (String, String, String?) -> Void
+
+    @State private var busy = false
+    @State private var errorMessage: String?
+
+    private var headRequest: APIRequest<API.ChatCanvas> {
+        API.getChatCanvas(id: chatId, canvasId: docId)
+    }
+
+    private var baseRequest: APIRequest<API.ChatCanvas> {
+        API.getChatCanvas(id: chatId, canvasId: docId, seq: baseSeq)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        let head = context.store.entry(headRequest).data
+        let base = context.store.entry(baseRequest).data
+
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Deck changes")
+                .font(.system(size: theme.pointSize(.heading), weight: .semibold))
+                .foregroundStyle(p.text)
+
+            Text("\(persona) updated this deck from v\(baseSeq) to v\(head?.seq ?? headSeq).")
+                .font(.system(size: theme.pointSize(.body)))
+                .foregroundStyle(p.secondaryText)
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: theme.pointSize(.small)))
+                    .foregroundStyle(Color.red)
+            }
+
+            HStack(spacing: 8) {
+                Button("Accept changes") {
+                    guard let head else { return }
+                    acceptAll(seq: head.seq)
+                }
+                .buttonStyle(.vesper(.primary))
+                .disabled(archived || busy || head == nil)
+
+                Button("Revert to v\(baseSeq)") {
+                    guard let head, let base else { return }
+                    revert(headSeq: head.seq, baseBody: base.body)
+                }
+                .buttonStyle(.vesper(.outline))
+                .disabled(archived || busy || head == nil || base == nil)
+            }
+
+            Spacer(minLength: 0)
+        }
+        .padding(16)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .task(id: "\(chatId):\(docId):\(baseSeq)") {
+            context.store.observe(headRequest)
+            context.store.load(headRequest)
+            context.store.load(baseRequest)
+        }
+        .onDisappear {
+            context.store.stopObserving(headRequest.key)
+        }
+    }
+
+    private func acceptAll(seq: Int) {
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await context.store.mutate(
+                    API.markDocReviewed(canvasId: docId, body: API.MarkDocReviewedBody(seq: seq))
+                )
+                onPanelEvent(tabId, "reviewed", nil)
+            } catch {
+                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func revert(headSeq: Int, baseBody: String) {
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                let saved = try await context.store.mutate(
+                    API.saveChatCanvas(
+                        id: chatId,
+                        canvasId: docId,
+                        body: API.ChatCanvasSave(baseSeq: headSeq, body: baseBody, note: "Reverted changes")
+                    )
+                )
+                _ = try await context.store.mutate(
+                    API.markDocReviewed(canvasId: docId, body: API.MarkDocReviewedBody(seq: saved.seq))
+                )
+                onPanelEvent(tabId, "reviewed", nil)
+            } catch {
+                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+            }
+        }
+    }
+}
+
+// MARK: - chat.canvas
+
+private struct ChatCanvasPanelView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let chatId: String
+    let canvasId: String?
+
+    private var listRequest: APIRequest<API.ChatCanvases> {
+        API.listChatCanvases(id: chatId)
+    }
+
+    var body: some View {
+        let canvases = context.store.entry(listRequest).data?.canvases ?? []
+        let resolvedId = canvasId ?? canvases.first?.id
+
+        Group {
+            if let resolvedId {
+                ChatCanvasDetailPanelView(chatId: chatId, canvasId: resolvedId)
+                    .id(resolvedId)
+            } else {
+                Text("No canvas in this chat yet.")
+                    .font(.system(size: theme.pointSize(.small)))
+                    .foregroundStyle(theme.palette.tertiaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: chatId) {
+            if canvasId == nil {
+                context.store.observe(listRequest)
+                context.store.load(listRequest)
+            }
+        }
+        .onDisappear {
+            if canvasId == nil {
+                context.store.stopObserving(listRequest.key)
+            }
+        }
+    }
+}
+
+private struct ChatCanvasDetailPanelView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let chatId: String
+    let canvasId: String
+
+    private var canvasRequest: APIRequest<API.ChatCanvas> {
+        API.getChatCanvas(id: chatId, canvasId: canvasId)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        let entry = context.store.entry(canvasRequest)
+        let canvas = entry.data
+
+        Group {
+            if let canvas {
+                switch canvas.kind {
+                case .deck:
+                    HostedWebPageView(path: "/apps/slides/\(canvas.id)")
+                        .id(canvas.id)
+                case .design:
+                    HostedWebPageView(path: "/apps/designs/\(canvas.id)")
+                        .id(canvas.id)
+                default:
+                    VStack(spacing: 0) {
+                        HStack(spacing: 8) {
+                            Text(canvas.title)
+                                .font(.system(size: theme.pointSize(.body), weight: .medium))
+                                .foregroundStyle(p.text)
+                                .lineLimit(1)
+                            Text("v\(canvas.seq)")
+                                .font(.system(size: 11, design: .monospaced))
+                                .foregroundStyle(p.tertiaryText)
+                            Spacer(minLength: 0)
+                            Button("Copy") {
+                                NSPasteboard.general.clearContents()
+                                NSPasteboard.general.setString(canvas.body, forType: .string)
+                            }
+                            .buttonStyle(.vesper())
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        Divider().overlay(p.border)
+
+                        ScrollView {
+                            MarkdownView(markdown: canvas.body)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(16)
+                        }
+                    }
+                }
+            } else if entry.error == nil {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                Text("Couldn't load canvas.")
+                    .font(.system(size: theme.pointSize(.small)))
+                    .foregroundStyle(p.tertiaryText)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: "\(chatId):\(canvasId)") {
+            context.store.observe(canvasRequest)
+            context.store.load(canvasRequest)
+        }
+        .onDisappear {
+            context.store.stopObserving(canvasRequest.key)
+        }
+    }
+}
+
+// MARK: - chat.playground
+
+private struct ChatPlaygroundPanelView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let chatId: String
+    let onOpenPlayground: (URL) -> Void
+
+    @State private var tab: PlaygroundPanelTab = .preview
+    @State private var acting = false
+    @State private var reloadToken = 0
+
+    enum PlaygroundPanelTab: String, CaseIterable {
+        case preview = "Preview"
+        case logs = "Logs"
+    }
+
+    private var stateRequest: APIRequest<API.ChatPlaygroundState> {
+        API.getChatPlayground(id: chatId)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        let state = context.store.entry(stateRequest).data
+        let pg = state?.playground
+        let port = pg?.port?.value
+        let previewURL: URL? = port.flatMap { URL(string: "http://127.0.0.1:\($0)/") }
+
+        VStack(spacing: 0) {
+            HStack(spacing: 8) {
+                Picker("", selection: $tab) {
+                    ForEach(PlaygroundPanelTab.allCases, id: \.self) { t in
+                        Text(t.rawValue).tag(t)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 150)
+
+                if let pg {
+                    Text(pg.state.rawValue)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(pg.state == .running ? p.accent : p.secondaryText)
+                }
+
+                Spacer(minLength: 0)
+
+                if let previewURL {
+                    Button {
+                        reloadToken += 1
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                    }
+                    .buttonStyle(.vesper())
+                    .help("Reload preview")
+
+                    Button {
+                        onOpenPlayground(previewURL)
+                    } label: {
+                        Image(systemName: "arrow.up.right.square")
+                    }
+                    .buttonStyle(.vesper())
+                    .help("Open in tab")
+                }
+
+                if let pg, pg.state == .running || pg.state == .starting {
+                    Button("Stop") {
+                        runAction(.stop)
+                    }
+                    .buttonStyle(.vesper())
+                    .disabled(acting)
+                } else if pg != nil || state?.savedSpec == true {
+                    Button("Restart") {
+                        runAction(API.ChatPlaygroundActionAction(rawValue: "restart"))
+                    }
+                    .buttonStyle(.vesper())
+                    .disabled(acting)
+                }
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 8)
+
+            Divider().overlay(p.border)
+
+            if tab == .preview {
+                if let previewURL, pg?.state == .running {
+                    PlaygroundPreviewWebView(url: previewURL, reloadToken: reloadToken)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    VStack(spacing: 8) {
+                        if pg?.state == .starting {
+                            ProgressView()
+                            Text(pg?.step.isEmpty == false ? pg!.step : "Starting playground…")
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(p.secondaryText)
+                        } else if let err = pg?.error?.value, !err.isEmpty {
+                            Text(err)
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(Color.red)
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 16)
+                        } else {
+                            Text("Playground is not running.")
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(p.tertiaryText)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
+            } else {
+                ScrollView {
+                    Text(pg?.errorLog.isEmpty == false ? pg!.errorLog : "No playground logs yet.")
+                        .font(.system(size: theme.pointSize(.mono), design: .monospaced))
+                        .foregroundStyle(p.text)
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                }
+            }
+        }
+        .task(id: chatId) {
+            context.store.observe(stateRequest)
+            context.store.load(stateRequest)
+        }
+        .onDisappear {
+            context.store.stopObserving(stateRequest.key)
+        }
+    }
+
+    private func runAction(_ action: API.ChatPlaygroundActionAction) {
+        acting = true
+        Task {
+            defer { acting = false }
+            _ = try? await context.store.mutate(API.chatPlaygroundAction(id: chatId, action: action))
+            _ = await context.store.refetch(stateRequest)
+        }
+    }
+}
+
+private struct PlaygroundPreviewWebView: NSViewRepresentable {
+    let url: URL
+    let reloadToken: Int
+
+    final class Coordinator {
+        var lastURL: URL?
+        var lastReloadToken = 0
+    }
+
+    func makeCoordinator() -> Coordinator { Coordinator() }
+
+    func makeNSView(context: Context) -> WKWebView {
+        let webView = WebViewFactory.makeWebView(kind: .playground, bridge: nil)
+        context.coordinator.lastURL = url
+        context.coordinator.lastReloadToken = reloadToken
+        webView.load(URLRequest(url: url))
+        return webView
+    }
+
+    func updateNSView(_ webView: WKWebView, context: Context) {
+        if context.coordinator.lastURL != url || context.coordinator.lastReloadToken != reloadToken {
+            context.coordinator.lastURL = url
+            context.coordinator.lastReloadToken = reloadToken
+            webView.load(URLRequest(url: url))
+        }
     }
 }
