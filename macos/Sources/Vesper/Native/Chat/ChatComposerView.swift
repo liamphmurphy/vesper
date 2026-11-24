@@ -44,6 +44,11 @@ struct ChatComposerView: View {
     /// Text to draft without sending; `onPrefillApplied` gets its token once it is in the composer.
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
+    /// When true, omits the bottom-docked bar chrome (outer padding, background, and top divider)
+    /// so the composer can sit inline inside a scrollable screen such as a Space hub.
+    var inline: Bool = false
+    /// Optional placeholder override for inline contexts (e.g. "New chat in Vesper").
+    var placeholderOverride: String? = nil
 
     private let draftStore = ChatDraftStore()
 
@@ -132,7 +137,7 @@ struct ChatComposerView: View {
                 ChatComposerTextView(
                     controller: editor,
                     measuredHeight: $editorHeight,
-                    placeholder: (isRunning ? sendModeWhileRunning : .send).placeholder(personaName: personaName),
+                    placeholder: placeholderOverride ?? (isRunning ? sendModeWhileRunning : .send).placeholder(personaName: personaName),
                     fontSize: theme.pointSize(.chat),
                     textColor: p.text,
                     placeholderColor: p.tertiaryText,
@@ -179,11 +184,13 @@ struct ChatComposerView: View {
             }
             .overlay(RoundedRectangle(cornerRadius: 14).stroke(p.border))
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-        .background(p.background)
+        .padding(.horizontal, inline ? 0 : 20)
+        .padding(.vertical, inline ? 0 : 12)
+        .background(inline ? Color.clear : p.background)
         .overlay(alignment: .top) {
-            Rectangle().fill(p.rowBorder).frame(height: 1)
+            if !inline {
+                Rectangle().fill(p.rowBorder).frame(height: 1)
+            }
         }
         .fileImporter(
             isPresented: $showFileImporter,
