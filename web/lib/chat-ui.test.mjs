@@ -1,7 +1,7 @@
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, liveSubagentStatus, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, finishedSummary, thinkingBlocks, planProgress, longTurnUsageRefreshDelayMs, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
+import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, liveSubagentStatus, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, finishedSummary, thinkingBlocks, planProgress, planSnapshots, longTurnUsageRefreshDelayMs, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
 
 test("rowMark shows an unread dot until the chat is read or opened, and running wins", () => {
   assert.equal(rowMark({ state: "idle", unread: 0 }), null);
@@ -677,7 +677,7 @@ test("every chat tool the server offers has a scene of its own", () => {
   const tools = [...list.matchAll(/"([a-z_]+)"/g)].map((m) => m[1]);
   assert.ok(tools.length > 40, `parsed only ${tools.length} chat tools`);
   // Bookkeeping that isn't work the person would want pictured.
-  const idle = new Set(["whoami", "set_chat_title"]);
+  const idle = new Set(["whoami", "set_chat_title", "set_plan"]);
   const unpictured = tools.filter((tool) => !idle.has(tool) && chatStatusOf({ tool: `mcp__lazyagents__${tool}`, input: {} }).kind === "thinking");
   assert.deepEqual(unpictured, []);
 });
@@ -1240,4 +1240,55 @@ test("planProgress counts completed and failed plan steps and longTurnUsageRefre
   assert.equal(longTurnUsageRefreshDelayMs(100_000, 145_000), 15_000);
   assert.equal(longTurnUsageRefreshDelayMs(100_000, 160_000), 0);
   assert.equal(longTurnUsageRefreshDelayMs(100_000, 195_000), 0);
+});
+
+// ---- plans from any harness: the server's lifecycle plan events ----
+
+const planEv = (seq, ...rows) => ev(seq, "lifecycle", { state: "plan", source: "codex", steps: rows.map(([title, status], i) => ({ id: String(i + 1), title, status })) });
+
+test("a server plan event drives the steps for a harness with no plan tool calls", () => {
+  // Codex: its plan arrives only as plan events; the work is shell calls.
+  const events = [
+    planEv(1, ["Find it", "in_progress"], ["Fix it", "pending"]),
+    call(2, "shell", { command: "rg retry" }),
+    result(3, "c2"),
+    planEv(4, ["Find it", "completed"], ["Fix it", "in_progress"]),
+    call(5, "apply_patch", { files: ["update poller.go"] }),
+  ];
+  const calls = chatCalls(events);
+  const { steps, planned } = chatSteps(calls, undefined, { plans: planSnapshots(events) });
+  assert.equal(planned, true);
+  assert.deepEqual(steps.map((s) => [s.title, s.state, s.kind]), [["Find it", "done", "searching-code"], ["Fix it", "active", "writing-code"]]);
+  assert.equal(planProgress(steps, planned).label, "1/2 steps");
+  // Without the snapshots the same calls have no plan.
+  assert.equal(chatSteps(calls).planned, false);
+});
+
+test("server plan events win over the raw TodoWrite calls they came from", () => {
+  const todo = (seq, status) => call(seq, "TodoWrite", { todos: [{ content: "Raw title", status }] });
+  const events = [todo(1, "in_progress"), result(2, "c1"), planEv(3, ["Server title", "failed"])];
+  const { steps } = chatSteps(chatCalls(events), undefined, { plans: planSnapshots(events) });
+  assert.deepEqual(steps.map((s) => [s.title, s.state]), [["Server title", "failed"]]);
+  assert.equal(planProgress(steps, true).label, "0/1 step · 1 failed");
+});
+
+test("planSnapshots keeps the window, skips sub agents and untitled steps, and an empty plan clears it", () => {
+  const sub = ev(2, "lifecycle", { state: "plan", subagent: true, steps: [{ id: "1", title: "Theirs", status: "pending" }] });
+  const events = [planEv(1, ["Mine", "pending"], ["  ", "pending"]), sub, planEv(5, ["Later", "pending"]), ev(6, "lifecycle", { state: "plan", steps: [] })];
+  assert.deepEqual(planSnapshots(events, undefined, "2026-11-09T10:00:04Z").map((p) => p.items.map((i) => i.title)), [["Mine"]]);
+  const all = planSnapshots(events);
+  assert.deepEqual(all.map((p) => p.seq), [1, 5, 6]);
+  assert.equal(chatSteps([], undefined, { plans: all }).planned, false);
+});
+
+test("set_plan is planning bookkeeping, not a step of its own", () => {
+  assert.equal(chatStatusOf({ tool: "set_plan", input: {} }).phrase, "planning its next steps");
+  const events = [call(1, "set_plan", { steps: [] }), result(2, "c1"), call(3, "Read", { file_path: "/r/a.go" })];
+  assert.deepEqual(chatSteps(chatCalls(events)).steps.map((s) => s.kind), ["reading-code"]);
+});
+
+test("finishedTurn and turnTrace read server plan events", () => {
+  const events = [planEv(1, ["Look", "in_progress"]), call(2, "shell", { command: "ls" }), result(3, "c2"), planEv(4, ["Look", "completed"])];
+  assert.deepEqual(finishedTurn(events, "done").steps.map((s) => [s.title, s.state]), [["Look", "done"]]);
+  assert.deepEqual(turnTrace(events).map((s) => s.title), ["Look"]);
 });

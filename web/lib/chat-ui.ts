@@ -358,6 +358,7 @@ function githubToolStatus(tool: string): ChatStatusInfo | undefined {
 
 /** A rich block being written into the reply, reported by the harness: no tool runs, but it can take a while. */
 const REPLY_BLOCK = "reply_block";
+const PLAN_STATE = "plan";
 const REPLY_BLOCK_STATUS: Record<string, ChatStatusInfo> = {
   app: status("app", "building an interactive app"),
   "svg-image": status("image", "drawing an image"),
@@ -378,6 +379,30 @@ export function chatCalls(events: RunEventLike[] | undefined, since?: string, un
     .filter((e) => e.type === "lifecycle" && e.payload.state === REPLY_BLOCK && Date.parse(e.at) >= t && Date.parse(e.at) <= hi)
     .map((e): ToolCall => ({ key: e.seq, tool: REPLY_BLOCK, input: { kind: e.payload.kind }, done: true }));
   return [...toolCalls(events, since, until), ...blocks].sort((a, b) => a.key - b.key);
+}
+
+/** The turn's checklist as the server last sent it: every step, whichever harness wrote it. `seq` places it among the calls. */
+export type PlanSnapshot = { seq: number; items: PlanItem[] };
+
+/**
+ * Every plan the server sent in this window, oldest first: `lifecycle` events with `state: "plan"`, which the runner
+ * emits for Claude Code's TodoWrite and tasks, Codex's own plan, and Vesper's `set_plan` alike. Turns from before
+ * the server sent them have none, and their plan is read from the calls instead (planVersions).
+ */
+export function planSnapshots(events: RunEventLike[] | undefined, since?: string, until?: string): PlanSnapshot[] {
+  const t = since ? Date.parse(since) : 0;
+  const hi = until ? Date.parse(until) : Infinity;
+  const out: PlanSnapshot[] = [];
+  for (const e of events ?? []) {
+    if (e.type !== "lifecycle" || e.payload.state !== PLAN_STATE || isSubagentEvent(e.payload)) continue;
+    const at = Date.parse(e.at);
+    if (at < t || at > hi) continue;
+    const items = records(e.payload.steps)
+      .filter((step) => str(step.title).trim())
+      .map((step, i): PlanItem => ({ id: str(step.id) || String(i + 1), title: str(step.title), state: planState(step.status) }));
+    out.push({ seq: e.seq, items });
+  }
+  return out;
 }
 
 /**
@@ -701,6 +726,7 @@ export function chatStatusOf(call: { tool: string; input: unknown }): ChatStatus
     case "todowrite":
     case "TaskCreate":
     case "TaskUpdate":
+    case "set_plan":
       return status("thinking", "planning its next steps");
     case "shell":
     case "Bash":
@@ -923,7 +949,7 @@ export type TurnTimingPhase = "thinking" | "tool" | "writing_reply";
 /** One completed reasoning (`kind === "thinking"`) block emitted during a turn. */
 export type ThinkingBlock = { seq: number; text: string; heading?: string; at: number };
 
-/** Summary of a planned (`TodoWrite` / `TaskCreate`) step checklist for the pinned composer bar. */
+/** Summary of a turn's plan checklist (any harness's, see planSnapshots) for the pinned composer bar. */
 export type PlanChecklistProgress = {
   steps: ChatStep[];
   completed: number;
@@ -1088,7 +1114,7 @@ export function thinkingBlocks(events: RunEventLike[] | undefined, since?: strin
   return out;
 }
 
-/** Plan checklist progress for a running `TodoWrite` / `TaskCreate` turn, excluding synthetic reply-block steps. */
+/** Plan checklist progress for a running turn with a plan, excluding synthetic reply-block steps. */
 export function planProgress(steps: ChatStep[], planned: boolean): PlanChecklistProgress | undefined {
   if (!planned) return undefined;
   const planOnly = steps.filter((s) => s.key.includes("#"));
@@ -1154,11 +1180,19 @@ const planItems = (list: unknown): PlanItem[] =>
     .map((item, i) => ({ id: String(i), title: str(item.content), state: planState(item.status) }));
 
 /**
- * Every version of the plan in these calls, oldest first: TodoWrite sends the whole list, TaskCreate and TaskUpdate change one task.
- * `call` is the index of the call that wrote each version.
+ * Every version of the plan, oldest first, and from which call on each one holds (`call`, an index into calls).
+ * The server's plan snapshots are the source when the turn has any; each holds from the first call after it.
+ * Older turns have none: their plan is read from Claude Code's calls, where TodoWrite sends the whole list and
+ * TaskCreate and TaskUpdate change one task, each holding from the call that wrote it.
  */
 type PlanVersion = { items: PlanItem[]; call: number };
-function planVersions(calls: ToolCall[]): PlanVersion[] {
+function planVersions(calls: ToolCall[], plans?: PlanSnapshot[]): PlanVersion[] {
+  if (plans?.length) {
+    return plans.map((p) => {
+      const next = calls.findIndex((c) => c.key > p.seq);
+      return { items: p.items, call: next < 0 ? calls.length : next };
+    });
+  }
   const versions: PlanVersion[] = [];
   let tasks: PlanItem[] = [];
   for (const [at, call] of calls.entries()) {
@@ -1211,7 +1245,7 @@ function planWork(calls: ToolCall[], versions: PlanVersion[], owner: (string | u
 }
 
 /** Calls that keep the turn running but aren't work to show: its plan, tool loading, the chat's title. */
-const BOOKKEEPING = new Set(["TodoWrite", "todowrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "ToolSearch", "Skill", "set_chat_title", "whoami"]);
+const BOOKKEEPING = new Set(["TodoWrite", "todowrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "set_plan", "ToolSearch", "Skill", "set_chat_title", "whoami"]);
 
 const basename = (p: string) => p.split("/").filter(Boolean).pop() ?? p;
 
@@ -1615,8 +1649,8 @@ function withDetail(steps: ChatStep[], calls: ToolCall[], branches?: SubagentBra
  * work began. Otherwise its consecutive tool calls with the same description as one step, newest active, in the same
  * high-level wording as the status line.
  */
-export function chatSteps(calls: ToolCall[], notes?: TurnNote[], opts: { between?: boolean; clock?: TurnClock; activity?: TurnActivity; branches?: SubagentBranch[] } = {}): { steps: ChatStep[]; planned: boolean } {
-  const { steps, planned, owner } = buildSteps(calls, opts.between, opts.activity, opts.branches);
+export function chatSteps(calls: ToolCall[], notes?: TurnNote[], opts: { between?: boolean; clock?: TurnClock; activity?: TurnActivity; branches?: SubagentBranch[]; plans?: PlanSnapshot[] } = {}): { steps: ChatStep[]; planned: boolean } {
+  const { steps, planned, owner } = buildSteps(calls, opts.between, opts.activity, opts.branches, opts.plans);
   if (opts.clock) stampTimes(steps, calls, owner, opts.clock);
   if (notes?.length) {
     const byKey = new Map(steps.map((st) => [st.key, st]));
@@ -1654,9 +1688,9 @@ function stampTimes(steps: ChatStep[], calls: ToolCall[], owner: (string | undef
  * `between`: a planless turn's newest step is finished, and a contextual stand-in step is under way instead.
  * `activity`: live harness phase (thinking heading or drafting a reply) between tool calls.
  */
-function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity, branches?: SubagentBranch[]): { steps: ChatStep[]; planned: boolean; owner: (string | undefined)[] } {
+function buildSteps(calls: ToolCall[], between = false, activity?: TurnActivity, branches?: SubagentBranch[], plans?: PlanSnapshot[]): { steps: ChatStep[]; planned: boolean; owner: (string | undefined)[] } {
   const owner: (string | undefined)[] = new Array(calls.length).fill(undefined);
-  const versions = planVersions(calls);
+  const versions = planVersions(calls, plans);
   const latest = versions[versions.length - 1]?.items;
   if (latest?.length) {
     const baseline = versions.find((v) => v.items.some((s) => s.state !== "planned"))?.items;
@@ -1807,7 +1841,7 @@ export function finishedTurn(events: RunEventLike[] | undefined, outcome: TurnOu
   if (!calls.some((c) => c.tool !== REPLY_BLOCK && !BOOKKEEPING.has(bareTool(c.tool)))) {
     return { steps: [], duration, thinkingDurationMs, thinkingBlocks: blocks };
   }
-  const { steps } = chatSteps(calls, turnNotes(events, since, until), { clock });
+  const { steps } = chatSteps(calls, turnNotes(events, since, until), { clock, plans: planSnapshots(events, since, until) });
   for (const st of steps) {
     if (st.state !== "active") continue;
     st.state = outcome === "failed" ? "failed" : "done";
@@ -2152,7 +2186,7 @@ export function turnTrace(events: RunEventLike[] | undefined, since?: string, un
   const calls = toolCalls(events, since, until);
   const notes = turnNotes(events, since, until);
   const branches = subagentBranches(events, since, until);
-  const { steps, owner } = buildSteps(calls);
+  const { steps, owner } = buildSteps(calls, false, undefined, undefined, planSnapshots(events, since, until));
   const trace = steps.map((st): TraceStep => ({ key: st.key, title: st.title, state: st.state, ...(st.kind ? { kind: st.kind } : {}), intents: [], thinking: [], calls: [] }));
   const byKey = new Map(trace.map((st) => [st.key, st]));
   const prelude: TraceStep = { key: "prelude", title: "Getting started", state: "done", intents: [], thinking: [], calls: [] };

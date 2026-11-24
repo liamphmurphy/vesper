@@ -445,7 +445,7 @@ func (r *Runner) runWarmTurn(
 			activity.Store(true)
 			appendRaw("", line)
 		},
-		OnEvent: func(e harness.Event) {
+		OnEvent: harness.TrackPlans(func(e harness.Event) {
 			activity.Store(true)
 			payload, b := redactPayload(e.Payload, ws.sensitive)
 			opening.see(e.Type, payload)
@@ -453,7 +453,7 @@ func (r *Runner) runWarmTurn(
 			case ch <- pendingRunEvent{typ: e.Type, payload: b}:
 			case <-readCtx.Done():
 			}
-		},
+		}),
 		OnTextDelta: func(delta string) {
 			activity.Store(true)
 			if onTextDelta != nil {

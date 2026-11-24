@@ -113,7 +113,7 @@ public struct ChatThinkingBlock: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Summary of a planned (`TodoWrite` / `TaskCreate`) step checklist for the pinned composer bar.
+/// Summary of a turn's plan checklist (any harness's, see `planSnapshot`) for the pinned composer bar.
 public struct ChatPlanProgress: Sendable, Equatable {
     public var steps: [ChatTurnStep]
     public var completed: Int
@@ -184,7 +184,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
     public static let nextStepKey = "next-step"
 
     private static let bookkeeping: Set<String> = [
-        "TodoWrite", "todowrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet",
+        "TodoWrite", "todowrite", "TaskCreate", "TaskUpdate", "TaskList", "TaskGet", "set_plan",
         "ToolSearch", "Skill", "set_chat_title", "whoami",
     ]
     private static let failableKinds: Set<ActivitySceneKind> = [
@@ -437,7 +437,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
         let quiet = idleMs.map { $0 >= quietThreshold } ?? false
 
         let status = computeStatus(calls: parsed.calls, between: between, phase: parsed.activePhase)
-        let (steps, planned) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: between, phase: parsed.activePhase)
+        let (steps, planned) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: between, phase: parsed.activePhase, plans: parsed.plans)
 
         return ChatTurnActivity(
             status: status,
@@ -489,7 +489,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
                 thinkingBlocks: parsed.thinkingBlocks
             )
         }
-        var (steps, _) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: false, phase: nil)
+        var (steps, _) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: false, phase: nil, plans: parsed.plans)
         for idx in steps.indices where steps[idx].state == .active {
             steps[idx].state = outcome == .failed ? .failed : .done
         }
@@ -644,6 +644,8 @@ public struct ChatTurnActivity: Sendable, Equatable {
         var phaseStart: TimeInterval?
         var closedThinkingMs: Int
         var thinkingBlocks: [ChatThinkingBlock]
+        /// The server's plan events, oldest first (see `planSnapshot`).
+        var plans: [PlanSnapshot]
     }
 
     private static func parseEventWindow(events: [ChatRunEvent], since: String?, until: String?) -> ParsedEventWindow {
@@ -663,6 +665,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
         var phaseStart: TimeInterval? = since != nil ? minEpoch : nil
         var closedThinkingMs = 0
         var thinkingBlocks: [ChatThinkingBlock] = []
+        var plans: [PlanSnapshot] = []
 
         func transition(to next: ChatTurnTimingPhase, at: TimeInterval, resetIfSame: Bool = false) {
             guard let current = timingPhase else {
@@ -732,6 +735,8 @@ public struct ChatTurnActivity: Sendable, Equatable {
                     let kind = e.payload["kind"]?.stringValue ?? ""
                     calls.append(ChatToolCall(key: e.seq, tool: replyBlockTool, input: .object(["kind": .string(kind)]), done: true))
                     callTimes[e.seq] = (at, at)
+                } else if state == planLifecycleState {
+                    plans.append(planSnapshot(seq: e.seq, steps: e.payload["steps"]))
                 } else if state == "activity" {
                     let phase = e.payload["phase"]?.stringValue ?? ""
                     if phase == "thinking" {
@@ -791,7 +796,8 @@ public struct ChatTurnActivity: Sendable, Equatable {
             timingPhase: timingPhase,
             phaseStart: phaseStart,
             closedThinkingMs: closedThinkingMs,
-            thinkingBlocks: thinkingBlocks
+            thinkingBlocks: thinkingBlocks,
+            plans: plans
         )
     }
 
@@ -824,6 +830,28 @@ public struct ChatTurnActivity: Sendable, Equatable {
         var callIndex: Int
     }
 
+    /// The turn's checklist as the server last sent it: every step, whichever harness wrote it. `seq` places it among the calls.
+    private struct PlanSnapshot {
+        var seq: Int
+        var items: [PlanItem]
+    }
+
+    private static let planLifecycleState = "plan"
+
+    /// A `lifecycle` event with `state: "plan"`, which the runner emits for Claude Code's TodoWrite and tasks,
+    /// Codex's own plan, and Vesper's `set_plan` alike (mirrors `planSnapshots` in web/lib/chat-ui.ts).
+    private static func planSnapshot(seq: Int, steps: JSONValue?) -> PlanSnapshot {
+        guard case .array(let rows) = steps else { return PlanSnapshot(seq: seq, items: []) }
+        var items: [PlanItem] = []
+        for (i, row) in rows.enumerated() {
+            let title = row["title"]?.stringValue ?? ""
+            guard !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { continue }
+            let id = row["id"]?.stringValue ?? ""
+            items.append(PlanItem(id: id.isEmpty ? String(i + 1) : id, title: title, state: planState(for: row["status"]?.stringValue ?? "")))
+        }
+        return PlanSnapshot(seq: seq, items: items)
+    }
+
     private static func planState(for raw: String) -> ChatStepState {
         switch raw {
         case "completed": .done
@@ -833,7 +861,15 @@ public struct ChatTurnActivity: Sendable, Equatable {
         }
     }
 
-    private static func planVersions(from calls: [ChatToolCall]) -> [PlanVersion] {
+    /// Every version of the plan, oldest first, and from which call on each one holds (`callIndex`).
+    /// The server's plan snapshots are the source when the turn has any; each holds from the first call after it.
+    /// Older turns have none: their plan is read from Claude Code's calls, each version holding from the call that wrote it.
+    private static func planVersions(from calls: [ChatToolCall], plans: [PlanSnapshot]) -> [PlanVersion] {
+        if !plans.isEmpty {
+            return plans.map { plan in
+                PlanVersion(items: plan.items, callIndex: calls.firstIndex(where: { $0.key > plan.seq }) ?? calls.count)
+            }
+        }
         var versions: [PlanVersion] = []
         var tasks: [PlanItem] = []
 
@@ -906,10 +942,11 @@ public struct ChatTurnActivity: Sendable, Equatable {
         calls: [ChatToolCall],
         callTimes: [Int: (at: TimeInterval, doneAt: TimeInterval?)],
         between: Bool,
-        phase: Phase?
+        phase: Phase?,
+        plans: [PlanSnapshot]
     ) -> ([ChatTurnStep], Bool) {
-        // Check for TodoWrite / TaskCreate plan first (matching web/lib/chat-ui.ts).
-        let versions = planVersions(from: calls)
+        // A plan first (matching web/lib/chat-ui.ts).
+        let versions = planVersions(from: calls, plans: plans)
         if let latest = versions.last?.items, !latest.isEmpty {
             let baseline = versions.first(where: { $0.items.contains { $0.state != .planned } })?.items
             let original = Set((baseline ?? latest).map(\.title))

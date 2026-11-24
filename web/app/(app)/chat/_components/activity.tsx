@@ -4,7 +4,7 @@ import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyn
 import type { LinkTarget } from "@/lib/api/client";
 import { useChatRunEvents, useChatToolApprovals, useChatTurnEvents, useResolvedLinks } from "@/lib/api/hooks";
 import { readShowLiveThinking, subscribeShowLiveThinking } from "@/lib/chat-commands";
-import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedSummary, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, planProgress, quietFor, readableModelId, stepDetail, subagentBranches, thinkingBlocks, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStatusKind, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ThinkingBlock, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
+import { activityOf, bareTool, chatCalls, chatStatus, chatStatusOf, chatSteps, finishedSummary, finishedTurn, foldSteps, formatSpan, interimLine, NEXT_STEP_KEY, planProgress, planSnapshots, quietFor, readableModelId, stepDetail, subagentBranches, thinkingBlocks, turnActivity, turnClock, turnNotes, turnPulse, turnTrace, type Activity, type ChatStatusKind, type ChatStep, type IntentTag, type SubagentBranch, type SubagentBranchFlag, type ThinkingBlock, type ToolCall, type TraceStep, type TurnOutcome, type TurnPulse } from "@/lib/chat-ui";
 import { useConnectorApprovals } from "@/lib/api/connector-hooks";
 import { useApiSecretApprovals } from "@/lib/api/secret-hooks";
 import { LinkTargets, WikiLink } from "@/components/domain/wikilink";
@@ -673,7 +673,7 @@ function FinishedThinkingDisclosure({
 }
 
 /**
- * Compact pinned bar above the chat composer when a running turn has a `TodoWrite` / `TaskCreate` plan.
+ * Compact pinned bar above the chat composer when a running turn has a plan, whichever harness wrote it.
  * Shows progress (`N/M steps`, plus failed count if any) with an expandable checklist (~7 visible rows,
  * scrollable if more) and auto-hides once the turn completes.
  */
@@ -681,7 +681,8 @@ export function PinnedPlanBar({ runId, since }: { runId?: string; since?: string
   const q = useChatRunEvents(runId);
   const calls = useMemo(() => chatCalls(q.data, since), [q.data, since]);
   const activity = useMemo(() => turnActivity(q.data, since), [q.data, since]);
-  const { steps, planned } = useMemo(() => chatSteps(calls, undefined, { activity }), [calls, activity]);
+  const plans = useMemo(() => planSnapshots(q.data, since), [q.data, since]);
+  const { steps, planned } = useMemo(() => chatSteps(calls, undefined, { activity, plans }), [calls, activity, plans]);
   const progress = useMemo(() => planProgress(steps, planned), [steps, planned]);
   const [open, setOpen] = useState(false);
 
@@ -773,7 +774,8 @@ export function ChatStatus({ chatId, disabled, runId, since, persona, stopping, 
   const pulse = turnPulse(calls, clock, now);
   const status = useMemo(() => chatStatus(calls, pulse.between, activity, branches), [calls, pulse.between, activity, branches]);
   const notes = useMemo(() => turnNotes(q.data, since), [q.data, since]);
-  const { steps, planned } = useMemo(() => chatSteps(calls, notes, { between: pulse.between, clock, activity, branches }), [calls, notes, pulse.between, clock, activity, branches]);
+  const plans = useMemo(() => planSnapshots(q.data, since), [q.data, since]);
+  const { steps, planned } = useMemo(() => chatSteps(calls, notes, { between: pulse.between, clock, activity, branches, plans }), [calls, notes, pulse.between, clock, activity, branches, plans]);
   // A dock is narrow: its card starts as a strip (scene, status, progress and the step under way) so the conversation stays in view.
   const [collapsed, setCollapsed] = useState(folded);
   // Asking once per quiet stretch: the button comes back only after something happens.

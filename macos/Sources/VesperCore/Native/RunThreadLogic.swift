@@ -268,7 +268,7 @@ public enum RunThreadLogic {
             return ActivityStatus(kind: .memorySave, phrase: "making a note")
         case "search_chats", "read_chat":
             return ActivityStatus(kind: .chatHistory, phrase: "looking back through past chats")
-        case "set_chat_title", "TodoWrite", "todowrite", "TaskCreate", "TaskUpdate":
+        case "set_chat_title", "TodoWrite", "todowrite", "TaskCreate", "TaskUpdate", "set_plan":
             return ActivityStatus(kind: .thinking, phrase: "planning its next steps")
         case "WebSearch", "web_search", "websearch":
             return ActivityStatus(kind: .web, phrase: "searching the web")

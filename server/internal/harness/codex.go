@@ -237,7 +237,8 @@ type codexItem struct {
 		Path string `json:"path"`
 		Kind string `json:"kind"`
 	} `json:"changes"`
-	Query string `json:"query"`
+	Query string          `json:"query"`
+	Items []codexPlanItem `json:"items"` // todo_list
 }
 
 type codexLine struct {
@@ -442,8 +443,11 @@ func (p *codexParser) item(done bool, it codexItem) []Event {
 		if done {
 			return []Event{{"error", map[string]any{"message": it.Message}}}
 		}
+	case "todo_list":
+		// Codex's own plan, sent whole on every change.
+		return []Event{planEvent("codex", codexPlan(it.Items))}
 	}
-	return nil // todo lists: raw log only
+	return nil
 }
 
 func (p *codexParser) Result() Result { return p.res }

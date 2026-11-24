@@ -371,6 +371,9 @@ func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project,
 	} else {
 		b.WriteString(" Do not delegate work.\n\n")
 	}
+	if guide := agentdef.PlanGuide(spec); guide != "" {
+		b.WriteString(guide + "\n")
+	}
 	if !denied(spec, "wiki:write") {
 		b.WriteString("write_note saves a wiki note, but only as a suggestion the person accepts or rejects; say so when you use it. Write one when the person asks, or when you've solved something worth keeping for agents (a runbook, a decision), linked with [[…]]. If they are drafting in a Doc and seem to want it kept, suggest the Doc's \"Promote to wiki\" action instead. Your private notes about the person stay in memory, not the wiki.\n")
 	}
