@@ -151,10 +151,10 @@ func (b *MicroVM) trustNewVM(ctx context.Context, client *guestproto.Client) {
 	}
 }
 
-// applyTrustEnv points the tools that ignore the system bundle at the extra
-// roots: Node (Claude Code, npm) at the extra roots alone, which it adds to
-// its own; Codex and Python requests (certifi) at the merged system bundle,
-// which they use instead of their own.
+// applyTrustEnv points tools that ignore the system bundle (or ship their own)
+// at the extra roots: Node (Claude Code, npm) at the extra roots alone, which
+// it adds to its own; Codex, Python requests (certifi), OpenSSL/Go/Rust/agy,
+// Nix, curl, and git at the merged system bundle.
 func (b *MicroVM) applyTrustEnv(env map[string]string) {
 	if len(b.ExtraCACerts) == 0 {
 		return
@@ -162,4 +162,8 @@ func (b *MicroVM) applyTrustEnv(env map[string]string) {
 	env["NODE_EXTRA_CA_CERTS"] = guestExtraCAPath
 	env["CODEX_CA_CERTIFICATE"] = guestCABundlePath
 	env["REQUESTS_CA_BUNDLE"] = guestCABundlePath
+	env["SSL_CERT_FILE"] = guestCABundlePath
+	env["NIX_SSL_CERT_FILE"] = guestCABundlePath
+	env["CURL_CA_BUNDLE"] = guestCABundlePath
+	env["GIT_SSL_CAINFO"] = guestCABundlePath
 }

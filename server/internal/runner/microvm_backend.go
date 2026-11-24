@@ -1224,12 +1224,19 @@ func (b *MicroVM) cacheHandler() http.Handler {
 }
 
 func (b *MicroVM) nixConfFileWrite() (guestproto.FileWrite, bool) {
-	if b.CacheStore == nil {
+	if b.CacheStore == nil && len(b.ExtraCACerts) == 0 {
 		return guestproto.FileWrite{}, false
 	}
-	nixConf := fmt.Sprintf("build-users-group = nixbld\nexperimental-features = nix-command flakes\nsandbox = false\nauto-optimise-store = true\nextra-substituters = http://%s/nix\nextra-trusted-public-keys = %s\n",
-		microvm.InternalCacheHost, b.CacheStore.NixPublicKey())
-	return guestproto.FileWrite{Path: "/etc/nix/nix.conf", Data: []byte(nixConf), Mode: 0o644}, true
+	var buf strings.Builder
+	buf.WriteString("build-users-group = nixbld\nexperimental-features = nix-command flakes\nsandbox = false\nauto-optimise-store = true\n")
+	if b.CacheStore != nil {
+		fmt.Fprintf(&buf, "extra-substituters = http://%s/nix\nextra-trusted-public-keys = %s\n",
+			microvm.InternalCacheHost, b.CacheStore.NixPublicKey())
+	}
+	if len(b.ExtraCACerts) > 0 {
+		fmt.Fprintf(&buf, "ssl-cert-file = %s\n", guestCABundlePath)
+	}
+	return guestproto.FileWrite{Path: "/etc/nix/nix.conf", Data: []byte(buf.String()), Mode: 0o644}, true
 }
 
 func (b *MicroVM) applyCacheEnv(env map[string]string) {

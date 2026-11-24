@@ -10,6 +10,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/json"
 	"encoding/pem"
+	"io"
 	"math/big"
 	"net"
 	"os"
@@ -74,6 +75,9 @@ func (g *fakeGuestFS) handle(_ context.Context, conn net.Conn) {
 		var in guestproto.ExecReq
 		_ = json.Unmarshal(req.V, &in)
 		g.mu.Lock()
+		for _, fw := range in.Files {
+			g.files[fw.Path] = fw.Data
+		}
 		g.envs = append(g.envs, in.Env)
 		g.mu.Unlock()
 		reply(guestproto.Response{})
@@ -96,6 +100,16 @@ func newTrustTestVM(t *testing.T, extra []byte) (*MicroVM, *fakeGuestFS, *microv
 	return b, g, drv
 }
 
+var wantTrustEnv = map[string]string{
+	"NODE_EXTRA_CA_CERTS":  guestExtraCAPath,
+	"CODEX_CA_CERTIFICATE": guestCABundlePath,
+	"REQUESTS_CA_BUNDLE":   guestCABundlePath,
+	"SSL_CERT_FILE":        guestCABundlePath,
+	"NIX_SSL_CERT_FILE":    guestCABundlePath,
+	"CURL_CA_BUNDLE":       guestCABundlePath,
+	"GIT_SSL_CAINFO":       guestCABundlePath,
+}
+
 func TestMicroVMTrustsExtraCACerts(t *testing.T) {
 	extra := testCertPEM(t, "Zscaler Root CA")
 	b, g, _ := newTrustTestVM(t, extra)
@@ -109,17 +123,104 @@ func TestMicroVMTrustsExtraCACerts(t *testing.T) {
 	if got := g.file(guestExtraCAPath); !bytes.Equal(got, extra) {
 		t.Fatalf("%s = %q, want the extra roots alone", guestExtraCAPath, got)
 	}
+	if nixConf := string(g.file("/etc/nix/nix.conf")); !strings.Contains(nixConf, "ssl-cert-file = "+guestCABundlePath) {
+		t.Fatalf("/etc/nix/nix.conf = %q, want ssl-cert-file = %s", nixConf, guestCABundlePath)
+	}
 	g.mu.Lock()
 	env := g.envs[len(g.envs)-1]
 	g.mu.Unlock()
-	for k, v := range map[string]string{
-		"NODE_EXTRA_CA_CERTS":  guestExtraCAPath,
-		"CODEX_CA_CERTIFICATE": guestCABundlePath,
-		"REQUESTS_CA_BUNDLE":   guestCABundlePath,
-	} {
+	for k, v := range wantTrustEnv {
 		if env[k] != v {
 			t.Errorf("turn env %s = %q, want %q", k, env[k], v)
 		}
+	}
+}
+
+func TestMicroVMUtilityVMTrustsExtraCACerts(t *testing.T) {
+	extra := testCertPEM(t, "Zscaler Root CA")
+	wantBundle := imageBundle + "\n" + string(extra)
+
+	t.Run("StartLogin", func(t *testing.T) {
+		b, g, _ := newTrustTestVM(t, extra)
+		lp, err := b.StartLogin(context.Background(), LoginSpec{Argv: []string{"true"}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer lp.Close()
+		if _, err := lp.Wait(); err != nil {
+			t.Fatal(err)
+		}
+		if got := string(g.file(guestCABundlePath)); got != wantBundle {
+			t.Fatalf("utility VM bundle = %q, want %q", got, wantBundle)
+		}
+		if got := g.file(guestExtraCAPath); !bytes.Equal(got, extra) {
+			t.Fatalf("utility VM %s = %q, want extra roots", guestExtraCAPath, got)
+		}
+		g.mu.Lock()
+		env := g.envs[len(g.envs)-1]
+		g.mu.Unlock()
+		for k, v := range wantTrustEnv {
+			if env[k] != v {
+				t.Errorf("StartLogin env %s = %q, want %q", k, env[k], v)
+			}
+		}
+	})
+
+	t.Run("converseUtilityCLI", func(t *testing.T) {
+		b, g, _ := newTrustTestVM(t, extra)
+		err := b.converseUtilityCLI(context.Background(), "claude", "", "", []string{"true"}, func(_ io.Writer, _ io.Reader) error {
+			return nil
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got := string(g.file(guestCABundlePath)); got != wantBundle {
+			t.Fatalf("utility CLI bundle = %q, want %q", got, wantBundle)
+		}
+		if got := g.file(guestExtraCAPath); !bytes.Equal(got, extra) {
+			t.Fatalf("utility CLI %s = %q, want extra roots", guestExtraCAPath, got)
+		}
+		g.mu.Lock()
+		env := g.envs[len(g.envs)-1]
+		g.mu.Unlock()
+		for k, v := range wantTrustEnv {
+			if env[k] != v {
+				t.Errorf("utility CLI env %s = %q, want %q", k, env[k], v)
+			}
+		}
+	})
+}
+
+func TestMicroVMNixConfTrustsExtraCACerts(t *testing.T) {
+	extra := testCertPEM(t, "Zscaler Root CA")
+	cs, err := microvm.NewCacheStore(microvm.CacheStoreConfig{Dir: t.TempDir()})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := (&MicroVM{}).nixConfFileWrite(); ok {
+		t.Fatal("nixConfFileWrite returned true without CacheStore or ExtraCACerts")
+	}
+	wf, ok := (&MicroVM{ExtraCACerts: extra}).nixConfFileWrite()
+	if !ok {
+		t.Fatal("nixConfFileWrite returned false with ExtraCACerts")
+	}
+	if got := string(wf.Data); !strings.Contains(got, "ssl-cert-file = "+guestCABundlePath) || strings.Contains(got, "extra-substituters") {
+		t.Fatalf("ExtraCACerts-only nix.conf = %q", got)
+	}
+	wf, ok = (&MicroVM{CacheStore: cs}).nixConfFileWrite()
+	if !ok {
+		t.Fatal("nixConfFileWrite returned false with CacheStore")
+	}
+	if got := string(wf.Data); strings.Contains(got, "ssl-cert-file") || !strings.Contains(got, "extra-substituters") {
+		t.Fatalf("CacheStore-only nix.conf = %q", got)
+	}
+	wf, ok = (&MicroVM{CacheStore: cs, ExtraCACerts: extra}).nixConfFileWrite()
+	if !ok {
+		t.Fatal("nixConfFileWrite returned false with CacheStore and ExtraCACerts")
+	}
+	if got := string(wf.Data); !strings.Contains(got, "ssl-cert-file = "+guestCABundlePath) || !strings.Contains(got, "extra-substituters") {
+		t.Fatalf("CacheStore+ExtraCACerts nix.conf = %q", got)
 	}
 }
 
@@ -151,10 +252,13 @@ func TestMicroVMWithoutExtraCACertsLeavesTrustAlone(t *testing.T) {
 	if g.file(guestExtraCAPath) != nil {
 		t.Fatalf("%s written without extra roots", guestExtraCAPath)
 	}
+	if g.file("/etc/nix/nix.conf") != nil {
+		t.Fatalf("/etc/nix/nix.conf written without extra roots or cache store")
+	}
 	g.mu.Lock()
 	env := g.envs[len(g.envs)-1]
 	g.mu.Unlock()
-	for _, k := range []string{"NODE_EXTRA_CA_CERTS", "CODEX_CA_CERTIFICATE", "REQUESTS_CA_BUNDLE"} {
+	for k := range wantTrustEnv {
 		if _, set := env[k]; set {
 			t.Errorf("turn env sets %s without extra roots", k)
 		}
