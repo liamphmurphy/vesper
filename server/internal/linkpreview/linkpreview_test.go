@@ -130,7 +130,7 @@ func TestSiteFallsBackAndRefusesNonImages(t *testing.T) {
 
 func TestOversizedImageIsDropped(t *testing.T) {
 	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) { w.Write(append(png, make([]byte, maxImageBytes)...)) })
-	if b, _ := f.image(context.Background(), base+"/big.png"); b != nil {
+	if b, _ := f.image(context.Background(), base+"/big.png", ""); b != nil {
 		t.Fatal("kept oversized image")
 	}
 }
@@ -172,6 +172,117 @@ func TestFetchDirectRasterImageAndRejectSVG(t *testing.T) {
 	bad := f.Fetch(context.Background(), base+"/bad.svg")
 	if bad.Image != nil || bad.Kind == KindImage {
 		t.Fatalf("svg must not be accepted as an image: %+v", bad)
+	}
+}
+
+var avif = []byte{
+	0x00, 0x00, 0x00, 0x1c, // box size = 28
+	'f', 't', 'y', 'p',
+	'm', 'i', 'f', '1', // major brand
+	0x00, 0x00, 0x00, 0x00, // minor version
+	'm', 'i', 'f', '1',
+	'a', 'v', 'i', 'f', // compatible brand
+	'm', 'i', 'a', 'f',
+}
+
+func TestSiteRetriesWithBrowserUAOn403AndSendsImageReferer(t *testing.T) {
+	var sawPageUA []string
+	var imgReferer, imgAccept string
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/product":
+			sawPageUA = append(sawPageUA, r.Header.Get("User-Agent"))
+			if strings.Contains(r.Header.Get("User-Agent"), "VesperBot") {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head><title>Widget</title><meta property="og:image" content="/cdn/widget.avif"></head></html>`))
+		case "/cdn/widget.avif":
+			imgReferer = r.Header.Get("Referer")
+			imgAccept = r.Header.Get("Accept")
+			if imgReferer == "" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Header().Set("Content-Type", "image/avif")
+			w.Write(avif)
+		}
+	})
+	p := f.Fetch(context.Background(), base+"/product")
+	if p.Title != "Widget" || p.ImageType != "image/avif" || len(p.Image) == 0 {
+		t.Fatalf("expected retry + avif with referer, got %+v (UAs=%v referer=%q)", p, sawPageUA, imgReferer)
+	}
+	if len(sawPageUA) != 2 || !strings.Contains(imgAccept, "image/webp") || imgReferer != base+"/product" {
+		t.Fatalf("unexpected headers: UAs=%v accept=%q referer=%q", sawPageUA, imgAccept, imgReferer)
+	}
+}
+
+func TestFetchDirectAVIFImageAndRejectMP4(t *testing.T) {
+	mp4 := []byte{
+		0x00, 0x00, 0x00, 0x14,
+		'f', 't', 'y', 'p',
+		'i', 's', 'o', 'm',
+		0x00, 0x00, 0x02, 0x00,
+		'i', 's', 'o', 'm',
+	}
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/photo.avif":
+			w.Write(avif)
+		case "/clip.mp4":
+			w.Write(mp4)
+		}
+	})
+	if p := f.Fetch(context.Background(), base+"/photo.avif"); p.Kind != KindImage || p.ImageType != "image/avif" || len(p.Image) == 0 {
+		t.Fatalf("expected direct avif image, got %+v", p)
+	}
+	if p := f.Fetch(context.Background(), base+"/clip.mp4"); p.Image != nil || p.Kind == KindImage {
+		t.Fatalf("mp4 must not be accepted as an image: %+v", p)
+	}
+}
+
+func TestSiteExtractsJSONLDProductImageInBody(t *testing.T) {
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/prod.png":
+			w.Write(png)
+		case "/logo.svg":
+			w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head><meta property="og:image" content="/logo.svg"></head><body>` +
+				`<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Shop"},{"@type":"Product","name":"Mechanical Keyboard","description":"Tactile switches","image":[{"@type":"ImageObject","url":"/prod.png"}]}]}</script>` +
+				`</body></html>`))
+		}
+	})
+	p := f.Fetch(context.Background(), base+"/item")
+	if p.Title != "Mechanical Keyboard" || p.Description != "Tactile switches" || p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected JSON-LD product metadata and image, got %+v", p)
+	}
+}
+
+func TestSiteFallsBackAcrossImageCandidatesAndWithoutTitle(t *testing.T) {
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/missing.png":
+			w.WriteHeader(http.StatusNotFound)
+		case "/logo.svg":
+			w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+		case "/real.png":
+			w.Write(png)
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head>` +
+				`<meta property="og:image" content="/missing.png">` +
+				`<meta name="twitter:image:src" content="/logo.svg">` +
+				`<link rel="image_src" href="/real.png">` +
+				`</head></html>`))
+		}
+	})
+	p := f.Fetch(context.Background(), base+"/no-title")
+	if p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected fallback to link[rel=image_src] even without title, got %+v", p)
 	}
 }
 
