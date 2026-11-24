@@ -278,17 +278,66 @@ struct KnowledgeEditorView: View {
 
     // MARK: - Page Header & Interleaved Segments
 
+    private var linkedSpacesForPage: [API.ChatSpace] {
+        guard let pagePath = page.path, !pagePath.isEmpty else { return [] }
+        let spaces = context.store.entry(API.listChatSpaces()).data?.spaces ?? []
+        return spaces.filter { sp in
+            guard (sp.knowledgeCount ?? 0) > 0 else { return false }
+            let links = sp.knowledgeLinks ?? context.store.entry(API.listChatSpaceKnowledgeLinks(spaceId: sp.id)).data?.links ?? []
+            return links.contains { link in
+                if link.kind == .folder {
+                    return pagePath == link.path || pagePath.hasPrefix(link.path + "/")
+                }
+                return pagePath == link.path
+            }
+        }
+    }
+
     private var pageHeader: some View {
         let p = theme.palette
+        let matchedSpaces = linkedSpacesForPage
         return VStack(alignment: .leading, spacing: 4) {
-            if let path = page.path, !path.isEmpty {
-                Text(path)
-                    .font(.system(size: theme.pointSize(.micro) + 1))
-                    .foregroundStyle(p.tertiaryText)
+            if (page.path != nil && !(page.path ?? "").isEmpty) || !matchedSpaces.isEmpty {
+                HStack(spacing: 8) {
+                    if let path = page.path, !path.isEmpty {
+                        Text(path)
+                            .font(.system(size: theme.pointSize(.micro) + 1))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    ForEach(matchedSpaces, id: \.id) { sp in
+                        Button {
+                            context.navigate("/spaces/\(sp.id)")
+                        } label: {
+                            HStack(spacing: 4) {
+                                Circle()
+                                    .fill(Color(cssHex: SpacesLogic.colorHex(for: sp.color)) ?? .green)
+                                    .frame(width: 6, height: 6)
+                                Text(sp.name)
+                                    .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                                    .foregroundStyle(p.secondaryText)
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(p.surface, in: Capsule())
+                            .overlay(Capsule().stroke(p.border))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Open \(sp.name) Space")
+                    }
+                }
             }
             Text(page.title.isEmpty ? "Untitled" : page.title)
                 .vesperText(.display, theme)
                 .foregroundStyle(p.text)
+        }
+        .task(id: page.id) {
+            let spacesReq = API.listChatSpaces()
+            context.store.load(spacesReq)
+            if let spaces = context.store.entry(spacesReq).data?.spaces {
+                for sp in spaces where (sp.knowledgeCount ?? 0) > 0 && sp.knowledgeLinks == nil {
+                    context.store.load(API.listChatSpaceKnowledgeLinks(spaceId: sp.id))
+                }
+            }
         }
     }
 

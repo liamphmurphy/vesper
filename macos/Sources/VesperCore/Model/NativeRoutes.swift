@@ -5,8 +5,6 @@ import Foundation
 public enum NativeScreen: String, Sendable, CaseIterable {
     case debugPlaceholder
     case inbox
-    case work
-    case runDetail
     case library
     case pdf
     /// /native-debug/markdown: every markdown feature through `MarkdownView` (debug only).
@@ -19,11 +17,6 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case http
     case learn
     case learnCourse
-    case tickets
-    case ticketNew
-    case ticketDetail
-    case epics
-    case epicDetail
     case scheduled
     case reports
     case knowledge
@@ -38,10 +31,9 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case setup
     case appsHome
     case appsRedirect
+    case spacesHome
     case spaceNew
     case spaceDetail
-    case agentDetail
-    case plans
     case artifactDetail
     case artifactReview
 
@@ -54,13 +46,12 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         }
     }
 
-    /// The sidebar area this screen belongs to, as web/lib/navigator.ts's currentArea() has it for
-    /// the same paths: tools and app screens are under Apps, Inbox and the PDF viewer under none.
-    /// The shell marks it itself rather than waiting for the hidden page to report its route.
+    /// The sidebar area this screen belongs to: tools and app screens are under Apps,
+    /// Inbox and the PDF viewer under none.
     public var area: AreaId? {
         switch self {
-        case .chat, .chatDetail, .rootLanding, .spaceNew, .spaceDetail: .chat
-        case .work, .runDetail, .tickets, .ticketNew, .ticketDetail, .epics, .epicDetail, .agentDetail, .plans: .work
+        case .chat, .chatDetail, .rootLanding: .chat
+        case .spacesHome, .spaceNew, .spaceDetail: .spaces
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
@@ -115,10 +106,6 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/native-debug/embeds", .embedsDebug),
         NativeRoute("/native-debug/:id", .debugPlaceholder),
         NativeRoute("/inbox", .inbox),
-        // Work's Runs view (/work and bare /runs) and Run detail (/runs/:id).
-        NativeRoute("/work", .work),
-        NativeRoute("/runs", .work),
-        NativeRoute("/runs/:id", .runDetail),
         NativeRoute("/library", .library),
         NativeRoute("/pdf", .pdf),
         // The Dev workspace terminal (SwiftTerm on the workspace's PTY socket).
@@ -128,16 +115,7 @@ public struct NativeRouteRegistry: Sendable {
         // Guided Learning modules and course study/build screens.
         NativeRoute("/learn", .learn),
         NativeRoute("/learn/:id", .learnCourse),
-        // Tickets list/board, new-ticket composer, and ticket detail.
-        NativeRoute("/tickets", .tickets),
-        NativeRoute("/board", .tickets),
-        NativeRoute("/tickets/new", .ticketNew),
-        NativeRoute("/tickets/:key", .ticketDetail),
-        // Epics, Agent detail, Plans, Scheduled tasks, and Reports (Costs & Highlights).
-        NativeRoute("/epics", .epics),
-        NativeRoute("/epics/:id", .epicDetail),
-        NativeRoute("/agents/:handle", .agentDetail),
-        NativeRoute("/plans", .plans),
+        // Scheduled tasks and Reports (Costs & Highlights).
         NativeRoute("/scheduled", .scheduled),
         NativeRoute("/reports", .reports),
         NativeRoute("/costs", .reports),
@@ -159,7 +137,7 @@ public struct NativeRouteRegistry: Sendable {
         // Chat landing, Spaces, and conversation detail.
         NativeRoute("/chat", .chat),
         NativeRoute("/chat/:id", .chatDetail),
-        NativeRoute("/spaces", .spaceNew),
+        NativeRoute("/spaces", .spacesHome),
         NativeRoute("/spaces/new", .spaceNew),
         NativeRoute("/spaces/:id", .spaceDetail),
         // Root landing, onboarding setup, Custom Apps home, and legacy /apps/docs|slides|designs redirects.

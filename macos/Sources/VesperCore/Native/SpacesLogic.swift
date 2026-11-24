@@ -101,8 +101,11 @@ public enum SpacesLogic {
         var parts: [String] = []
         let desc = space.description.trimmingCharacters(in: .whitespacesAndNewlines)
         if !desc.isEmpty { parts.append(desc) }
+        if let rc = space.repoCount, rc > 0 { parts.append(plural(rc, "repo")) }
+        if let kc = space.knowledgeCount, kc > 0 { parts.append(plural(kc, "Knowledge link")) }
+        if let tc = space.openTaskCount, tc > 0 { parts.append(plural(tc, "open task")) }
         parts.append(plural(space.chatCount, "chat"))
-        parts.append(plural(space.sourceCount, "source"))
+        if space.sourceCount > 0 { parts.append(plural(space.sourceCount, "source")) }
         return parts.joined(separator: " \u{00B7} ")
     }
 
@@ -110,6 +113,12 @@ public enum SpacesLogic {
         var parts: [String] = []
         if !space.instructions.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             parts.append("\(space.name)\u{2019}s instructions")
+        }
+        if let rc = space.repoCount, rc > 0 {
+            parts.append("\(rc) repo\(rc == 1 ? "" : "s")")
+        }
+        if let kc = space.knowledgeCount, kc > 0 {
+            parts.append("\(kc) Knowledge link\(kc == 1 ? "" : "s")")
         }
         if space.sourceCount > 0 {
             parts.append("\(space.sourceCount) source\(space.sourceCount == 1 ? "" : "s")")
@@ -123,37 +132,12 @@ public enum SpacesLogic {
         return "Uses \(parts.joined(separator: ", ")) and \(last)"
     }
 
-    public static func isValidWorkKey(_ key: String) -> Bool {
-        key.trimmingCharacters(in: .whitespacesAndNewlines)
-            .range(of: #"^[A-Za-z][A-Za-z0-9]{1,9}$"#, options: .regularExpression) != nil
-    }
-
-    public static func suggestWorkKey(for name: String) -> String {
-        let folded = name.folding(options: .diacriticInsensitive, locale: Locale(identifier: "en_US_POSIX"))
-        let cleaned = folded.replacingOccurrences(of: "[^A-Za-z0-9\\s]", with: " ", options: .regularExpression)
-        let words = cleaned.split(whereSeparator: \.isWhitespace).map(String.init)
-        guard let firstIdx = words.firstIndex(where: { $0.first?.isLetter == true }) else { return "" }
-        let rest = Array(words[firstIdx...])
-        let raw: String
-        if rest.count > 1 {
-            raw = rest.compactMap(\.first).map(String.init).joined()
-        } else {
-            raw = String(rest[0].prefix(4))
-        }
-        let upper = String(raw.uppercased().prefix(10))
-        if upper.count >= 2 { return upper }
-        var padded = String(rest[0].prefix(4)).uppercased()
-        while padded.count < 2 { padded.append("X") }
-        return padded
-    }
-
     public static func buildAboutInspectorSections(
         space: API.ChatSpace,
         sources: [API.ChatSpaceSource],
         inlineBudget: Int,
         inlineTokens: Int,
         personas: [API.Persona],
-        projectName: String?,
         connectorsSummary: String
     ) -> [InspectorSection] {
         var sections: [InspectorSection] = []
@@ -167,7 +151,7 @@ public enum SpacesLogic {
                 InspectorItem(
                     id: "instructions_text",
                     kind: .note,
-                    detail: trimmedInstructions.isEmpty ? "No custom instructions yet. Open Settings to add some." : trimmedInstructions
+                    detail: trimmedInstructions.isEmpty ? "No custom instructions yet. Open Edit space to add some." : trimmedInstructions
                 ),
                 InspectorItem(
                     id: "instructions_edit",
@@ -236,7 +220,7 @@ public enum SpacesLogic {
         // Defaults
         let personaOptions = [InspectorOption(value: "", label: "Default persona")]
             + personas.map { InspectorOption(value: $0.id, label: $0.name) }
-        var defaultItems: [InspectorItem] = [
+        let defaultItems: [InspectorItem] = [
             InspectorItem(
                 id: "persona_id",
                 kind: .picker,
@@ -244,53 +228,14 @@ public enum SpacesLogic {
                 value: space.personaId ?? "",
                 options: personaOptions
             ),
-        ]
-        if space.work == nil {
-            defaultItems.append(InspectorItem(
-                id: "project",
+            InspectorItem(
+                id: "connectors",
                 kind: .fact,
-                label: "New tickets",
-                value: projectName ?? "None"
-            ))
-        }
-        defaultItems.append(InspectorItem(
-            id: "connectors",
-            kind: .fact,
-            label: "Connectors",
-            value: connectorsSummary
-        ))
+                label: "Connectors",
+                value: connectorsSummary
+            ),
+        ]
         sections.append(InspectorSection(id: "defaults", title: "Defaults", items: defaultItems))
-
-        // Work
-        let workItems: [InspectorItem]
-        if let work = space.work {
-            workItems = [
-                InspectorItem(
-                    id: "work_status",
-                    kind: .fact,
-                    label: "Status",
-                    value: work.archived ? "Archived" : "Tracked",
-                    tone: work.archived ? .neutral : .accent
-                ),
-                InspectorItem(id: "work_key", kind: .fact, label: "Key", value: work.key, mono: true),
-                InspectorItem(
-                    id: "work_repo",
-                    kind: .fact,
-                    label: "Repository",
-                    value: work.repoUrl.map { ChatCodeReviewLogic.repoName($0) } ?? "None"
-                ),
-                InspectorItem(id: "work_branch", kind: .fact, label: "Branch", value: work.defaultBranch, mono: true),
-            ]
-        } else {
-            workItems = [
-                InspectorItem(
-                    id: "work_note",
-                    kind: .note,
-                    detail: "Not tracking tickets, epics, or runs. Enable Work tracking in Edit space to attach a repository and board."
-                ),
-            ]
-        }
-        sections.append(InspectorSection(id: "work", title: "Work", items: workItems))
 
         return sections
     }
@@ -298,29 +243,77 @@ public enum SpacesLogic {
     // MARK: - Sidebar NavModel
 
     public static let navId = "spaces"
-    public static let backToChatAction = "back-chat"
     public static let newSpaceAction = "new-space"
     public static let spacePrefix = "space:"
     public static let chatPrefix = "chat:"
+    public static let newChatPrefix = "new-chat:"
     public static let openNewTabMenu = "open-new-tab"
 
     public static func navModel(
         spaces: [API.ChatSpace],
         activeSpaceId: String?,
-        chats: [API.ChatSession] = []
+        chats: [API.ChatSession] = [],
+        viewedChatId: String? = nil,
+        personas: [API.Persona] = [],
+        origin: URL? = nil
     ) -> NavModel {
-        let spaceItems = spaces.map { sp in
-            NavItem(
+        let personaById = Dictionary(uniqueKeysWithValues: personas.map { ($0.id, $0) })
+        let sortedChats = sortChats(chats, sort: .newest)
+
+        let spaceItems = spaces.map { sp -> NavItem in
+            let isActive = sp.id == activeSpaceId
+            let assignedPersona = sp.personaId.flatMap { personaById[$0] }
+            let rowAvatar: Avatar
+            if let assigned = assignedPersona, !assigned.isDefault {
+                rowAvatar = ChatNav.avatar(
+                    name: assigned.name,
+                    color: assigned.color,
+                    imageUrl: assigned.avatarUrl,
+                    origin: origin
+                )
+            } else {
+                rowAvatar = Avatar(initials: initial(for: sp.name), color: colorHex(for: sp.color))
+            }
+
+            var children: [NavItem]?
+            if isActive {
+                var rows = sortedChats.prefix(5).map { chat in
+                    let isRunning = chat.state == .running
+                    return NavItem(
+                        id: "\(chatPrefix)\(chat.id)",
+                        title: chat.title.isEmpty ? "New chat" : chat.title,
+                        badge: chat.unread > 0 && chat.id != viewedChatId
+                            ? NavBadge(text: "\(chat.unread)", tone: .human)
+                            : nil,
+                        status: isRunning ? .done : nil,
+                        href: "/chat/\(chat.id)",
+                        contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
+                    )
+                }
+                rows.append(NavItem(
+                    id: "\(newChatPrefix)\(sp.id)",
+                    title: "New chat",
+                    icon: "plus",
+                    href: "/spaces/\(sp.id)"
+                ))
+                children = rows
+            }
+
+            let hasRunning = isActive && sortedChats.contains(where: { $0.state == .running })
+            return NavItem(
                 id: "\(spacePrefix)\(sp.id)",
                 title: sp.name,
-                subtitle: sp.work?.key,
-                avatar: Avatar(initials: initial(for: sp.name), color: colorHex(for: sp.color)),
+                avatar: rowAvatar,
+                status: hasRunning ? .done : nil,
                 trailing: sp.chatCount > 0 ? "\(sp.chatCount)" : nil,
                 href: "/spaces/\(sp.id)",
+                children: children,
+                expanded: isActive ? true : nil,
                 contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
             )
         }
-        var sections: [NavSection] = [
+
+        let sections: [NavSection] = [
             NavSection(
                 id: "spaces",
                 title: "Spaces",
@@ -329,38 +322,27 @@ public enum SpacesLogic {
                 emptyText: "No spaces yet."
             ),
         ]
-        if activeSpaceId != nil && !chats.isEmpty {
-            let sorted = sortChats(chats, sort: .newest)
-            sections.append(NavSection(
-                id: "space-chats",
-                title: "Chats",
-                items: sorted.prefix(25).map { chat in
-                    NavItem(
-                        id: "\(chatPrefix)\(chat.id)",
-                        title: chat.title.isEmpty ? "New chat" : chat.title,
-                        icon: "msg",
-                        href: "/chat/\(chat.id)",
-                        contextMenu: [MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external")]
-                    )
-                },
-                badge: NavBadge(text: "\(chats.count)")
-            ))
+
+        let selectedId: String? = if let viewedChatId {
+            "\(chatPrefix)\(viewedChatId)"
+        } else if let activeSpaceId {
+            "\(spacePrefix)\(activeSpaceId)"
+        } else {
+            nil
         }
 
         return NavModel(
             id: navId,
             title: "Spaces",
             actions: [
-                NavAction(id: backToChatAction, label: "Back to Chat", icon: "chevl"),
                 NavAction(id: newSpaceAction, label: "New space", icon: "plus", accent: true),
             ],
             sections: sections,
-            selectedId: activeSpaceId.map { "\(spacePrefix)\($0)" }
+            selectedId: selectedId
         )
     }
 
     public enum NavActionResult: Sendable, Equatable {
-        case backToChat
         case newSpace
         case openSpace(String, newTab: Bool)
         case openChat(String, newTab: Bool)
@@ -368,8 +350,6 @@ public enum SpacesLogic {
 
     public static func navAction(for command: NativeCommand) -> NavActionResult? {
         switch command {
-        case .navAction(navId, backToChatAction, _, _):
-            return .backToChat
         case .navAction(navId, newSpaceAction, _, _):
             return .newSpace
         case .navAction(navId, openNewTabMenu, let itemId?, _):
@@ -383,6 +363,9 @@ public enum SpacesLogic {
         case .navActivate(navId, let itemId, let newTab):
             if itemId.hasPrefix(spacePrefix) {
                 return .openSpace(String(itemId.dropFirst(spacePrefix.count)), newTab: newTab)
+            }
+            if itemId.hasPrefix(newChatPrefix) {
+                return .openSpace(String(itemId.dropFirst(newChatPrefix.count)), newTab: newTab)
             }
             if itemId.hasPrefix(chatPrefix) {
                 return .openChat(String(itemId.dropFirst(chatPrefix.count)), newTab: newTab)

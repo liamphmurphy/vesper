@@ -338,9 +338,6 @@ public enum ChatNav {
     ) -> NavItem {
         let isOpen = chat.id == viewedChatId
         let mark = rowMark(state: chat.state, unread: chat.unread, isOpen: isOpen)
-        let rowAvatar = chat.personaName.map {
-            avatar(name: $0, color: chat.personaColor, imageUrl: chat.personaAvatarUrl, origin: origin)
-        }
         var sub: [String] = []
         if chat.pinned { sub.append("Pinned") }
         if chat.state == "failed" { sub.append("Failed") }
@@ -351,7 +348,7 @@ public enum ChatNav {
             id: chat.id,
             title: chatTitle(chat.title),
             subtitle: sub.isEmpty ? nil : sub.joined(separator: " · "),
-            avatar: rowAvatar,
+            avatar: nil,
             badge: mark == .unread ? NavBadge(text: "\(chat.unread)", tone: .human) : nil,
             status: mark == .running ? .done : nil,
             trailing: mark == .unread ? nil : APIDate.shortAgo(chat.lastMessageAt ?? chat.createdAt, now: now, calendar: calendar),
@@ -437,65 +434,20 @@ public enum ChatNav {
             sections[0].actions = [NavAction(id: newChatAction, label: "New Chat", icon: "compose", showsLabel: true)]
         }
 
-        let activeSpaces = input.spaces.filter { !$0.workArchived }
-        if !activeSpaces.isEmpty {
-            sections.append(NavSection(
-                id: "spaces",
-                title: "Spaces",
-                items: activeSpaces.map { s in
-                    NavItem(
-                        id: "\(spacePrefix)\(s.id)",
-                        title: s.name,
-                        subtitle: s.workKey,
-                        avatar: avatar(name: s.name, color: s.color, imageUrl: nil, origin: input.origin),
-                        trailing: s.chatCount.map(String.init),
-                        href: "/spaces/\(s.id)",
-                        contextMenu: [MenuItem(id: MenuAction.openInNewTab, label: "Open in New Tab", icon: "external")]
-                    )
-                },
-                actions: [NavAction(id: newSpaceAction, label: "New space", icon: "plus")],
-                collapsible: true
-            ))
-        }
-
-        var filters: [NavFilterMenu] = []
-        if !activeSpaces.isEmpty {
-            let spaceOpts = [NavFilterOption(value: "", label: "All spaces", checked: input.selectedSpaceId.isEmpty)]
-                + activeSpaces.map { NavFilterOption(value: $0.id, label: $0.name, checked: input.selectedSpaceId == $0.id) }
-            filters.append(NavFilterMenu(id: spaceFilter, label: "Space", icon: "briefcase", options: spaceOpts))
-        }
-        if !input.personas.isEmpty {
-            let personaOpts = [NavFilterOption(value: "", label: "All personas", checked: input.selectedPersonaId.isEmpty)]
-                + input.personas.map { NavFilterOption(value: $0.value, label: $0.label, checked: input.selectedPersonaId == $0.value) }
-            filters.append(NavFilterMenu(id: personaFilter, label: "Persona", icon: "agents", options: personaOpts))
-        }
-
-        var viewMenu: [MenuItem] = [
+        let viewMenu: [MenuItem] = [
             MenuItem(id: viewActive, label: "Recent", checked: !archived),
             MenuItem(id: viewArchived, label: "Archived", icon: "folder", checked: archived),
         ]
-        if activeSpaces.isEmpty {
-            viewMenu.append(MenuItem(id: "view.sep", separator: true))
-            viewMenu.append(MenuItem(id: newSpaceAction, label: "New space…", icon: "plus"))
-        }
-
-        let picker: NavPicker? = input.personas.count > 1
-            ? NavPicker(
-                id: personaPicker,
-                value: input.selectedPersonaId,
-                options: [NavPickerOption(value: "", label: "All")] + input.personas.map { NavPickerOption(value: $0.value, label: $0.label) }
-            )
-            : nil
 
         return NavModel(
             id: id,
             title: "Chat",
             actions: [NavAction(id: viewAction, label: "View", icon: "folder", menu: viewMenu)],
-            picker: picker,
-            filters: filters.isEmpty ? nil : filters,
+            picker: nil,
+            filters: nil,
             search: NavSearch(id: searchId, placeholder: "Find in chats", value: query),
             sections: sections,
-            selectedId: input.viewedSpaceId.map { "\(spacePrefix)\($0)" } ?? input.viewedChatId
+            selectedId: input.viewedChatId
         )
     }
 

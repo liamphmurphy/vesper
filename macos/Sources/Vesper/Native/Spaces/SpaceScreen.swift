@@ -3,8 +3,8 @@ import SwiftUI
 import UniformTypeIdentifiers
 import VesperCore
 
-/// Native `/spaces/:id` screen: space header & inline editor, work tabs, new-chat composer,
-/// sortable chat list, sources management sheet, and native About + Companion Chat inspector.
+/// Native `/spaces/:id` Space Hub: compact header, inline new-chat composer with live context toggles,
+/// conditional In-Flight strip, optional flat Tasks checklist, recent chats, and right Context dock.
 struct SpaceScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -15,7 +15,7 @@ struct SpaceScreen: View {
     @State private var chatSort: SpacesLogic.ChatSort = .newest
     @State private var showAllChats = false
     @State private var inspectorOpen = true
-    @State private var inspectorTabId = "about"
+    @State private var inspectorTabId = "context"
 
     // Inline new-chat composer
     @State private var composerText = ""
@@ -23,16 +23,20 @@ struct SpaceScreen: View {
     @State private var pickedHarness: API.Harness?
     @State private var pickedModel: String?
     @State private var researchMode = false
+    @State private var skipReposForChat = false
     @State private var startingChat = false
     @State private var composerError: String?
+
+    // Tasks
+    @State private var newTaskTitle = ""
+    @State private var addingTask = false
+    @State private var showTasksComposer = false
 
     // Edit header/settings form
     @State private var editName = ""
     @State private var editDescription = ""
     @State private var editInstructions = ""
     @State private var editColor: API.ChatSpaceColor = .green
-    @State private var editWorkKey = ""
-    @State private var editWorkRepo = ""
     @State private var savingEdit = false
     @State private var editError: String?
     @State private var deleting = false
@@ -40,8 +44,6 @@ struct SpaceScreen: View {
 
     private static let personasRequest = API.listPersonas()
     private static let modelsRequest = API.listChatModels()
-    private static let bootRequest = API.getBootstrap()
-    private static let connectorsRequest = API.listConnectors()
     private static let spacesRequest = API.listChatSpaces()
 
     private var spaceId: String {
@@ -56,6 +58,22 @@ struct SpaceScreen: View {
         API.listChatSpaceSources(spaceId: spaceId)
     }
 
+    private var reposRequest: APIRequest<API.ListChatSpaceRepositoriesResponse> {
+        API.listChatSpaceRepositories(spaceId: spaceId)
+    }
+
+    private var knowledgeRequest: APIRequest<API.ListChatSpaceKnowledgeLinksResponse> {
+        API.listChatSpaceKnowledgeLinks(spaceId: spaceId)
+    }
+
+    private var tasksRequest: APIRequest<API.ListChatSpaceTasksResponse> {
+        API.listChatSpaceTasks(spaceId: spaceId)
+    }
+
+    private var branchesRequest: APIRequest<API.ListChatSpaceBranchesResponse> {
+        API.listChatSpaceBranches(spaceId: spaceId)
+    }
+
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
         API.listChats(space: spaceId)
     }
@@ -66,12 +84,14 @@ struct SpaceScreen: View {
         let space = spaceEntry.data
         let sourcesData = context.store.entry(sourcesRequest).data
         let sources = sourcesData?.sources ?? []
+        let repos = context.store.entry(reposRequest).data?.repositories ?? []
+        let knowledgeLinks = context.store.entry(knowledgeRequest).data?.links ?? []
+        let tasks = context.store.entry(tasksRequest).data?.tasks ?? []
+        let branches = context.store.entry(branchesRequest).data?.branches ?? []
         let chatsEntry = context.store.entry(chatsRequest)
         let personasList = context.store.entry(Self.personasRequest).data
         let personas = personasList?.personas ?? []
         let models = context.store.entry(Self.modelsRequest).data ?? []
-        let boot = context.store.entry(Self.bootRequest).data
-        let connectors = context.store.entry(Self.connectorsRequest).data?.connectors ?? []
         let spaces = context.store.entry(Self.spacesRequest).data?.spaces ?? []
         let spaceChats = chatsEntry.data?.chats ?? []
 
@@ -90,20 +110,25 @@ struct SpaceScreen: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
             } else if let space {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 24) {
+                    VStack(alignment: .leading, spacing: 22) {
                         headerSection(space: space, p: p)
-
-                        if let work = space.work {
-                            workTabsBar(space: space, work: work, p: p)
-                        }
 
                         composerCard(
                             space: space,
                             personas: personas,
                             defaultPersonaId: personasList?.defaultPersonaId,
                             models: models,
+                            repos: repos,
+                            knowledgeLinks: knowledgeLinks,
                             p: p
                         )
+
+                        let runningChats = spaceChats.filter { $0.state == .running || $0.unread > 0 }
+                        if !runningChats.isEmpty || !branches.isEmpty {
+                            inFlightSection(runningChats: runningChats, branches: branches, p: p)
+                        }
+
+                        tasksSection(space: space, tasks: tasks, p: p)
 
                         chatsSection(
                             space: space,
@@ -123,17 +148,11 @@ struct SpaceScreen: View {
                 }
                 .alert("Delete \(space.name)?", isPresented: $showDeleteAlert) {
                     Button("Cancel", role: .cancel) {}
-                    if space.work == nil {
-                        Button("Delete space", role: .destructive) {
-                            deleteSpace(space)
-                        }
+                    Button("Delete space", role: .destructive) {
+                        deleteSpace(space)
                     }
                 } message: {
-                    if let work = space.work {
-                        Text("\(space.name) tracks work (\(work.key)), so it stays while it does. Stop tracking work first.")
-                    } else {
-                        Text("Its instructions, \(space.sourceCount) \(space.sourceCount == 1 ? "source" : "sources") and \(space.memoryCount) \(space.memoryCount == 1 ? "memory" : "memories") are deleted. Its \(space.chatCount) \(space.chatCount == 1 ? "chat moves" : "chats move") to Recent.")
-                    }
+                    Text("Its instructions, \(space.sourceCount) \(space.sourceCount == 1 ? "source" : "sources") and \(space.memoryCount) \(space.memoryCount == 1 ? "memory" : "memories") are deleted. Its \(space.chatCount) \(space.chatCount == 1 ? "chat moves" : "chats move") to Recent.")
                 }
             } else {
                 ProgressView("Loading space\u{2026}")
@@ -143,15 +162,16 @@ struct SpaceScreen: View {
         .task(id: spaceId) {
             editing = false
             showAllChats = false
+            skipReposForChat = false
             syncWatches()
+            installInspectorView(space: space)
         }
-        .onChange(of: chromeFingerprint(space: space, sources: sources, personasCount: personas.count, spacesCount: spaces.count, chatsCount: spaceChats.count)) { _, _ in
+        .onChange(of: chromeFingerprint(space: space, sources: sources, reposCount: repos.count, linksCount: knowledgeLinks.count, branchesCount: branches.count, personasCount: personas.count, spacesCount: spaces.count, chatsCount: spaceChats.count)) { _, _ in
             publishChrome(
                 space: space,
-                sourcesData: sourcesData,
+                repos: repos,
+                branches: branches,
                 personas: personas,
-                projects: boot?.projects ?? [],
-                connectors: connectors,
                 spaces: spaces,
                 chats: spaceChats
             )
@@ -159,20 +179,22 @@ struct SpaceScreen: View {
         .onAppear {
             publishChrome(
                 space: space,
-                sourcesData: sourcesData,
+                repos: repos,
+                branches: branches,
                 personas: personas,
-                projects: boot?.projects ?? [],
-                connectors: connectors,
                 spaces: spaces,
                 chats: spaceChats
             )
             installCommands(space: space)
+            installInspectorView(space: space)
         }
         .onChange(of: space?.id) { _, _ in
             installCommands(space: space)
+            installInspectorView(space: space)
         }
         .onDisappear {
             context.onCommand = nil
+            context.inspectorView = nil
             for key in watchedKeys { context.store.stopObserving(key) }
             watchedKeys = []
         }
@@ -227,34 +249,6 @@ struct SpaceScreen: View {
                         .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
                 }
 
-                if let work = space.work {
-                    HStack(spacing: 10) {
-                        Text("Tracking work as \(work.key)")
-                            .font(.system(size: 12, design: .monospaced))
-                            .foregroundStyle(p.secondaryText)
-                        Spacer()
-                        Button("Stop tracking work", role: .destructive) {
-                            stopTrackingWork(space: space)
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
-                        .disabled(savingEdit)
-                    }
-                } else {
-                    HStack(spacing: 8) {
-                        TextField("Work key (e.g. \(SpacesLogic.suggestWorkKey(for: editName.isEmpty ? space.name : editName)))", text: $editWorkKey)
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 180)
-                        TextField("Repository URL (optional)", text: $editWorkRepo)
-                            .textFieldStyle(.roundedBorder)
-                        Button("Track work") {
-                            startTrackingWork(space: space)
-                        }
-                        .buttonStyle(.bordered)
-                        .disabled(savingEdit || !SpacesLogic.isValidWorkKey(editWorkKey))
-                    }
-                }
-
                 if let editError {
                     Text(editError)
                         .font(.caption)
@@ -279,17 +273,10 @@ struct SpaceScreen: View {
             HStack(alignment: .top, spacing: 12) {
                 spaceTile(name: space.name, color: space.color, size: 36)
                 VStack(alignment: .leading, spacing: 4) {
-                    HStack(alignment: .firstTextBaseline, spacing: 8) {
-                        Text(space.name)
-                            .font(.system(size: 22, weight: .semibold))
-                            .foregroundStyle(p.text)
-                            .lineLimit(1)
-                        if let work = space.work {
-                            Text(work.key)
-                                .font(.system(size: 12, design: .monospaced))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                    }
+                    Text(space.name)
+                        .font(.system(size: 22, weight: .semibold))
+                        .foregroundStyle(p.text)
+                        .lineLimit(1)
                     Text(SpacesLogic.subtitle(for: space))
                         .font(.system(size: 13))
                         .foregroundStyle(p.tertiaryText)
@@ -300,41 +287,6 @@ struct SpaceScreen: View {
         }
     }
 
-    private func workTabsBar(space: API.ChatSpace, work: API.SpaceWork, p: NativePalette) -> some View {
-        let encoded = work.key.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? work.key
-        return HStack(spacing: 20) {
-            VStack(spacing: 6) {
-                HStack(spacing: 5) {
-                    Text("Chats").font(.system(size: 13, weight: .medium)).foregroundStyle(p.text)
-                    Text("\(space.chatCount)").font(.system(size: 12)).foregroundStyle(p.tertiaryText)
-                }
-                Rectangle().fill(p.accent).frame(height: 2)
-            }
-            .fixedSize()
-
-            tabLink("Tickets", href: "/tickets?project=\(encoded)", p: p)
-            tabLink("Epics", href: "/epics?project=\(encoded)", p: p)
-            tabLink("Runs", href: "/runs?project=\(encoded)", p: p)
-            Spacer()
-        }
-        .overlay(alignment: .bottom) {
-            Rectangle().fill(p.border).frame(height: 1)
-        }
-    }
-
-    private func tabLink(_ title: String, href: String, p: NativePalette) -> some View {
-        Button {
-            context.navigate(href)
-        } label: {
-            VStack(spacing: 6) {
-                Text(title).font(.system(size: 13)).foregroundStyle(p.secondaryText)
-                Rectangle().fill(Color.clear).frame(height: 2)
-            }
-            .fixedSize()
-        }
-        .buttonStyle(.plain)
-    }
-
     // MARK: - Inline Composer
 
     private func composerCard(
@@ -342,6 +294,8 @@ struct SpaceScreen: View {
         personas: [API.Persona],
         defaultPersonaId: String?,
         models: [API.ChatHarnessModels],
+        repos: [API.ChatSpaceRepository],
+        knowledgeLinks: [API.ChatSpaceKnowledgeLink],
         p: NativePalette
     ) -> some View {
         let effectivePersonaId = pickedPersonaId ?? space.personaId ?? defaultPersonaId
@@ -360,6 +314,49 @@ struct SpaceScreen: View {
                 .disabled(startingChat)
                 .onSubmit {
                     startSpaceChat(space: space)
+                }
+
+                if !repos.isEmpty || !knowledgeLinks.isEmpty {
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            if !repos.isEmpty {
+                                Button {
+                                    skipReposForChat.toggle()
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "chevron.left.forwardslash.chevron.right")
+                                            .font(.system(size: 9.5))
+                                        Text(skipReposForChat
+                                            ? "Repos skipped"
+                                            : repos.map { ChatCodeReviewLogic.repoName($0.repoUrl) }.joined(separator: ", "))
+                                            .font(.system(size: 11))
+                                            .strikethrough(skipReposForChat)
+                                    }
+                                    .foregroundStyle(skipReposForChat ? p.tertiaryText : p.secondaryText)
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(p.background, in: Capsule())
+                                    .overlay(Capsule().stroke(p.border))
+                                }
+                                .buttonStyle(.plain)
+                                .help(skipReposForChat ? "Click to include Space repos" : "Click to skip repos for a brainstorm chat")
+                            }
+                            ForEach(knowledgeLinks.prefix(3), id: \.id) { link in
+                                HStack(spacing: 4) {
+                                    Image(systemName: link.kind == .folder ? "folder" : "doc.text")
+                                        .font(.system(size: 9.5))
+                                    Text(link.kind == .folder ? "\(link.path)/" : link.path)
+                                        .font(.system(size: 11))
+                                        .lineLimit(1)
+                                }
+                                .foregroundStyle(p.secondaryText)
+                                .padding(.horizontal, 8)
+                                .padding(.vertical, 3)
+                                .background(p.background, in: Capsule())
+                                .overlay(Capsule().stroke(p.border))
+                            }
+                        }
+                    }
                 }
 
                 HStack(spacing: 8) {
@@ -487,6 +484,169 @@ struct SpaceScreen: View {
         }
     }
 
+    // MARK: - In Flight
+
+    private func inFlightSection(
+        runningChats: [API.ChatSession],
+        branches: [API.ChatSpaceBranch],
+        p: NativePalette
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("In Flight")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(p.text)
+
+            VStack(spacing: 6) {
+                ForEach(runningChats, id: \.id) { chat in
+                    Button {
+                        context.navigate("/chat/\(chat.id)")
+                    } label: {
+                        HStack(spacing: 8) {
+                            Circle()
+                                .fill(chat.state == .running
+                                    ? theme.swiftUIColor("state-done", fallback: .green)
+                                    : theme.swiftUIColor("state-human", fallback: .purple))
+                                .frame(width: 7, height: 7)
+                            Text(chat.title.isEmpty ? "Untitled chat" : chat.title)
+                                .font(.system(size: 13, weight: .medium))
+                                .foregroundStyle(p.text)
+                                .lineLimit(1)
+                            Spacer()
+                            Text(chat.state == .running ? "Running" : "\(chat.unread) unread")
+                                .font(.system(size: 11))
+                                .foregroundStyle(p.secondaryText)
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                        .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
+                        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+                    }
+                    .buttonStyle(.plain)
+                }
+
+                ForEach(branches.prefix(4), id: \.branch) { b in
+                    HStack(spacing: 8) {
+                        Image(systemName: "arrow.triangle.branch")
+                            .font(.system(size: 11))
+                            .foregroundStyle(p.accent)
+                        Text(b.branch)
+                            .font(.system(size: 12, weight: .medium, design: .monospaced))
+                            .foregroundStyle(p.text)
+                            .lineLimit(1)
+                        Text(ChatCodeReviewLogic.repoName(b.repoUrl))
+                            .font(.system(size: 11))
+                            .foregroundStyle(p.tertiaryText)
+                        Spacer()
+                        if let prUrl = b.prUrl, !prUrl.isEmpty {
+                            Button("PR \u{2197}") { context.openExternal(prUrl) }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11, weight: .medium))
+                                .foregroundStyle(p.accent)
+                        }
+                        Button("Chat \u{2192}") { context.navigate("/chat/\(b.chatId)") }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11))
+                            .foregroundStyle(p.secondaryText)
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 8)
+                    .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+                }
+            }
+        }
+    }
+
+    // MARK: - Optional Flat Tasks
+
+    private func tasksSection(space: API.ChatSpace, tasks: [API.ChatSpaceTask], p: NativePalette) -> some View {
+        let openCount = tasks.filter { !$0.done }.count
+        return VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Tasks")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(p.text)
+                if openCount > 0 {
+                    Text("\(openCount)")
+                        .font(.system(size: 11))
+                        .foregroundStyle(p.tertiaryText)
+                }
+                Spacer()
+                Button {
+                    showTasksComposer.toggle()
+                } label: {
+                    Label(showTasksComposer ? "Done" : "Add task", systemImage: showTasksComposer ? "checkmark" : "plus")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(p.secondaryText)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if showTasksComposer {
+                HStack(spacing: 8) {
+                    TextField("Add a task for \(space.name)\u{2026}", text: $newTaskTitle)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 13))
+                        .onSubmit { createTask(space: space) }
+                    Button(addingTask ? "Adding\u{2026}" : "Add") { createTask(space: space) }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(addingTask || newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+            }
+
+            if !tasks.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(tasks, id: \.id) { task in
+                        HStack(spacing: 10) {
+                            Button {
+                                toggleTask(space: space, task: task)
+                            } label: {
+                                Image(systemName: task.done ? "checkmark.circle.fill" : "circle")
+                                    .font(.system(size: 14))
+                                    .foregroundStyle(task.done ? p.accent : p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+
+                            Text(task.title)
+                                .font(.system(size: 13))
+                                .foregroundStyle(task.done ? p.tertiaryText : p.text)
+                                .strikethrough(task.done)
+                                .lineLimit(2)
+
+                            Spacer(minLength: 8)
+
+                            if let cid = task.chatId, !cid.isEmpty {
+                                Button("Open chat") { context.navigate("/chat/\(cid)") }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(p.accent)
+                            } else if !task.done {
+                                Button("Start chat \u{2192}") {
+                                    startTaskChat(space: space, task: task)
+                                }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11))
+                                .foregroundStyle(p.secondaryText)
+                            }
+
+                            Button {
+                                deleteTask(space: space, taskId: task.id)
+                            } label: {
+                                Image(systemName: "xmark")
+                                    .font(.system(size: 10))
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                        }
+                        .padding(.vertical, 7)
+                        Divider()
+                    }
+                }
+            }
+        }
+    }
+
     // MARK: - Chat List
 
     private func chatsSection(
@@ -597,43 +757,38 @@ struct SpaceScreen: View {
     private func chromeFingerprint(
         space: API.ChatSpace?,
         sources: [API.ChatSpaceSource],
+        reposCount: Int,
+        linksCount: Int,
+        branchesCount: Int,
         personasCount: Int,
         spacesCount: Int,
         chatsCount: Int
     ) -> String {
-        "\(space?.id ?? "")|\(space?.name ?? "")|\(space?.instructions.count ?? 0)|\(space?.spaceMemory ?? false)|\(space?.personaId ?? "")|\(space?.sourceCount ?? 0)|\(sources.count)|\(personasCount)|\(spacesCount)|\(chatsCount)|\(editing)|\(inspectorOpen)|\(inspectorTabId)"
+        "\(space?.id ?? "")|\(space?.name ?? "")|\(space?.instructions.count ?? 0)|\(space?.spaceMemory ?? false)|\(space?.personaId ?? "")|\(space?.sourceCount ?? 0)|\(sources.count)|\(reposCount)|\(linksCount)|\(branchesCount)|\(personasCount)|\(spacesCount)|\(chatsCount)|\(editing)|\(inspectorOpen)|\(inspectorTabId)"
     }
 
     private func publishChrome(
         space: API.ChatSpace?,
-        sourcesData: API.ChatSpaceSourceList?,
+        repos: [API.ChatSpaceRepository],
+        branches: [API.ChatSpaceBranch],
         personas: [API.Persona],
-        projects: [API.Project],
-        connectors: [API.Connector],
         spaces: [API.ChatSpace],
         chats: [API.ChatSession]
     ) {
-        let nav = SpacesLogic.navModel(spaces: spaces, activeSpaceId: spaceId.isEmpty ? nil : spaceId, chats: chats)
+        let nav = SpacesLogic.navModel(
+            spaces: spaces,
+            activeSpaceId: spaceId.isEmpty ? nil : spaceId,
+            chats: chats,
+            personas: personas,
+            origin: context.baseURL()
+        )
         guard let space else {
             context.chrome = NativeChrome(title: "Space", navigator: nav)
             return
         }
-        let projectName = space.project.flatMap { key in projects.first(where: { $0.key == key })?.name ?? key }
-        let connectorNames = space.connectorIds.compactMap { id in connectors.first(where: { $0.id == id })?.name }
-        let connectorsSummary = connectorNames.isEmpty ? "None" : connectorNames.joined(separator: ", ")
-
-        let aboutSections = SpacesLogic.buildAboutInspectorSections(
-            space: space,
-            sources: sourcesData?.sources ?? [],
-            inlineBudget: sourcesData?.inlineBudget ?? 40_000,
-            inlineTokens: sourcesData?.inlineTokens ?? space.inlineTokens,
-            personas: personas,
-            projectName: projectName,
-            connectorsSummary: connectorsSummary
-        )
 
         let toolbar: [ShellToolbarItem] = editing ? [] : [
-            ShellToolbarItem(id: "space.settings", label: "Settings", icon: "gear", kind: .button, showsLabel: true),
+            ShellToolbarItem(id: "space.settings", label: "Edit", icon: "gear", kind: .button, showsLabel: true),
             ShellToolbarItem(
                 id: "space.more",
                 label: "More for this space",
@@ -646,14 +801,25 @@ struct SpaceScreen: View {
             ),
         ]
 
+        var tabs: [InspectorTab] = [
+            InspectorTab(id: "context", label: "Context", icon: "sidebar", kind: .native),
+        ]
+        if !repos.isEmpty || !branches.isEmpty {
+            tabs.append(InspectorTab(
+                id: "branches",
+                label: "Branches",
+                icon: "branch",
+                kind: .native,
+                badge: branches.isEmpty ? nil : NavBadge(text: "\(branches.count)")
+            ))
+        }
+        tabs.append(InspectorTab(id: "chat", label: "Chat", icon: "msg", kind: .companion))
+
         let inspector = InspectorModel(
             id: "space:\(space.id)",
             open: inspectorOpen,
-            activeTabId: inspectorTabId,
-            tabs: [
-                InspectorTab(id: "about", label: "About", icon: "sidebar", kind: .native, sections: aboutSections),
-                InspectorTab(id: "chat", label: "Chat", icon: "msg", kind: .companion),
-            ],
+            activeTabId: tabs.contains(where: { $0.id == inspectorTabId }) ? inspectorTabId : "context",
+            tabs: tabs,
             companion: CompanionContext(path: "/spaces/\(space.id)")
         )
 
@@ -665,11 +831,29 @@ struct SpaceScreen: View {
         )
     }
 
+    private func installInspectorView(space: API.ChatSpace?) {
+        let currentSpaceId = spaceId
+        let currentTheme = theme
+        let ctx = context
+        ctx.inspectorView = { tabId in
+            guard tabId == "context" || tabId == "branches", !currentSpaceId.isEmpty else { return nil }
+            return AnyView(
+                SpaceContextInspectorView(
+                    spaceId: currentSpaceId,
+                    tabId: tabId,
+                    onEditSpace: { if let space { beginEditing(space) } },
+                    onManageSources: { showSourcesSheet = true }
+                )
+                .environment(ctx)
+                .environment(\.vesperTheme, currentTheme)
+            )
+        }
+    }
+
     private func installCommands(space: API.ChatSpace?) {
         context.onCommand = { cmd in
             if let navAction = SpacesLogic.navAction(for: cmd) {
                 switch navAction {
-                case .backToChat: context.navigate("/chat")
                 case .newSpace: context.navigate("/spaces/new")
                 case .openSpace(let id, let newTab):
                     if newTab { context.openInNewTab("/spaces/\(id)") } else { context.navigate("/spaces/\(id)") }
@@ -692,20 +876,6 @@ struct SpaceScreen: View {
                 } else if menuItemId == "space.delete" {
                     showDeleteAlert = true
                 }
-            case .inspectorAction(_, let actionId, _, _):
-                if actionId == "edit_space", let space {
-                    beginEditing(space)
-                } else if actionId == "manage_sources" {
-                    showSourcesSheet = true
-                }
-            case .inspectorToggle(_, let fieldId, let checked):
-                if fieldId == "space_memory", let space {
-                    patchSpace(space.id, patch: API.ChatSpacePatch(spaceMemory: checked))
-                }
-            case .inspectorChange(_, let fieldId, let value):
-                if fieldId == "persona_id", let space {
-                    patchSpace(space.id, patch: API.ChatSpacePatch(personaId: value))
-                }
             default:
                 break
             }
@@ -717,24 +887,8 @@ struct SpaceScreen: View {
         editDescription = space.description
         editInstructions = space.instructions
         editColor = space.color
-        editWorkKey = SpacesLogic.suggestWorkKey(for: space.name)
-        editWorkRepo = ""
         editError = nil
         editing = true
-    }
-
-    private func patchSpace(_ id: String, patch: API.ChatSpacePatch) {
-        Task {
-            do {
-                let updated = try await context.store.mutate(
-                    API.updateChatSpace(spaceId: id, body: patch),
-                    invalidating: QueryInvalidation(resources: ["spaces"])
-                )
-                context.store.setData(updated, for: spaceRequest)
-            } catch {
-                context.showToast(ToastItemModel(id: "space.patch", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
-            }
-        }
     }
 
     private func saveEdits(space: API.ChatSpace) {
@@ -765,43 +919,6 @@ struct SpaceScreen: View {
         }
     }
 
-    private func startTrackingWork(space: API.ChatSpace) {
-        let key = editWorkKey.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-        guard SpacesLogic.isValidWorkKey(key) else { return }
-        let repo = editWorkRepo.trimmingCharacters(in: .whitespacesAndNewlines)
-        savingEdit = true
-        editError = nil
-        Task {
-            defer { savingEdit = false }
-            do {
-                let updated = try await context.store.mutate(
-                    API.trackSpaceWork(spaceId: space.id, body: API.SpaceWorkInput(key: key, repoUrl: repo.isEmpty ? nil : repo)),
-                    invalidating: QueryInvalidation(resources: ["spaces", "bootstrap"])
-                )
-                context.store.setData(updated, for: spaceRequest)
-            } catch {
-                editError = (error as? APIError)?.userMessage ?? error.localizedDescription
-            }
-        }
-    }
-
-    private func stopTrackingWork(space: API.ChatSpace) {
-        savingEdit = true
-        editError = nil
-        Task {
-            defer { savingEdit = false }
-            do {
-                let updated = try await context.store.mutate(
-                    API.stopSpaceWork(spaceId: space.id),
-                    invalidating: QueryInvalidation(resources: ["spaces", "bootstrap"])
-                )
-                context.store.setData(updated, for: spaceRequest)
-            } catch {
-                editError = (error as? APIError)?.userMessage ?? error.localizedDescription
-            }
-        }
-    }
-
     private func deleteSpace(_ space: API.ChatSpace) {
         deleting = true
         Task {
@@ -811,15 +928,15 @@ struct SpaceScreen: View {
                     API.deleteChatSpace(spaceId: space.id),
                     invalidating: QueryInvalidation(resources: ["spaces", "chats"])
                 )
-                context.navigate("/chat")
+                context.navigate("/spaces")
             } catch {
                 context.showToast(ToastItemModel(id: "space.del", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
             }
         }
     }
 
-    private func startSpaceChat(space: API.ChatSpace) {
-        let body = composerText.trimmingCharacters(in: .whitespacesAndNewlines)
+    private func startSpaceChat(space: API.ChatSpace, taskId: String? = nil, initialBody: String? = nil) {
+        let body = (initialBody ?? composerText).trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, !startingChat else { return }
         startingChat = true
         composerError = nil
@@ -830,8 +947,10 @@ struct SpaceScreen: View {
                     API.createChat(body: API.NewChat(
                         harness: pickedHarness,
                         model: pickedModel,
+                        noRepo: skipReposForChat ? true : nil,
                         personaId: pickedPersonaId,
-                        spaceId: space.id
+                        spaceId: space.id,
+                        taskId: taskId
                     )),
                     invalidating: QueryInvalidation(resources: ["chats", "spaces"])
                 )
@@ -842,10 +961,58 @@ struct SpaceScreen: View {
                     ),
                     invalidating: QueryInvalidation(resources: ["chats", "spaces"])
                 )
-                composerText = ""
+                if initialBody == nil { composerText = "" }
                 context.navigate("/chat/\(created.id)")
             } catch {
                 composerError = (error as? APIError)?.userMessage ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func startTaskChat(space: API.ChatSpace, task: API.ChatSpaceTask) {
+        startSpaceChat(space: space, taskId: task.id, initialBody: task.title)
+    }
+
+    private func createTask(space: API.ChatSpace) {
+        let title = newTaskTitle.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !title.isEmpty, !addingTask else { return }
+        addingTask = true
+        Task {
+            defer { addingTask = false }
+            do {
+                _ = try await context.store.mutate(
+                    API.createChatSpaceTask(spaceId: space.id, body: API.NewChatSpaceTask(title: title)),
+                    invalidating: QueryInvalidation(resources: ["spaces"])
+                )
+                newTaskTitle = ""
+            } catch {
+                context.showToast(ToastItemModel(id: "space.task.add", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
+            }
+        }
+    }
+
+    private func toggleTask(space: API.ChatSpace, task: API.ChatSpaceTask) {
+        Task {
+            do {
+                _ = try await context.store.mutate(
+                    API.updateChatSpaceTask(spaceId: space.id, taskId: task.id, body: API.ChatSpaceTaskPatch(done: !task.done)),
+                    invalidating: QueryInvalidation(resources: ["spaces"])
+                )
+            } catch {
+                context.showToast(ToastItemModel(id: "space.task.toggle", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
+            }
+        }
+    }
+
+    private func deleteTask(space: API.ChatSpace, taskId: String) {
+        Task {
+            do {
+                _ = try await context.store.mutate(
+                    API.deleteChatSpaceTask(spaceId: space.id, taskId: taskId),
+                    invalidating: QueryInvalidation(resources: ["spaces"])
+                )
+            } catch {
+                context.showToast(ToastItemModel(id: "space.task.del", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
             }
         }
     }
@@ -863,12 +1030,14 @@ struct SpaceScreen: View {
         if !spaceId.isEmpty {
             watch(spaceRequest)
             watch(sourcesRequest)
+            watch(reposRequest)
+            watch(knowledgeRequest)
+            watch(tasksRequest)
+            watch(branchesRequest)
             watch(chatsRequest)
         }
         watch(Self.personasRequest)
         watch(Self.modelsRequest)
-        watch(Self.bootRequest)
-        watch(Self.connectorsRequest)
         watch(Self.spacesRequest)
     }
 }
