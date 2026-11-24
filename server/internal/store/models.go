@@ -1727,8 +1727,8 @@ type ScheduledTask struct {
 	Timezone      string
 	Cron          string
 	Enabled       bool
-	MaxMinutes    int32
-	MaxCostMicros int64
+	MaxMinutes    *int32
+	MaxCostMicros *int64
 	NextRunAt     *time.Time
 	Revision      int32
 	CreatedAt     time.Time

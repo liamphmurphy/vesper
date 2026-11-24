@@ -51,9 +51,25 @@ final class EpicsScheduledReportsTests: XCTestCase {
         XCTAssertFalse(invalidCron.isValid)
 
         var draft = ScheduledLogic.TaskDraft.blank()
+        XCTAssertNil(draft.maxMinutes)
+        XCTAssertNil(draft.maxCostMicros)
         XCTAssertFalse(ScheduledLogic.validate(draft).isValid)
         draft.name = "Daily Digest"
         XCTAssertTrue(ScheduledLogic.validate(draft).isValid)
+        let unlimitedInput = draft.toInput()
+        XCTAssertNil(unlimitedInput.maxMinutes)
+        XCTAssertNil(unlimitedInput.maxCostMicros)
+
+        draft.maxMinutes = 0
+        XCTAssertFalse(ScheduledLogic.validate(draft).isValid)
+        draft.maxMinutes = 45
+        draft.maxCostMicros = 5_000
+        XCTAssertFalse(ScheduledLogic.validate(draft).isValid)
+        draft.maxCostMicros = 2_500_000
+        XCTAssertTrue(ScheduledLogic.validate(draft).isValid)
+        let cappedInput = draft.toInput()
+        XCTAssertEqual(cappedInput.maxMinutes, 45)
+        XCTAssertEqual(cappedInput.maxCostMicros, 2_500_000)
 
         draft.frequency = .weekly
         draft.weekdays = []

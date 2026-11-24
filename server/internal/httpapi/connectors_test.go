@@ -250,3 +250,93 @@ func TestScheduledTaskCatchesUpOnce(t *testing.T) {
 		t.Fatalf("settled = %+v", recent[0])
 	}
 }
+
+// Scheduled tasks default to unlimited time and spend, but enforce optional
+// per-task caps when configured.
+func TestScheduledTaskUnlimitedAndConfiguredCaps(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	arts := &artifacts.Service{Pool: pool}
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: arts}); err != nil {
+		t.Fatal(err)
+	}
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	rs := &runs.Service{Pool: pool, Tracker: &tracker.Service{Pool: pool}, Artifacts: arts, ModelDiscovery: testChatModels}
+	sched := runs.Schedule{Frequency: "daily", AtTime: "08:00", Timezone: "UTC", MonthDay: 1, Weekdays: []int32{}}
+
+	// Invalid caps are rejected.
+	zeroMin := int32(0)
+	if _, err := rs.CreateScheduledTask(ctx, ws, me.ID, runs.ScheduledTaskInput{Name: "Bad min", Kind: "prompt", Instructions: "Hi.", Enabled: true, MaxMinutes: &zeroMin, Schedule: sched}); err == nil {
+		t.Fatal("expected error for max_minutes = 0")
+	}
+	zeroCost := int64(0)
+	if _, err := rs.CreateScheduledTask(ctx, ws, me.ID, runs.ScheduledTaskInput{Name: "Bad cost", Kind: "prompt", Instructions: "Hi.", Enabled: true, MaxCostMicros: &zeroCost, Schedule: sched}); err == nil {
+		t.Fatal("expected error for max_cost_micros = 0")
+	}
+
+	// Default task has no time or cost cap: running past 15m and $1 keeps running.
+	unlimited, err := rs.CreateScheduledTask(ctx, ws, me.ID, runs.ScheduledTaskInput{Name: "Unlimited", Kind: "prompt", Instructions: "Deep audit.", Enabled: true, Schedule: sched})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if unlimited.MaxMinutes != nil || unlimited.MaxCostMicros != nil {
+		t.Fatalf("expected nil caps by default, got min=%v cost=%v", unlimited.MaxMinutes, unlimited.MaxCostMicros)
+	}
+	if err := rs.RunScheduledTaskNow(ctx, ws, me.ID, unlimited.ID); err != nil {
+		t.Fatal(err)
+	}
+	recent, err := q.RecentScheduledRuns(ctx, store.RecentScheduledRunsParams{WorkspaceID: ws, UserID: me.ID})
+	if err != nil || len(recent) != 1 || recent[0].ChatID == nil {
+		t.Fatalf("unlimited run = %+v, %v", recent, err)
+	}
+	chat, _ := q.GetChatSession(ctx, store.GetChatSessionParams{ID: *recent[0].ChatID, WorkspaceID: ws})
+	if _, err := pool.Exec(ctx, `UPDATE scheduled_task_runs SET started_at = now() - interval '45 minutes' WHERE id = $1`, recent[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `UPDATE runs SET cost_usd_micros = 5000000 WHERE id = $1`, *chat.CurrentRunID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.SettleScheduled(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recent, _ = q.RecentScheduledRuns(ctx, store.RecentScheduledRunsParams{WorkspaceID: ws, UserID: me.ID})
+	if recent[0].State != "running" {
+		t.Fatalf("unlimited run should still be running, got %+v", recent[0])
+	}
+
+	// Adding a cost cap stops the over-budget run on the next settle.
+	capCost := int64(2_000_000)
+	if _, err := rs.UpdateScheduledTask(ctx, ws, me.ID, unlimited.ID, runs.ScheduledTaskInput{Revision: unlimited.Revision, Name: unlimited.Name, Kind: unlimited.Kind, Instructions: unlimited.Instructions, Enabled: true, MaxCostMicros: &capCost, Schedule: sched}); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.SettleScheduled(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recent, _ = q.RecentScheduledRuns(ctx, store.RecentScheduledRunsParams{WorkspaceID: ws, UserID: me.ID})
+	if recent[0].State != "failed" || !strings.Contains(recent[0].Error, "cost limit") {
+		t.Fatalf("expected cost limit failure, got %+v", recent[0])
+	}
+
+	// A time-capped task stops when elapsed time exceeds max_minutes.
+	capMin := int32(10)
+	timed, err := rs.CreateScheduledTask(ctx, ws, me.ID, runs.ScheduledTaskInput{Name: "Timed", Kind: "prompt", Instructions: "Quick check.", Enabled: true, MaxMinutes: &capMin, Schedule: sched})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.RunScheduledTaskNow(ctx, ws, me.ID, timed.ID); err != nil {
+		t.Fatal(err)
+	}
+	recent, _ = q.RecentScheduledRuns(ctx, store.RecentScheduledRunsParams{WorkspaceID: ws, UserID: me.ID})
+	if _, err := pool.Exec(ctx, `UPDATE scheduled_task_runs SET started_at = now() - interval '15 minutes' WHERE id = $1`, recent[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.SettleScheduled(ctx); err != nil {
+		t.Fatal(err)
+	}
+	recent, _ = q.RecentScheduledRuns(ctx, store.RecentScheduledRunsParams{WorkspaceID: ws, UserID: me.ID})
+	if recent[0].State != "failed" || !strings.Contains(recent[0].Error, "time limit") {
+		t.Fatalf("expected time limit failure, got %+v", recent[0])
+	}
+}

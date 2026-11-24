@@ -255,8 +255,8 @@ public enum ScheduledLogic {
         public var timezone: String
         public var cron: String
         public var enabled: Bool
-        public var maxMinutes: Int
-        public var maxCostMicros: Int
+        public var maxMinutes: Int?
+        public var maxCostMicros: Int?
 
         public static func blank(timezone: String = TimeZone.current.identifier) -> TaskDraft {
             TaskDraft(
@@ -278,8 +278,8 @@ public enum ScheduledLogic {
                 timezone: timezone,
                 cron: "",
                 enabled: true,
-                maxMinutes: 15,
-                maxCostMicros: 1_000_000
+                maxMinutes: nil,
+                maxCostMicros: nil
             )
         }
 
@@ -328,7 +328,7 @@ public enum ScheduledLogic {
                 frequency: frequency,
                 instructions: instructions,
                 kind: kind,
-                maxCostMicros: maxCostMicros,
+                maxCostMicros: kind == .customApp ? nil : maxCostMicros,
                 maxMinutes: maxMinutes,
                 monthDay: monthDay,
                 name: name.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -396,10 +396,10 @@ public enum ScheduledLogic {
         if draft.timezone.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             errors.append("Time zone is required.")
         }
-        if !(1...240).contains(draft.maxMinutes) {
+        if let maxMinutes = draft.maxMinutes, !(1...240).contains(maxMinutes) {
             errors.append("Time limit must be between 1 and 240 minutes.")
         }
-        if draft.kind != .customApp && draft.maxCostMicros < 10_000 {
+        if draft.kind != .customApp, let maxCostMicros = draft.maxCostMicros, maxCostMicros < 10_000 {
             errors.append("Cost limit must be at least $0.01.")
         }
         return ValidationResult(isValid: errors.isEmpty, errors: errors, parsedArgs: parsedArgs)

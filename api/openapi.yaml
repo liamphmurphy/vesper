@@ -11483,8 +11483,8 @@ components:
         timezone: { type: string, description: IANA name }
         cron: { type: string, description: "Five fields, in timezone; cron only" }
         enabled: { type: boolean }
-        max_minutes: { type: integer, minimum: 1, maximum: 240 }
-        max_cost_micros: { type: integer, format: int64, minimum: 1 }
+        max_minutes: { type: integer, minimum: 1, maximum: 240, description: "Optional per-run time limit in minutes; omit for unlimited" }
+        max_cost_micros: { type: integer, format: int64, minimum: 1, description: "Optional per-run cost limit in micro-USD; omit for unlimited" }
     ScheduledRun:
       type: object
       required: [id, trigger, state, summary, error, cost_micros, started_at]
@@ -11500,7 +11500,7 @@ components:
         finished_at: { type: string, format: date-time }
     ScheduledTask:
       type: object
-      required: [id, name, kind, instructions, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, max_minutes, max_cost_micros, revision, runs, upcoming]
+      required: [id, name, kind, instructions, connector_ids, frequency, weekdays, month_day, at_time, timezone, cron, enabled, revision, runs, upcoming]
       properties:
         id: { type: string, format: uuid }
         name: { type: string }
@@ -11520,8 +11520,8 @@ components:
         timezone: { type: string }
         cron: { type: string }
         enabled: { type: boolean }
-        max_minutes: { type: integer }
-        max_cost_micros: { type: integer, format: int64 }
+        max_minutes: { type: integer, description: "Per-run time limit in minutes; omitted when unlimited" }
+        max_cost_micros: { type: integer, format: int64, description: "Per-run cost limit in micro-USD; omitted when unlimited" }
         next_run_at: { type: string, format: date-time }
         upcoming: { type: array, items: { type: string, format: date-time }, description: "The next two run times" }
         revision: { type: integer }

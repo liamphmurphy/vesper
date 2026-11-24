@@ -86,7 +86,7 @@ func TestChatCreatesSpacesTasksAndModules(t *testing.T) {
 		t.Fatalf("create_scheduled_task = %d %v", code, out)
 	}
 	tasks, err := q.ListScheduledTasks(ctx, store.ListScheduledTasksParams{WorkspaceID: ws, UserID: me.ID})
-	if err != nil || len(tasks) != 1 || tasks[0].Kind != "prompt" || !tasks[0].Enabled || tasks[0].MaxMinutes != 15 || tasks[0].PersonaID == nil || *tasks[0].PersonaID != coach.ID {
+	if err != nil || len(tasks) != 1 || tasks[0].Kind != "prompt" || !tasks[0].Enabled || tasks[0].MaxMinutes != nil || tasks[0].MaxCostMicros != nil || tasks[0].PersonaID == nil || *tasks[0].PersonaID != coach.ID {
 		t.Fatalf("tasks = %+v, %v", tasks, err)
 	}
 	task["timezone"] = ""

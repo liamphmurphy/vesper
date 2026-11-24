@@ -33,8 +33,8 @@ type ActiveScheduledRunsRow struct {
 	WorkspaceID   uuid.UUID
 	UserID        uuid.UUID
 	Kind          string
-	MaxMinutes    int32
-	MaxCostMicros int64
+	MaxMinutes    *int32
+	MaxCostMicros *int64
 }
 
 func (q *Queries) ActiveScheduledRuns(ctx context.Context) ([]ActiveScheduledRunsRow, error) {
@@ -157,8 +157,8 @@ type CreateScheduledTaskParams struct {
 	Timezone      string
 	Cron          string
 	Enabled       bool
-	MaxMinutes    int32
-	MaxCostMicros int64
+	MaxMinutes    *int32
+	MaxCostMicros *int64
 	NextRunAt     *time.Time
 }
 
@@ -553,8 +553,8 @@ type UpdateScheduledTaskParams struct {
 	Timezone      string
 	Cron          string
 	Enabled       bool
-	MaxMinutes    int32
-	MaxCostMicros int64
+	MaxMinutes    *int32
+	MaxCostMicros *int64
 	NextRunAt     *time.Time
 }
 

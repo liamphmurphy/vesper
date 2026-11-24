@@ -50,8 +50,8 @@ type ScheduledTaskInput struct {
 	CustomAppArgs map[string]any
 	Schedule      Schedule
 	Enabled       bool
-	MaxMinutes    int32
-	MaxCostMicros int64
+	MaxMinutes    *int32
+	MaxCostMicros *int64
 }
 
 func (s *Service) customApps() *customapps.Service {
@@ -71,16 +71,10 @@ func (s *Service) scheduledFields(ctx context.Context, q *store.Queries, ws, use
 	if in.Name == "" || utf8.RuneCountInString(in.Name) > 120 {
 		return nil, nil, "", nil, nil, apperr.Invalid("name", "must be 1–120 characters")
 	}
-	if in.MaxMinutes == 0 {
-		in.MaxMinutes = 15
-	}
-	if in.MaxCostMicros == 0 {
-		in.MaxCostMicros = 1_000_000
-	}
-	if in.MaxMinutes < 1 || in.MaxMinutes > 240 {
+	if in.MaxMinutes != nil && (*in.MaxMinutes < 1 || *in.MaxMinutes > 240) {
 		return nil, nil, "", nil, nil, apperr.Invalid("max_minutes", "must be 1–240")
 	}
-	if in.MaxCostMicros < 1 {
+	if in.MaxCostMicros != nil && *in.MaxCostMicros < 1 {
 		return nil, nil, "", nil, nil, apperr.Invalid("max_cost_micros", "must be positive")
 	}
 	switch in.Kind {
@@ -144,6 +138,7 @@ func (s *Service) scheduledFields(ctx context.Context, q *store.Queries, ws, use
 		in.PersonaID = nil
 		in.Project = ""
 		in.ConnectorIDs = nil
+		in.MaxCostMicros = nil
 		customAppID = &app.ID
 		customAppTool = toolName
 	default:
@@ -294,7 +289,10 @@ func (s *Service) runCustomAppScheduled(ctx context.Context, q *store.Queries, t
 			return
 		}
 	}
-	timeout := min(time.Duration(max(t.MaxMinutes, 1))*time.Minute, maxScheduledCustomAppTimeout)
+	timeout := maxScheduledCustomAppTimeout
+	if t.MaxMinutes != nil && *t.MaxMinutes > 0 {
+		timeout = min(time.Duration(*t.MaxMinutes)*time.Minute, maxScheduledCustomAppTimeout)
+	}
 	tctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	res, err := s.customApps().CallMCPTool(tctx, app, t.CustomAppTool, args, customapps.MCPCallContext{
@@ -425,7 +423,11 @@ func (s *Service) settleScheduled(ctx context.Context, q *store.Queries, r store
 		return q.FinishScheduledRun(ctx, store.FinishScheduledRunParams{ID: r.ID, State: state, Summary: summary, Error: msg, CostMicros: cost})
 	}
 	if r.Kind == "custom_app" {
-		grace := max(time.Duration(r.MaxMinutes)*time.Minute+time.Minute, scheduledStartGrace)
+		timeout := maxScheduledCustomAppTimeout
+		if r.MaxMinutes != nil && *r.MaxMinutes > 0 {
+			timeout = min(time.Duration(*r.MaxMinutes)*time.Minute, maxScheduledCustomAppTimeout)
+		}
+		grace := max(timeout+time.Minute, scheduledStartGrace)
 		if time.Since(r.StartedAt) > grace {
 			return finish("failed", "", "It stopped before finishing.", 0)
 		}
@@ -496,9 +498,9 @@ func (s *Service) settleScheduled(ctx context.Context, q *store.Queries, r store
 		return err
 	}
 	limit := ""
-	if time.Since(r.StartedAt) > time.Duration(r.MaxMinutes)*time.Minute {
+	if r.MaxMinutes != nil && time.Since(r.StartedAt) > time.Duration(*r.MaxMinutes)*time.Minute {
 		limit = "It reached its time limit and was stopped."
-	} else if cost > r.MaxCostMicros {
+	} else if r.MaxCostMicros != nil && cost > *r.MaxCostMicros {
 		limit = "It reached its cost limit and was stopped."
 	}
 	if limit == "" {

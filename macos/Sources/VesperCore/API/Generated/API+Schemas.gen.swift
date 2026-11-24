@@ -21624,8 +21624,10 @@ extension API {
         public var id: Swift.String
         public var instructions: Swift.String
         public var kind: Kind
-        public var maxCostMicros: Swift.Int
-        public var maxMinutes: Swift.Int
+        /// Per-run cost limit in micro-USD; omitted when unlimited
+        public var maxCostMicros: Swift.Int?
+        /// Per-run time limit in minutes; omitted when unlimited
+        public var maxMinutes: Swift.Int?
         public var monthDay: Swift.Int
         public var name: Swift.String
         public var nextRunAt: Swift.String?
@@ -21671,8 +21673,8 @@ extension API {
             id: Swift.String,
             instructions: Swift.String,
             kind: Kind,
-            maxCostMicros: Swift.Int,
-            maxMinutes: Swift.Int,
+            maxCostMicros: Swift.Int? = nil,
+            maxMinutes: Swift.Int? = nil,
             monthDay: Swift.Int,
             name: Swift.String,
             nextRunAt: Swift.String? = nil,
@@ -21751,8 +21753,8 @@ extension API {
             self.id = try c.decode(Swift.String.self, forKey: .id)
             self.instructions = try c.decode(Swift.String.self, forKey: .instructions)
             self.kind = try c.decode(Kind.self, forKey: .kind)
-            self.maxCostMicros = try c.decode(Swift.Int.self, forKey: .maxCostMicros)
-            self.maxMinutes = try c.decode(Swift.Int.self, forKey: .maxMinutes)
+            self.maxCostMicros = try c.decodeIfPresent(Swift.Int.self, forKey: .maxCostMicros)
+            self.maxMinutes = try c.decodeIfPresent(Swift.Int.self, forKey: .maxMinutes)
             self.monthDay = try c.decode(Swift.Int.self, forKey: .monthDay)
             self.name = try c.decode(Swift.String.self, forKey: .name)
             self.nextRunAt = try c.decodeIfPresent(Swift.String.self, forKey: .nextRunAt)
@@ -21779,8 +21781,8 @@ extension API {
             try c.encode(id, forKey: .id)
             try c.encode(instructions, forKey: .instructions)
             try c.encode(kind, forKey: .kind)
-            try c.encode(maxCostMicros, forKey: .maxCostMicros)
-            try c.encode(maxMinutes, forKey: .maxMinutes)
+            try c.encodeIfPresent(maxCostMicros, forKey: .maxCostMicros)
+            try c.encodeIfPresent(maxMinutes, forKey: .maxMinutes)
             try c.encode(monthDay, forKey: .monthDay)
             try c.encode(name, forKey: .name)
             try c.encodeIfPresent(nextRunAt, forKey: .nextRunAt)
@@ -21807,7 +21809,9 @@ extension API {
         public var frequency: Frequency
         public var instructions: Swift.String?
         public var kind: Kind
+        /// Optional per-run cost limit in micro-USD; omit for unlimited
         public var maxCostMicros: Swift.Int?
+        /// Optional per-run time limit in minutes; omit for unlimited
         public var maxMinutes: Swift.Int?
         /// Runs on the last day of shorter months
         public var monthDay: Swift.Int?

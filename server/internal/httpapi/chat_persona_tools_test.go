@@ -194,8 +194,10 @@ func TestChatManagesScheduledTasks(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	maxMin := int32(30)
+	maxCost := int64(2_000_000)
 	if _, err := c.rs.UpdateScheduledTask(c.ctx, c.ws, c.user, task.ID, runs.ScheduledTaskInput{Revision: task.Revision, Name: task.Name, Kind: task.Kind, Instructions: task.Instructions, PersonaID: task.PersonaID, Project: "PAY",
-		Enabled: true, MaxMinutes: 30, MaxCostMicros: 2_000_000, Schedule: runs.Schedule{Frequency: "weekly", Weekdays: []int32{1}, MonthDay: 1, AtTime: "08:00", Timezone: "America/Los_Angeles"}}); err != nil {
+		Enabled: true, MaxMinutes: &maxMin, MaxCostMicros: &maxCost, Schedule: runs.Schedule{Frequency: "weekly", Weekdays: []int32{1}, MonthDay: 1, AtTime: "08:00", Timezone: "America/Los_Angeles"}}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -211,7 +213,7 @@ func TestChatManagesScheduledTasks(t *testing.T) {
 		t.Fatalf("update_scheduled_task = %d %v", code, out)
 	}
 	task, _ = c.q.GetScheduledTask(c.ctx, store.GetScheduledTaskParams{ID: task.ID, WorkspaceID: c.ws, UserID: c.user})
-	if task.Enabled || task.AtTime != "07:30" || len(task.Weekdays) != 2 || task.NextRunAt != nil || task.Name != "Weekly check-in" || task.MaxMinutes != 30 || task.MaxCostMicros != 2_000_000 || task.Instructions != "Ask how the week went." {
+	if task.Enabled || task.AtTime != "07:30" || len(task.Weekdays) != 2 || task.NextRunAt != nil || task.Name != "Weekly check-in" || task.MaxMinutes == nil || *task.MaxMinutes != 30 || task.MaxCostMicros == nil || *task.MaxCostMicros != 2_000_000 || task.Instructions != "Ask how the week went." {
 		t.Fatalf("after update: %+v", task)
 	}
 	if code, out := c.call(t, "update_scheduled_task", map[string]any{"task_id": id, "revision": rev, "name": "Stale"}); code != 409 {
