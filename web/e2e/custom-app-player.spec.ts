@@ -240,3 +240,87 @@ test("vesper-hls stream resolves LAN URL, exposes AirPlay picker when available,
   await expect(player).toHaveCount(0);
   await expect.poll(() => stopped).toBe(true);
 });
+
+test("vesper-media local video starts a LAN relay, exposes AirPlay picker when available, and stops on close", async ({ page }) => {
+  const mediaId = "01a1f7a0-1234-7abc-8def-0123456789ab";
+  const relayId = "01a1f7a0-5678-7abc-8def-0123456789ab";
+  const lanUrl = "http://192.168.1.50:49152/media/deadbeef/video.mp4";
+  let stopped = false;
+
+  await installBoardApi(page);
+  await page.route("**/api/v1/custom-apps/demo", (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        ...app,
+        current: {
+          ...app.current,
+          bundle_js: `
+            document.getElementById("root").innerHTML = '<button id="local">Play Local</button>';
+            document.getElementById("local").onclick = () => window.parent.postMessage({
+              channel: "vesper:custom-app",
+              type: "play-video",
+              payload: { url: "vesper-media:${mediaId}", title: "Downloaded Clip" }
+            }, "*");
+          `,
+        },
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/custom-apps/demo/media/${mediaId}/relay`, (route) =>
+    route.fulfill({
+      status: 200,
+      contentType: "application/json",
+      body: JSON.stringify({
+        id: relayId,
+        media_id: mediaId,
+        lan_url: lanUrl,
+        loopback_url: "http://127.0.0.1:49152/media/deadbeef/video.mp4",
+        content_type: "video/mp4",
+        created_at: now,
+      }),
+    }),
+  );
+  await page.route(`**/api/v1/custom-apps/demo/media-relays/${relayId}`, (route) => {
+    if (route.request().method() === "DELETE") {
+      stopped = true;
+      return route.fulfill({ status: 204, body: "" });
+    }
+    return route.fulfill({ status: 405, body: "" });
+  });
+
+  await page.addInitScript(() => {
+    Object.assign(window, { __airPlayPickerCalls: 0 });
+    Object.defineProperty(HTMLVideoElement.prototype, "webkitShowPlaybackTargetPicker", {
+      configurable: true,
+      value: () => {
+        (window as unknown as { __airPlayPickerCalls: number }).__airPlayPickerCalls += 1;
+      },
+    });
+  });
+
+  await page.goto("/apps/demo");
+  const frame = page.frameLocator('[data-testid="custom-app-frame"]');
+  await frame.locator("#local").click();
+
+  const player = page.getByTestId("custom-app-player");
+  const video = player.getByTestId("custom-app-local-video");
+  await expect(video).toBeVisible();
+  await expect(video).toHaveAttribute("src", lanUrl);
+  await expect(video).toHaveAttribute("x-webkit-airplay", "allow");
+
+  await video.evaluate((el) => {
+    const ev = new Event("webkitplaybacktargetavailabilitychanged") as Event & { availability?: string };
+    ev.availability = "available";
+    el.dispatchEvent(ev);
+  });
+  const airPlayBtn = player.getByTestId("custom-app-airplay-button");
+  await expect(airPlayBtn).toBeVisible();
+  await airPlayBtn.click();
+  expect(await page.evaluate(() => (window as unknown as { __airPlayPickerCalls: number }).__airPlayPickerCalls)).toBe(1);
+
+  await player.getByRole("button", { name: /Close video player/ }).click();
+  await expect(player).toHaveCount(0);
+  await expect.poll(() => stopped).toBe(true);
+});

@@ -266,6 +266,7 @@ export type VideoEmbed = {
   externalUrl: string;
   titleFallback: string;
   streamId?: string;
+  relayId?: string;
 };
 
 // A video the app downloaded into Vesper (server.ts media.download) plays from
@@ -283,6 +284,11 @@ export function parseLocalMediaUrl(raw: unknown): string | null {
   if (typeof raw !== "string") return null;
   const m = LOCAL_MEDIA_RE.exec(raw.trim().toLowerCase());
   return m ? LOCAL_MEDIA_PREFIX + m[1] : null;
+}
+
+export function localMediaId(raw: unknown): string | null {
+  const url = parseLocalMediaUrl(raw);
+  return url ? url.slice(LOCAL_MEDIA_PREFIX.length) : null;
 }
 
 export function parseHlsRelayUrl(raw: unknown): string | null {

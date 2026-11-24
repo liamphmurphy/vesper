@@ -9835,6 +9835,60 @@ extension API {
         }
     }
 
+    public struct CustomAppMediaRelay: Codable, Sendable, Equatable {
+        public var contentType: Swift.String
+        public var createdAt: Swift.String
+        public var id: Swift.String
+        public var lanUrl: Swift.String
+        public var loopbackUrl: Swift.String
+        public var mediaId: Swift.String
+
+        public init(
+            contentType: Swift.String,
+            createdAt: Swift.String,
+            id: Swift.String,
+            lanUrl: Swift.String,
+            loopbackUrl: Swift.String,
+            mediaId: Swift.String
+        ) {
+            self.contentType = contentType
+            self.createdAt = createdAt
+            self.id = id
+            self.lanUrl = lanUrl
+            self.loopbackUrl = loopbackUrl
+            self.mediaId = mediaId
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case contentType = "content_type"
+            case createdAt = "created_at"
+            case id
+            case lanUrl = "lan_url"
+            case loopbackUrl = "loopback_url"
+            case mediaId = "media_id"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.contentType = try c.decode(Swift.String.self, forKey: .contentType)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.lanUrl = try c.decode(Swift.String.self, forKey: .lanUrl)
+            self.loopbackUrl = try c.decode(Swift.String.self, forKey: .loopbackUrl)
+            self.mediaId = try c.decode(Swift.String.self, forKey: .mediaId)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(contentType, forKey: .contentType)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(id, forKey: .id)
+            try c.encode(lanUrl, forKey: .lanUrl)
+            try c.encode(loopbackUrl, forKey: .loopbackUrl)
+            try c.encode(mediaId, forKey: .mediaId)
+        }
+    }
+
     public struct CustomAppMountRequest: Codable, Sendable, Equatable {
         public var description: Swift.String?
         public var name: Swift.String

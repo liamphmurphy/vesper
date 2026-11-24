@@ -5848,6 +5848,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/custom-apps/{slug}/media/{mediaId}/relay": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                mediaId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Start an ephemeral LAN relay for a downloaded media file so AirPlay receivers can fetch it */
+        post: operations["startCustomAppMediaRelay"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/custom-apps/{slug}/media-relays/{relayId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                relayId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Stop an active LAN media relay and release its listener when idle */
+        delete: operations["stopCustomAppMediaRelay"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/custom-apps/{slug}/hls/{streamId}": {
         parameters: {
             query?: never;
@@ -11211,6 +11251,17 @@ export interface components {
             proxy_segments: boolean;
             in_ad_break: boolean;
             ads_skipped: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        CustomAppMediaRelay: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            media_id: string;
+            lan_url: string;
+            loopback_url: string;
+            content_type: string;
             /** Format: date-time */
             created_at: string;
         };
@@ -20846,6 +20897,54 @@ export interface operations {
             };
             404: components["responses"]["Error"];
             416: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    startCustomAppMediaRelay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                mediaId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Active LAN media relay metadata and URLs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["CustomAppMediaRelay"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    stopCustomAppMediaRelay: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                slug: string;
+                relayId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Stopped */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
             default: components["responses"]["Error"];
         };
     };

@@ -21,6 +21,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/auth"
+	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/usersecrets"
@@ -694,6 +695,73 @@ func (s *Server) GetCustomAppMediaContent(ctx context.Context, req api.GetCustom
 // VisitGetCustomAppMediaContentResponse writes a downloaded video, whole or one range.
 func (r rangedResponse) VisitGetCustomAppMediaContentResponse(w http.ResponseWriter) error {
 	return r.write(w)
+}
+
+// StartCustomAppMediaRelay registers a downloaded media file on the ephemeral
+// LAN relay listener so AirPlay receivers on the local network can fetch it
+// with byte-range seeking while Vesper's main API stays loopback-only.
+func (s *Server) StartCustomAppMediaRelay(ctx context.Context, req api.StartCustomAppMediaRelayRequestObject) (api.StartCustomAppMediaRelayResponseObject, error) {
+	u, _, ws := me(ctx)
+	app, err := s.Q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: u.ID, Slug: req.Slug})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	media := s.mediaDownloads()
+	if media == nil || s.Blobs == nil {
+		return nil, apperr.ErrNotFound
+	}
+	item, key, size, err := media.Playable(ctx, app.ID, req.MediaId)
+	if err != nil {
+		return nil, err
+	}
+	bucket := s.ArtifactBucket
+	blobs := s.Blobs
+	relayed, err := s.hlsRelay().StartMedia(ctx, app.ID, req.MediaId, item.ContentType, size, func(rctx context.Context, start, end int64, partial bool) (io.ReadCloser, error) {
+		var o blob.Object
+		var gerr error
+		if partial {
+			o, gerr = blobs.GetRange(rctx, bucket, key, start, end)
+		} else {
+			o, gerr = blobs.Get(rctx, bucket, key)
+		}
+		if errors.Is(gerr, blob.ErrNotFound) {
+			return nil, apperr.ErrNotFound
+		}
+		if gerr != nil {
+			return nil, gerr
+		}
+		return o.Body, nil
+	})
+	if err != nil {
+		return nil, err
+	}
+	return api.StartCustomAppMediaRelay200JSONResponse{
+		Id:          relayed.ID,
+		MediaId:     relayed.MediaID,
+		LanUrl:      relayed.LANURL,
+		LoopbackUrl: relayed.LoopbackURL,
+		ContentType: relayed.ContentType,
+		CreatedAt:   relayed.CreatedAt,
+	}, nil
+}
+
+// StopCustomAppMediaRelay stops one active LAN media relay owned by this custom app.
+func (s *Server) StopCustomAppMediaRelay(ctx context.Context, req api.StopCustomAppMediaRelayRequestObject) (api.StopCustomAppMediaRelayResponseObject, error) {
+	u, _, ws := me(ctx)
+	app, err := s.Q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: u.ID, Slug: req.Slug})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if err := s.hlsRelay().StopMedia(app.ID, req.RelayId); err != nil {
+		return nil, err
+	}
+	return api.StopCustomAppMediaRelay204Response{}, nil
 }
 
 // GetCustomAppHlsStream returns the LAN/loopback playlist URLs and status for

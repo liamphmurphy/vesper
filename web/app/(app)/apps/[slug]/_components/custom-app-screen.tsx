@@ -24,7 +24,9 @@ import {
   customAppKeys,
   getCustomAppHlsStream,
   invokeCustomApp,
+  startCustomAppMediaRelay,
   stopCustomAppHlsStream,
+  stopCustomAppMediaRelay,
   useCustomApp,
   useUpdateCustomApp,
   type CustomAppCapabilityMode,
@@ -46,6 +48,7 @@ import {
   readThemeVarsFrom,
   resolveAppIcon,
   localMediaEmbed,
+  localMediaId,
   parseLocalMediaUrl,
   resolveVideoEmbed,
   withCustomAppContext,
@@ -217,11 +220,12 @@ function useCustomAppRuntime({
     frameRef.current?.contentWindow?.postMessage(msg, "*", transfer);
   }, []);
 
+  const hlsRequestSeqRef = useRef(0);
   const closeVideo = useCallback(() => {
+    hlsRequestSeqRef.current++;
     setActiveVideo(null);
     setSidePanelEnabled(false);
   }, []);
-  const hlsRequestSeqRef = useRef(0);
 
   // Stop any active LAN HLS relay stream when switching videos, closing the player, or leaving the page.
   const activeHlsStreamId = activeVideo?.provider === "hls" ? activeVideo.streamId : undefined;
@@ -239,6 +243,23 @@ function useCustomAppRuntime({
       stop();
     };
   }, [app.slug, activeHlsStreamId]);
+
+  // Stop any active LAN local-media relay when switching videos, closing the player, or leaving the page.
+  const activeLocalRelayId = activeVideo?.provider === "local" ? activeVideo.relayId : undefined;
+  useEffect(() => {
+    if (!activeLocalRelayId) return;
+    let stopped = false;
+    const stop = () => {
+      if (stopped) return;
+      stopped = true;
+      stopCustomAppMediaRelay(app.slug, activeLocalRelayId);
+    };
+    window.addEventListener("pagehide", stop);
+    return () => {
+      window.removeEventListener("pagehide", stop);
+      stop();
+    };
+  }, [app.slug, activeLocalRelayId]);
 
   // Tell the app what its player is doing, so it can save progress or move on to the next video.
   const playerUrl = activeVideo?.embedUrl ?? null;
@@ -487,10 +508,47 @@ function useCustomAppRuntime({
             });
           return;
         }
+        const mediaId = localMediaId(msg.payload.url);
+        if (mediaId) {
+          const reqSeq = ++hlsRequestSeqRef.current;
+          const fallbackEmbed = localMediaEmbed(msg.payload.url, app.slug);
+          const title = msg.payload.title || "Downloaded video";
+          const externalUrl = msg.payload.externalUrl ?? "";
+          const requestedTheater = msg.payload.theater;
+          const wantsSide = msg.payload.sidePanel === true;
+          void startCustomAppMediaRelay(app.slug, mediaId)
+            .then((relay) => {
+              if (hlsRequestSeqRef.current !== reqSeq) {
+                stopCustomAppMediaRelay(app.slug, relay.id);
+                return;
+              }
+              setActiveVideo({
+                provider: "local",
+                embedUrl: relay.lan_url || relay.loopback_url,
+                externalUrl,
+                titleFallback: "Downloaded video",
+                relayId: relay.id,
+                title,
+              });
+              if (requestedTheater !== undefined) setTheater(requestedTheater);
+              setSidePanelEnabled(wantsSide);
+              if (wantsSide) setSidePanelOpen(true);
+            })
+            .catch(() => {
+              if (hlsRequestSeqRef.current !== reqSeq || !fallbackEmbed) return;
+              setActiveVideo({
+                ...fallbackEmbed,
+                ...(externalUrl ? { externalUrl } : {}),
+                title,
+              });
+              if (requestedTheater !== undefined) setTheater(requestedTheater);
+              setSidePanelEnabled(wantsSide);
+              if (wantsSide) setSidePanelOpen(true);
+            });
+          return;
+        }
         hlsRequestSeqRef.current++;
-        const embed =
-          localMediaEmbed(msg.payload.url, app.slug) ??
-          resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
+        const embed = resolveVideoEmbed(msg.payload.url, typeof window !== "undefined" ? window.location.hostname : undefined);
         if (embed) {
           setActiveVideo({
             ...embed,
