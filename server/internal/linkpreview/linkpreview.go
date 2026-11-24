@@ -14,6 +14,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/http/cookiejar"
 	"net/netip"
 	"net/url"
 	"regexp"
@@ -35,9 +36,9 @@ const (
 	// recommend, gallery, product, and citation sources in a single reply.
 	MaxPreviewURLsPerMessage = 12
 	maxURLBytes              = 2048
-	maxPageBytes             = 1 << 20
+	maxPageBytes             = 2 << 20
 	maxImageBytes            = 3 << 20
-	maxRedirects             = 5
+	maxRedirects             = 8
 	maxImageCandidates       = 4
 	maxJSONLDScripts         = 16
 	maxJSONLDBytes           = 256 << 10
@@ -307,10 +308,23 @@ func (f *Fetcher) Fetch(ctx context.Context, raw string) Preview {
 	return f.site(ctx, raw)
 }
 
+// fetchClient returns a shallow copy of f.HTTP with a fresh per-fetch cookie
+// jar so cookie-gated redirects succeed without leaking cookies across calls.
+func (f *Fetcher) fetchClient() *http.Client {
+	c := *f.HTTP
+	if c.Jar == nil {
+		if jar, err := cookiejar.New(nil); err == nil {
+			c.Jar = jar
+		}
+	}
+	return &c
+}
+
 func (f *Fetcher) video(ctx context.Context, id string) Preview {
 	p := Preview{Kind: KindVideo, VideoID: id}
+	client := f.fetchClient()
 	target := "https://www.youtube.com/watch?v=" + id
-	body, _, err := f.get(ctx, f.OEmbedBase+"/oembed?format=json&url="+url.QueryEscape(target), maxPageBytes, getOpts{})
+	body, _, _, err := f.get(ctx, client, f.OEmbedBase+"/oembed?format=json&url="+url.QueryEscape(target), maxPageBytes, getOpts{})
 	if err != nil {
 		return p
 	}
@@ -323,24 +337,21 @@ func (f *Fetcher) video(ctx context.Context, id string) Preview {
 		return p
 	}
 	p.Title, p.Site = clean(o.Title, maxTitle), clean(o.AuthorName, maxTitle)
-	p.Image, p.ImageType = f.image(ctx, o.ThumbnailURL, target)
+	p.Image, p.ImageType = f.image(ctx, client, o.ThumbnailURL, target)
 	return p
 }
 
 func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 	p := Preview{Kind: KindSite}
-	body, ct, err := f.get(ctx, raw, maxImageBytes, getOpts{accept: pageAccept})
+	client := f.fetchClient()
+	body, ct, finalURL, err := f.get(ctx, client, raw, maxImageBytes, getOpts{accept: pageAccept})
 	if err != nil {
 		return p
 	}
 	// Direct raster images (for gallery/product cards) are verified by bytes, never by header,
 	// and SVG is refused so scriptable markup can never be served back as an image.
 	if detected := detectImageType(body); detected != "" {
-		var host string
-		if u, err := url.Parse(raw); err == nil {
-			host = strings.TrimPrefix(u.Hostname(), "www.")
-		}
-		return Preview{Kind: KindImage, Site: clean(host, maxTitle), Image: body, ImageType: detected}
+		return Preview{Kind: KindImage, Site: hostLabel(finalURL, raw), Image: body, ImageType: detected}
 	}
 	if int64(len(body)) > maxPageBytes {
 		body = body[:maxPageBytes]
@@ -353,7 +364,8 @@ func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 	p.Title = clean(first(m["og:title"], m["twitter:title"], m["title"], pm.ldTitle), maxTitle)
 	p.Description = clean(first(m["og:description"], m["twitter:description"], m["description"], pm.ldDescription), maxDesc)
 	p.Site = clean(m["og:site_name"], maxTitle)
-	if base, err := url.Parse(raw); err == nil {
+	pageURL := first(finalURL, raw)
+	if base, err := url.Parse(pageURL); err == nil {
 		var rawRefs []string
 		rawRefs = append(rawRefs, pm.productImages...)
 		rawRefs = append(rawRefs, m["og:image:secure_url"], m["og:image"], m["twitter:image"], m["twitter:image:src"])
@@ -375,7 +387,7 @@ func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 				continue
 			}
 			seen[target] = true
-			if img, imgType := f.image(ctx, target, raw); img != nil {
+			if img, imgType := f.image(ctx, client, target, pageURL); img != nil {
 				p.Image, p.ImageType = img, imgType
 				break
 			}
@@ -385,16 +397,31 @@ func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 			}
 		}
 	}
+	if p.Site == "" && (p.Title != "" || p.Description != "" || len(p.Image) > 0) {
+		p.Site = hostLabel(finalURL, raw)
+	}
 	return p
+}
+
+func hostLabel(urls ...string) string {
+	for _, raw := range urls {
+		if u, err := url.Parse(raw); err == nil && u.Hostname() != "" {
+			return clean(strings.TrimPrefix(u.Hostname(), "www."), maxTitle)
+		}
+	}
+	return ""
 }
 
 // image downloads a raster image, or nothing. The type comes from the bytes,
 // never the server's header, and SVG isn't accepted.
-func (f *Fetcher) image(ctx context.Context, raw, referer string) ([]byte, string) {
+func (f *Fetcher) image(ctx context.Context, client *http.Client, raw, referer string) ([]byte, string) {
 	if !Valid(raw) {
 		return nil, ""
 	}
-	body, _, err := f.get(ctx, raw, maxImageBytes, getOpts{accept: imageAccept, referer: referer, isImage: true})
+	if client == nil {
+		client = f.fetchClient()
+	}
+	body, _, _, err := f.get(ctx, client, raw, maxImageBytes, getOpts{accept: imageAccept, referer: referer, isImage: true})
 	if err != nil {
 		return nil, ""
 	}
@@ -449,21 +476,25 @@ type getOpts struct {
 }
 
 // get reads a 200 response of at most limit bytes; a larger one is an error.
-// If the server rejects the default bot User-Agent with 403 or 406, it retries
-// once with a standard browser User-Agent.
-func (f *Fetcher) get(ctx context.Context, raw string, limit int64, opts getOpts) ([]byte, string, error) {
-	body, ct, status, err := f.doGet(ctx, raw, limit, opts)
-	if err != nil && opts.ua == "" && (status == http.StatusForbidden || status == http.StatusNotAcceptable) {
+// If the server rejects the default bot User-Agent with 403, 406, or 429, it
+// retries once with a standard browser User-Agent.
+func (f *Fetcher) get(ctx context.Context, client *http.Client, raw string, limit int64, opts getOpts) ([]byte, string, string, error) {
+	body, ct, finalURL, status, err := f.doGet(ctx, client, raw, limit, opts)
+	if err != nil && opts.ua == "" && (status == http.StatusForbidden || status == http.StatusNotAcceptable || status == http.StatusTooManyRequests) {
 		opts.ua = browserUserAgent
-		body, ct, _, err = f.doGet(ctx, raw, limit, opts)
+		retryURL := raw
+		if Valid(finalURL) {
+			retryURL = finalURL
+		}
+		body, ct, finalURL, _, err = f.doGet(ctx, client, retryURL, limit, opts)
 	}
-	return body, ct, err
+	return body, ct, finalURL, err
 }
 
-func (f *Fetcher) doGet(ctx context.Context, raw string, limit int64, opts getOpts) ([]byte, string, int, error) {
+func (f *Fetcher) doGet(ctx context.Context, client *http.Client, raw string, limit int64, opts getOpts) ([]byte, string, string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", "", 0, err
 	}
 	ua := opts.ua
 	if ua == "" {
@@ -485,31 +516,37 @@ func (f *Fetcher) doGet(ctx context.Context, raw string, limit int64, opts getOp
 			req.Header.Set("Sec-Fetch-Dest", "document")
 			req.Header.Set("Sec-Fetch-Mode", "navigate")
 			req.Header.Set("Sec-Fetch-Site", "none")
+			req.Header.Set("Sec-Fetch-User", "?1")
+			req.Header.Set("Upgrade-Insecure-Requests", "1")
 		}
 	}
-	res, err := f.HTTP.Do(req)
+	res, err := client.Do(req)
 	if err != nil {
-		return nil, "", 0, err
+		return nil, "", "", 0, err
 	}
 	defer res.Body.Close()
+	finalURL := raw
+	if res.Request != nil && res.Request.URL != nil {
+		finalURL = res.Request.URL.String()
+	}
 	if res.StatusCode != http.StatusOK {
-		return nil, "", res.StatusCode, fmt.Errorf("status %d", res.StatusCode)
+		return nil, "", finalURL, res.StatusCode, fmt.Errorf("status %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
-		return nil, "", res.StatusCode, err
+		return nil, "", finalURL, res.StatusCode, err
 	}
 	// A page's metadata is at its top, so a long page is still usable; an image isn't.
 	if int64(len(body)) > limit {
 		if limit == maxImageBytes {
 			mt, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
 			if mt != "text/html" && mt != "application/xhtml+xml" {
-				return nil, "", res.StatusCode, errors.New("too large")
+				return nil, "", finalURL, res.StatusCode, errors.New("too large")
 			}
 		}
 		body = body[:limit]
 	}
-	return bytes.Clone(body), res.Header.Get("Content-Type"), res.StatusCode, nil
+	return bytes.Clone(body), res.Header.Get("Content-Type"), finalURL, res.StatusCode, nil
 }
 
 type pageMeta struct {

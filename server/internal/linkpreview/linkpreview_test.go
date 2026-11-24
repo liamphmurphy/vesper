@@ -130,7 +130,7 @@ func TestSiteFallsBackAndRefusesNonImages(t *testing.T) {
 
 func TestOversizedImageIsDropped(t *testing.T) {
 	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) { w.Write(append(png, make([]byte, maxImageBytes)...)) })
-	if b, _ := f.image(context.Background(), base+"/big.png", ""); b != nil {
+	if b, _ := f.image(context.Background(), nil, base+"/big.png", ""); b != nil {
 		t.Fatal("kept oversized image")
 	}
 }
@@ -283,6 +283,87 @@ func TestSiteFallsBackAcrossImageCandidatesAndWithoutTitle(t *testing.T) {
 	p := f.Fetch(context.Background(), base+"/no-title")
 	if p.ImageType != "image/png" || len(p.Image) == 0 {
 		t.Fatalf("expected fallback to link[rel=image_src] even without title, got %+v", p)
+	}
+}
+
+func TestSiteCrossHostRedirectUsesFinalURLAndEphemeralCookies(t *testing.T) {
+	var imgReferer, imgCookie string
+	var secondFetchCookie string
+	storeSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/gate":
+			http.SetCookie(w, &http.Cookie{Name: "sid", Value: "ok", Path: "/"})
+			http.Redirect(w, r, "/products/brewer", http.StatusFound)
+		case "/products/brewer":
+			c, err := r.Cookie("sid")
+			if err != nil || c.Value != "ok" {
+				http.Redirect(w, r, "/gate", http.StatusFound)
+				return
+			}
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head><title>Brewer</title><meta property="og:image" content="/img/brewer.png"></head></html>`))
+		case "/img/brewer.png":
+			imgReferer = r.Header.Get("Referer")
+			if c, err := r.Cookie("sid"); err == nil {
+				imgCookie = c.Value
+			}
+			if imgReferer == "" || !strings.HasPrefix(imgReferer, "http://"+r.Host+"/") || imgCookie != "ok" {
+				w.WriteHeader(http.StatusForbidden)
+				return
+			}
+			w.Write(png)
+		case "/check-cookie":
+			if c, err := r.Cookie("sid"); err == nil {
+				secondFetchCookie = c.Value
+			}
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head><title>Fresh</title></head></html>`))
+		}
+	}))
+	t.Cleanup(storeSrv.Close)
+
+	redirSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, storeSrv.URL+"/gate", http.StatusFound)
+	}))
+	t.Cleanup(redirSrv.Close)
+
+	f := &Fetcher{HTTP: storeSrv.Client(), OEmbedBase: storeSrv.URL}
+	p := f.Fetch(context.Background(), redirSrv.URL+"/grounding-api-redirect/abc")
+	if p.Title != "Brewer" || p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected redirected product preview with image, got %+v (referer=%q cookie=%q)", p, imgReferer, imgCookie)
+	}
+	if wantRef := storeSrv.URL + "/products/brewer"; imgReferer != wantRef {
+		t.Fatalf("expected Referer=%q (final URL), got %q", wantRef, imgReferer)
+	}
+	wantHost := strings.TrimPrefix(strings.TrimPrefix(storeSrv.URL, "http://"), "www.")
+	// Hostname() strips port.
+	if i := strings.IndexByte(wantHost, ':'); i >= 0 {
+		wantHost = wantHost[:i]
+	}
+	if p.Site != wantHost {
+		t.Fatalf("expected fallback Site=%q from final URL, got %q", wantHost, p.Site)
+	}
+
+	// Ephemeral cookie jar must not leak cookies across independent Fetch calls.
+	f.Fetch(context.Background(), storeSrv.URL+"/check-cookie")
+	if secondFetchCookie != "" {
+		t.Fatalf("cookie leaked across Fetch calls: %q", secondFetchCookie)
+	}
+}
+
+func TestSiteParsesJSONLDPastOneMiB(t *testing.T) {
+	padding := strings.Repeat("<div>padding</div>", 70000) // ~1.26 MiB
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/big.png" {
+			w.Write(png)
+			return
+		}
+		w.Header().Set("Content-Type", "text/html")
+		w.Write([]byte(`<html><head></head><body>` + padding + `<script type="application/ld+json">{"@type":"Product","name":"Big Page Brewer","image":"/big.png"}</script></body></html>`))
+	})
+	p := f.Fetch(context.Background(), base+"/heavy")
+	if p.Title != "Big Page Brewer" || p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected JSON-LD past 1 MiB to be parsed, got %+v", p)
 	}
 }
 
