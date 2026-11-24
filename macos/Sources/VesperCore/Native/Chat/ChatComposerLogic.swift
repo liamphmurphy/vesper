@@ -35,6 +35,7 @@ public struct ChatSlashCommand: Sendable, Equatable, Hashable, Identifiable {
         ChatSlashCommand(name: "music", args: "what to compose", hint: "Generate a music track in this chat", free: true, optionalArg: true),
         ChatSlashCommand(name: "compare", args: "model", hint: "Get a second opinion from another model without switching this chat"),
         ChatSlashCommand(name: "outline", hint: "Open the thread outline (bookmarks, links, checklists, diffs, files)"),
+        ChatSlashCommand(name: "thinking", args: "on|off", hint: "Show or hide live thinking blocks inline in the transcript", optionalArg: true),
     ]
 
     public static func named(_ name: String) -> ChatSlashCommand? {
@@ -87,6 +88,24 @@ public struct ChatCompareOption: Sendable, Equatable, Hashable, Identifiable {
 public enum ChatCompareResolution: Sendable, Equatable {
     case matched(option: ChatCompareOption, question: String)
     case error(String)
+}
+
+public enum ChatThinkingToggleResolution: Sendable, Equatable {
+    case set(Bool)
+    case error(String)
+}
+
+/// Persistent preference for streaming reasoning blocks inline in Chat transcripts (`false` by default).
+public enum ChatLiveThinkingPreference {
+    public static let defaultsKey = "VesperShowLiveThinking"
+
+    public static func read(from defaults: UserDefaults = .standard) -> Bool {
+        defaults.bool(forKey: defaultsKey)
+    }
+
+    public static func write(_ enabled: Bool, to defaults: UserDefaults = .standard) {
+        defaults.set(enabled, forKey: defaultsKey)
+    }
 }
 
 public enum ChatSlashCommandLogic {
@@ -217,6 +236,22 @@ public enum ChatSlashCommandLogic {
             return .matched(option: includes, question: question)
         }
         return .error("No model matches “\(first)”.")
+    }
+
+    /// Parses `/thinking [on|off]` against the current `showLiveThinking` preference.
+    /// Empty argument (or `toggle`) flips the current value.
+    public static func resolveThinkingToggle(raw: String, current: Bool) -> ChatThinkingToggleResolution {
+        let token = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        switch token {
+        case "", "toggle":
+            return .set(!current)
+        case "on", "true", "1", "show", "enable":
+            return .set(true)
+        case "off", "false", "0", "hide", "disable":
+            return .set(false)
+        default:
+            return .error("Usage: /thinking [on|off]")
+        }
     }
 
     private static func trimTrailingWhitespace(_ s: String) -> String {

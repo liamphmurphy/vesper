@@ -21,6 +21,7 @@ export const CHAT_COMMANDS: ChatCommand[] = [
   { name: "music", args: "what to compose", free: true, optionalArg: true, hint: "Generate a music track in this chat" },
   { name: "compare", args: "model", hint: "Get a second opinion from another model without switching this chat" },
   { name: "outline", hint: "Open the thread outline (bookmarks, links, checklists, diffs, files)" },
+  { name: "thinking", args: "on|off", optionalArg: true, hint: "Show or hide live thinking blocks inline in the transcript" },
 ];
 
 /** What the composer's + menu offers under "Create with {persona}" (docs/design/designs-from-chat.svg). */
@@ -129,4 +130,54 @@ export function resolveCompareTarget(
   if (includes) return { option: includes, question };
 
   return { error: `No model matches “${first}”.` };
+}
+
+/** Parses `/thinking [on|off]` against the current `showLiveThinking` preference. Empty toggles. */
+export function resolveThinkingToggle(raw: string, current: boolean): { next: boolean } | { error: string } {
+  const token = raw.trim().toLowerCase();
+  if (!token || token === "toggle") return { next: !current };
+  if (token === "on" || token === "true" || token === "1" || token === "show" || token === "enable") return { next: true };
+  if (token === "off" || token === "false" || token === "0" || token === "hide" || token === "disable") return { next: false };
+  return { error: "Usage: /thinking [on|off]" };
+}
+
+/** Persistent preference for live inline thinking streams in Chat (default false). */
+export const SHOW_LIVE_THINKING_KEY = "vesper.chat.showLiveThinking";
+const LIVE_THINKING_EVENT = "vesper:show-live-thinking";
+
+type StorageLike = Pick<Storage, "getItem" | "setItem">;
+
+export function readShowLiveThinking(storage?: StorageLike | null): boolean {
+  try {
+    const s = storage ?? (typeof window !== "undefined" ? window.localStorage : null);
+    return s?.getItem(SHOW_LIVE_THINKING_KEY) === "true";
+  } catch {
+    return false;
+  }
+}
+
+export function writeShowLiveThinking(enabled: boolean, storage?: StorageLike | null): boolean {
+  try {
+    const s = storage ?? (typeof window !== "undefined" ? window.localStorage : null);
+    s?.setItem(SHOW_LIVE_THINKING_KEY, enabled ? "true" : "false");
+  } catch {
+    /* Storage unavailable or blocked; in-session listeners still update. */
+  }
+  if (typeof window !== "undefined") {
+    window.dispatchEvent(new CustomEvent(LIVE_THINKING_EVENT, { detail: enabled }));
+  }
+  return enabled;
+}
+
+export function subscribeShowLiveThinking(listener: () => void): () => void {
+  if (typeof window === "undefined") return () => {};
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === null || e.key === SHOW_LIVE_THINKING_KEY) listener();
+  };
+  window.addEventListener(LIVE_THINKING_EVENT, listener);
+  window.addEventListener("storage", onStorage);
+  return () => {
+    window.removeEventListener(LIVE_THINKING_EVENT, listener);
+    window.removeEventListener("storage", onStorage);
+  };
 }

@@ -97,6 +97,30 @@ final class ChatComposerLogicTests: XCTestCase {
         }
     }
 
+    func testThinkingSlashCommandParsingMenuAndPreferencePersistence() {
+        XCTAssertEqual(ChatSlashCommandLogic.commandMenu(for: "/th"), .command(query: "th"))
+        XCTAssertEqual(ChatSlashCommandLogic.commandMenu(for: "/thinking "), .arg(name: "thinking", query: ""))
+        XCTAssertEqual(ChatSlashCommandLogic.commandMenu(for: "/thinking o"), .arg(name: "thinking", query: "o"))
+        XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/thinking"), ChatParsedCommand(name: "thinking", arg: ""))
+        XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/thinking on"), ChatParsedCommand(name: "thinking", arg: "on"))
+        XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/thinking OFF"), ChatParsedCommand(name: "thinking", arg: "OFF"))
+
+        XCTAssertEqual(ChatSlashCommandLogic.resolveThinkingToggle(raw: "", current: false), .set(true))
+        XCTAssertEqual(ChatSlashCommandLogic.resolveThinkingToggle(raw: "", current: true), .set(false))
+        XCTAssertEqual(ChatSlashCommandLogic.resolveThinkingToggle(raw: "on", current: false), .set(true))
+        XCTAssertEqual(ChatSlashCommandLogic.resolveThinkingToggle(raw: "off", current: true), .set(false))
+        XCTAssertEqual(ChatSlashCommandLogic.resolveThinkingToggle(raw: "bogus", current: false), .error("Usage: /thinking [on|off]"))
+
+        let suiteName = "VesperLiveThinkingPrefTests.\(UUID().uuidString)"
+        let defaults = UserDefaults(suiteName: suiteName)!
+        defer { defaults.removePersistentDomain(forName: suiteName) }
+        XCTAssertFalse(ChatLiveThinkingPreference.read(from: defaults))
+        ChatLiveThinkingPreference.write(true, to: defaults)
+        XCTAssertTrue(ChatLiveThinkingPreference.read(from: defaults))
+        ChatLiveThinkingPreference.write(false, to: defaults)
+        XCTAssertFalse(ChatLiveThinkingPreference.read(from: defaults))
+    }
+
     // MARK: - Per-Chat Draft Store
 
     func testDraftStoreSavesRestoresAndClearsPerChat() {
