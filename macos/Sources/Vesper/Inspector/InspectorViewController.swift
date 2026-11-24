@@ -30,7 +30,9 @@ final class InspectorViewController: NSViewController {
     private var headerHost: NSHostingView<InspectorHeaderView>?
     private var nativeHost: NSHostingController<InspectorBodyHost>?
     private var companionHost: NSHostingController<CompanionChatHost>?
+    private var nativePanelHost: NSHostingController<NativeInspectorPanelHost>?
     private var companionScreenContext: NativeScreenContext?
+    private let onPanelEvent: (String, String, String?) -> Void
     private var popout: InspectorPopoutController?
     private let popoutState = InspectorPopoutState()
     var isPoppedOut: Bool { popoutState.isPoppedOut }
@@ -57,6 +59,7 @@ final class InspectorViewController: NSViewController {
         self.navigate = navigate
         self.openPlayground = openPlayground
         self.onPopOutChanged = onPopOutChanged
+        self.onPanelEvent = onPanelEvent
         super.init(nibName: nil, bundle: nil)
         panelWeb.onOpenInMain = navigate
         panelWeb.onOpenPlayground = openPlayground
@@ -109,6 +112,16 @@ final class InspectorViewController: NSViewController {
         companion.view.translatesAutoresizingMaskIntoConstraints = false
         companionHost = companion
 
+        let nativePanel = NSHostingController(rootView: NativeInspectorPanelHost(
+            tabs: tabs,
+            screenContext: ctx,
+            onPanelEvent: onPanelEvent
+        ))
+        nativePanel.sizingOptions = []
+        addChild(nativePanel)
+        nativePanel.view.translatesAutoresizingMaskIntoConstraints = false
+        nativePanelHost = nativePanel
+
         panelWeb.webView.translatesAutoresizingMaskIntoConstraints = false
 
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
@@ -116,6 +129,7 @@ final class InspectorViewController: NSViewController {
         bodyContainer.addSubview(separator)
         bodyContainer.addSubview(native.view)
         bodyContainer.addSubview(companion.view)
+        bodyContainer.addSubview(nativePanel.view)
         bodyContainer.addSubview(panelWeb.webView)
 
         NSLayoutConstraint.activate([
@@ -137,6 +151,11 @@ final class InspectorViewController: NSViewController {
             companion.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             companion.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             companion.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
+
+            nativePanel.view.topAnchor.constraint(equalTo: separator.bottomAnchor),
+            nativePanel.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+            nativePanel.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+            nativePanel.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
 
             panelWeb.webView.topAnchor.constraint(equalTo: separator.bottomAnchor),
             panelWeb.webView.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
@@ -191,17 +210,20 @@ final class InspectorViewController: NSViewController {
         let active = InspectorLogic.activeTab(in: model)
         let isCompanion = active?.kind == .companion
         let isPanel = active?.kind == .panel
+        let isNativePanel = isPanel && NativeInspectorPanelRouter.isNative(active?.panel)
+        let isWebPanel = isPanel && !isNativePanel
         nativeHost?.view.isHidden = isCompanion || isPanel
         companionHost?.view.isHidden = !isCompanion
-        panelWeb.webView.isHidden = !isPanel
-        if isPanel && (model?.open == true || isPoppedOut) {
+        nativePanelHost?.view.isHidden = !isNativePanel
+        panelWeb.webView.isHidden = !isWebPanel
+        if isWebPanel && (model?.open == true || isPoppedOut) {
             panelWeb.ensureLoaded()
         }
         if companionStore.subject != model?.companion?.subject {
             companionStore.subject = model?.companion?.subject
         }
         panelWeb.updateContext(InspectorPanelContext(
-            active: isPanel ? active?.panel : nil,
+            active: isWebPanel ? active?.panel : nil,
             keepKeys: keepKeys,
             path: route
         ))
