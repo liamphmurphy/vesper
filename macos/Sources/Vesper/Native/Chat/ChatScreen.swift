@@ -839,7 +839,7 @@ struct ChatScreen: View {
         let navigator: NavModel
         let areaOverride: AreaId?
         if let spaceId = session?.space?.id {
-            let spaceChats = context.store.entry(API.listChats(space: spaceId)).data?.chats ?? []
+            let spaceChats = context.store.entry(SpacesLogic.spaceChatsRequest(spaceId: spaceId)).data?.chats ?? []
             navigator = SpacesLogic.navModel(
                 spaces: spaces,
                 activeSpaceId: spaceId,
@@ -1353,7 +1353,7 @@ struct ChatScreen: View {
         track(Self.repositoriesRequest)
         track(chatsRequest)
         if let spaceId = session?.space?.id {
-            track(API.listChats(space: spaceId))
+            track(SpacesLogic.spaceChatsRequest(spaceId: spaceId))
         }
         if let sessionRequest { track(sessionRequest) }
         if let ticketRunsRequest { track(ticketRunsRequest) }

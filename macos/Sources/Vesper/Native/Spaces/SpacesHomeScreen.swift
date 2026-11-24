@@ -10,7 +10,7 @@ struct SpacesHomeScreen: View {
     @State private var watchedKeys: [QueryKey] = []
 
     private static let spacesRequest = API.listChatSpaces()
-    private static let allChatsRequest = API.listChats(space: "all")
+    private static let allChatsRequest = SpacesLogic.allSpaceChatsRequest
     private static let allBranchesRequest = API.listAllChatSpaceBranches()
     private static let personasRequest = API.listPersonas()
 

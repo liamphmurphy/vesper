@@ -76,7 +76,7 @@ struct SpaceScreen: View {
     }
 
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
-        API.listChats(space: spaceId)
+        SpacesLogic.spaceChatsRequest(spaceId: spaceId)
     }
 
     var body: some View {
