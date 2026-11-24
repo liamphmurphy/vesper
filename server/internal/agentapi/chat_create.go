@@ -74,6 +74,8 @@ type CreateScheduledTaskIn struct {
 	Weekdays      []int32        `json:"weekdays,omitempty" jsonschema:"For weekly: days to run, 0 is Sunday"`
 	MonthDay      int32          `json:"month_day,omitempty" jsonschema:"For monthly: day of the month, 1–31 (shorter months use their last day)"`
 	Cron          string         `json:"cron,omitempty" jsonschema:"For cron: a five-field cron expression"`
+	MaxMinutes    *int32         `json:"max_minutes,omitempty" jsonschema:"Optional per-run time limit in minutes (1–240); omit for unlimited"`
+	MaxCostMicros *int64         `json:"max_cost_micros,omitempty" jsonschema:"Optional per-run cost limit in micro-USD; omit for unlimited"`
 }
 
 func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in CreateScheduledTaskIn) (any, error) {
@@ -99,7 +101,7 @@ func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Create
 		sc.MonthDay = 1
 	}
 	var taskIn runs.ScheduledTaskInput
-	tell := "Scheduled. It runs on its own with the default limits (15 minutes, $1 a run) and each result goes to their Inbox; they can pause, change or delete it in [Scheduled](/scheduled)."
+	tell := "Scheduled. It runs on its own with no time or cost cap unless configured, and each result goes to their Inbox; they can pause, set limits, change or delete it in [Scheduled](/scheduled)."
 	if strings.TrimSpace(in.CustomAppSlug) != "" || strings.TrimSpace(in.CustomAppTool) != "" {
 		taskIn = runs.ScheduledTaskInput{
 			Name:          in.Name,
@@ -109,19 +111,22 @@ func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Create
 			CustomAppArgs: in.CustomAppArgs,
 			Schedule:      sc,
 			Enabled:       true,
+			MaxMinutes:    in.MaxMinutes,
 		}
 		tell = "Scheduled. It runs the Custom App tool directly without an LLM turn and only posts to their Inbox if a run fails; they can pause, change or delete it in [Scheduled](/scheduled)."
 	} else {
 		// A prompt task in the chat's project, answered by this persona, with
-		// the default time and cost caps and no connectors.
+		// unlimited time/cost by default (unless explicitly capped) and no connectors.
 		taskIn = runs.ScheduledTaskInput{
-			Name:         in.Name,
-			Kind:         "prompt",
-			Instructions: in.Instructions,
-			PersonaID:    s.PersonaID,
-			Project:      s.ProjectKey,
-			Schedule:     sc,
-			Enabled:      true,
+			Name:          in.Name,
+			Kind:          "prompt",
+			Instructions:  in.Instructions,
+			PersonaID:     s.PersonaID,
+			Project:       s.ProjectKey,
+			Schedule:      sc,
+			Enabled:       true,
+			MaxMinutes:    in.MaxMinutes,
+			MaxCostMicros: in.MaxCostMicros,
 		}
 	}
 	t, err := d.Runs.CreateScheduledTask(ctx, c.Agent.WorkspaceID, s.UserID, taskIn)

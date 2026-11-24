@@ -10551,8 +10551,12 @@ export interface components {
             /** @description Five fields, in timezone; cron only */
             cron?: string;
             enabled: boolean;
+            /** @description Optional per-run time limit in minutes; omit for unlimited */
             max_minutes?: number;
-            /** Format: int64 */
+            /**
+             * Format: int64
+             * @description Optional per-run cost limit in micro-USD; omit for unlimited
+             */
             max_cost_micros?: number;
         };
         ScheduledRun: {
@@ -10598,9 +10602,13 @@ export interface components {
             timezone: string;
             cron: string;
             enabled: boolean;
-            max_minutes: number;
-            /** Format: int64 */
-            max_cost_micros: number;
+            /** @description Per-run time limit in minutes; omitted when unlimited */
+            max_minutes?: number;
+            /**
+             * Format: int64
+             * @description Per-run cost limit in micro-USD; omitted when unlimited
+             */
+            max_cost_micros?: number;
             /** Format: date-time */
             next_run_at?: string;
             /** @description The next two run times */

@@ -43,10 +43,12 @@ func toScheduledInput(b api.ScheduledTaskInput) runs.ScheduledTaskInput {
 		}
 	}
 	if b.MaxMinutes != nil {
-		in.MaxMinutes = int32(*b.MaxMinutes)
+		v := int32(*b.MaxMinutes)
+		in.MaxMinutes = &v
 	}
 	if b.MaxCostMicros != nil {
-		in.MaxCostMicros = *b.MaxCostMicros
+		v := *b.MaxCostMicros
+		in.MaxCostMicros = &v
 	}
 	return in
 }
@@ -78,7 +80,11 @@ func (s *Server) toScheduledTasks(ctx context.Context, ws, user uuid.UUID, rows 
 		copy(ids, t.ConnectorIds)
 		item := api.ScheduledTask{Id: t.ID, Name: t.Name, Kind: api.ScheduledTaskKind(t.Kind), Instructions: t.Instructions, WorkflowId: t.WorkflowID, PersonaId: t.PersonaID, ConnectorIds: ids,
 			Frequency: api.ScheduledTaskFrequency(t.Frequency), Weekdays: weekdays, MonthDay: int(t.MonthDay), AtTime: t.AtTime, Timezone: t.Timezone, Cron: t.Cron, Enabled: t.Enabled,
-			MaxMinutes: int(t.MaxMinutes), MaxCostMicros: t.MaxCostMicros, NextRunAt: t.NextRunAt, Revision: int(t.Revision), Runs: []api.ScheduledRun{}, Upcoming: []time.Time{}}
+			MaxCostMicros: t.MaxCostMicros, NextRunAt: t.NextRunAt, Revision: int(t.Revision), Runs: []api.ScheduledRun{}, Upcoming: []time.Time{}}
+		if t.MaxMinutes != nil {
+			v := int(*t.MaxMinutes)
+			item.MaxMinutes = &v
+		}
 		var appSlug string
 		if t.Kind == "custom_app" {
 			if t.CustomAppID != nil {
