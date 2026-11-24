@@ -213,6 +213,10 @@ type EgressConfig struct {
 	DialTimeout       time.Duration
 	// Optional static host -> host:port overrides used only in tests.
 	TestUpstreams map[string]string
+	// AllowPublic, when non-nil, gates non-internal outbound DNS queries and
+	// TCP dials. Reserved internal hosts (such as cache.vesper.internal) remain
+	// reachable even when public egress is denied.
+	AllowPublic func() bool
 }
 
 // Egress enforces hostname-pinned outbound TCP and internal service routing
@@ -227,6 +231,7 @@ type Egress struct {
 	gitHandler        http.Handler
 	playgroundHandler http.Handler
 	macHandler        http.Handler
+	allowPublic       func() bool
 
 	servers   []*http.Server
 	listeners []*memListener
@@ -253,6 +258,7 @@ func NewEgress(cfg EgressConfig) *Egress {
 		cacheHandler:      cfg.CacheHandler,
 		gitHandler:        cfg.GitHandler,
 		playgroundHandler: cfg.PlaygroundHandler,
+		allowPublic:       cfg.AllowPublic,
 		closed:            make(chan struct{}),
 	}
 	e.mountHTTPService(internalAPIIP, blockInternalAPI(cfg.APIHandler))
@@ -297,6 +303,24 @@ func (e *Egress) SetMacHandler(h http.Handler) {
 	e.dynMu.Lock()
 	e.macHandler = h
 	e.dynMu.Unlock()
+}
+
+// SetAllowPublic updates the public-egress gate dynamically. Passing nil
+// allows all public destinations subject to IsAllowedPublicIP.
+func (e *Egress) SetAllowPublic(fn func() bool) {
+	e.dynMu.Lock()
+	e.allowPublic = fn
+	e.dynMu.Unlock()
+}
+
+func (e *Egress) publicAllowed() bool {
+	e.dynMu.RLock()
+	fn := e.allowPublic
+	e.dynMu.RUnlock()
+	if fn == nil {
+		return true
+	}
+	return fn()
 }
 
 func (e *Egress) mountDynamicHTTPService(ip [4]byte, lookup func() http.Handler) {
@@ -411,6 +435,14 @@ func (e *Egress) HandleDNSPacket(ctx context.Context, pkt []byte) ([]byte, error
 		return b.Finish()
 	}
 
+	if !e.publicAllowed() {
+		respHdr.RCode = dnsmessage.RCodeRefused
+		b := dnsmessage.NewBuilder(nil, respHdr)
+		_ = b.StartQuestions()
+		_ = b.Question(q)
+		return b.Finish()
+	}
+
 	// Empty NODATA for AAAA (and non-A) so dual-stack clients dial synthetic A.
 	if q.Type != dnsmessage.TypeA {
 		b := dnsmessage.NewBuilder(nil, respHdr)
@@ -480,6 +512,11 @@ func (e *Egress) ServeTCPConn(conn net.Conn) {
 		if e.handleInternalTCP(conn, dstIP, dstPort) {
 			closedByCallee = true
 		}
+		return
+	}
+
+	if !e.publicAllowed() {
+		e.log.Debug("egress rejected public TCP while public egress disabled", "ip", dstIP, "port", dstPort)
 		return
 	}
 
