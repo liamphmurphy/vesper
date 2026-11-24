@@ -12,7 +12,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Replace Docker CLI-only install from agent-base with full static Docker Engine
 # binaries (dockerd, containerd, runc, containerd-shim-runc-v2, docker-init, docker-proxy).
-ARG DOCKER_VERSION=27.5.1
+ARG DOCKER_VERSION=29.10.0
 RUN arch="$(uname -m)" \
  && curl -fsSL "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_VERSION}.tgz" \
     | tar -xz -C /usr/local/bin --strip-components=1

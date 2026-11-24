@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1
 # The image every managed run's turns execute in (docs/dev/plan.md §6.5): git, gh,
 # common toolchains and both harness CLIs. Projects can extend it.
-FROM golang:1.26.0-bookworm AS go-tools
+FROM golang:1.26.11-bookworm AS go-tools
 # Build the pinned source as the main module: sqlc uses replace directives,
 # which prevent `go install module@version`.
 RUN git clone --depth 1 --branch v1.31.1 https://github.com/sqlc-dev/sqlc.git /tmp/sqlc \
@@ -9,7 +9,7 @@ RUN git clone --depth 1 --branch v1.31.1 https://github.com/sqlc-dev/sqlc.git /t
 
 # Nix lets a turn install any tool it needs without root (nix profile
 # install nixpkgs#protobuf).
-FROM nixos/nix:2.24.10 AS nix
+FROM nixos/nix:2.35.6 AS nix
 
 FROM node:24-bookworm-slim
 COPY --from=go-tools /usr/local/go /usr/local/go
@@ -30,14 +30,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # The docker CLI only: turns get a Docker API through the runner's sandboxing
 # proxy (DOCKER_HOST), never the host's daemon or socket.
-ARG DOCKER_CLI_VERSION=27.5.1
+ARG DOCKER_CLI_VERSION=29.10.0
 RUN arch="$(uname -m)" \
  && curl -fsSL "https://download.docker.com/linux/static/stable/${arch}/docker-${DOCKER_CLI_VERSION}.tgz" \
     | tar -xz -C /usr/local/bin --strip-components=1 docker/docker
 # Compose, so an agent can bring up an app's stack: its builds use the classic
 # builder (the proxy refuses BuildKit) and its ./ binds become mounts of the
 # run's checkout.
-ARG COMPOSE_VERSION=v2.32.4
+ARG COMPOSE_VERSION=v2.40.3
 RUN mkdir -p /usr/local/lib/docker/cli-plugins \
  && curl -fsSL "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-linux-$(uname -m)" \
     -o /usr/local/lib/docker/cli-plugins/docker-compose \
@@ -90,7 +90,7 @@ ENV AGY_CLI_DISABLE_AUTO_UPDATE=1
 
 # Browser system libraries are installed once in the image. Browser revisions
 # follow each project's Playwright lockfile and live in the persistent cache.
-ARG PLAYWRIGHT_VERSION=1.64.1
+ARG PLAYWRIGHT_VERSION=1.65.1
 RUN npx --yes playwright@${PLAYWRIGHT_VERSION} install-deps chromium
 
 # The node user (uid 1000) runs turns. A new named volume copies /workspace's
