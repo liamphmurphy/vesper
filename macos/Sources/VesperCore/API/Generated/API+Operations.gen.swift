@@ -1837,6 +1837,17 @@ extension API {
         )
     }
 
+    /// Stop an active LAN media relay and release its listener when idle
+    ///
+    /// `DELETE /custom-apps/{slug}/media-relays/{relayId}`
+    public static func stopCustomAppMediaRelay(slug: Swift.String, relayId: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/custom-apps/{slug}/media-relays/{relayId}",
+            path: "/api/v1/custom-apps/\(APIPath.escape(slug))/media-relays/\(APIPath.escape(relayId))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
     /// A video the custom app downloaded (app.media:download), for playing locally
     ///
     /// Supports a single byte Range, so players can seek. Only finished downloads are served.
@@ -1849,6 +1860,17 @@ extension API {
             method: "GET", template: "/custom-apps/{slug}/media/{mediaId}/content",
             path: "/api/v1/custom-apps/\(APIPath.escape(slug))/media/\(APIPath.escape(mediaId))/content",
             query: [], headers: _headers, body: nil, decode: .raw
+        )
+    }
+
+    /// Start an ephemeral LAN relay for a downloaded media file so AirPlay receivers can fetch it
+    ///
+    /// `POST /custom-apps/{slug}/media/{mediaId}/relay`
+    public static func startCustomAppMediaRelay(slug: Swift.String, mediaId: Swift.String) -> APIRequest<CustomAppMediaRelay> {
+        return APIRequest(
+            method: "POST", template: "/custom-apps/{slug}/media/{mediaId}/relay",
+            path: "/api/v1/custom-apps/\(APIPath.escape(slug))/media/\(APIPath.escape(mediaId))/relay",
+            query: [], headers: [:], body: nil, decode: .json
         )
     }
 

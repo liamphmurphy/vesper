@@ -7108,6 +7108,34 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         "416": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/media/{mediaId}/relay:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: mediaId, in: path, required: true, schema: { type: string, format: uuid } }
+    post:
+      tags: [custom-apps]
+      operationId: startCustomAppMediaRelay
+      summary: Start an ephemeral LAN relay for a downloaded media file so AirPlay receivers can fetch it
+      responses:
+        "200":
+          description: Active LAN media relay metadata and URLs
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CustomAppMediaRelay" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+  /custom-apps/{slug}/media-relays/{relayId}:
+    parameters:
+      - { name: slug, in: path, required: true, schema: { type: string } }
+      - { name: relayId, in: path, required: true, schema: { type: string, format: uuid } }
+    delete:
+      tags: [custom-apps]
+      operationId: stopCustomAppMediaRelay
+      summary: Stop an active LAN media relay and release its listener when idle
+      responses:
+        "204": { description: Stopped }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
   /custom-apps/{slug}/hls/{streamId}:
     parameters:
       - { name: slug, in: path, required: true, schema: { type: string } }
@@ -12020,6 +12048,16 @@ components:
         proxy_segments: { type: boolean }
         in_ad_break: { type: boolean }
         ads_skipped: { type: integer }
+        created_at: { type: string, format: date-time }
+    CustomAppMediaRelay:
+      type: object
+      required: [id, media_id, lan_url, loopback_url, content_type, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        media_id: { type: string, format: uuid }
+        lan_url: { type: string }
+        loopback_url: { type: string }
+        content_type: { type: string }
         created_at: { type: string, format: date-time }
     DevWorkspaceRepo:
       type: object
