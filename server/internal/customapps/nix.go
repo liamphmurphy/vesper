@@ -27,6 +27,7 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
@@ -82,10 +83,32 @@ type Nix struct {
 	MaxMountCopyBytes   int64
 
 	mu       sync.Mutex
+	vmBackend VMBackend
 	active   map[uuid.UUID]*activeNixJob
 	cache    map[string]cachedNixPkg
 	inflight map[string]*resolveFlight
 	wg       sync.WaitGroup
+}
+
+const vmWorkDirPrefix = "vm:"
+
+// SetVM attaches or clears the Custom App microVM backend used to run Nix jobs.
+func (n *Nix) SetVM(vm VMBackend) {
+	if n == nil {
+		return
+	}
+	n.mu.Lock()
+	n.vmBackend = vm
+	n.mu.Unlock()
+}
+
+func (n *Nix) vm() VMBackend {
+	if n == nil {
+		return nil
+	}
+	n.mu.Lock()
+	defer n.mu.Unlock()
+	return n.vmBackend
 }
 
 type cachedNixPkg struct {
@@ -109,14 +132,15 @@ type activeNixJob struct {
 
 // NixStartInput is the request to run a command from one or more Nix packages.
 type NixStartInput struct {
-	Packages   []string          `json:"packages"`
-	Command    string            `json:"command"`
-	Args       []string          `json:"args"`
-	Stdin      string            `json:"stdin"`
-	Env        map[string]string `json:"env"`
-	Mounts     []string          `json:"mounts"`
-	TimeoutSec int               `json:"timeout_sec"`
-	KeepFiles  bool              `json:"keep_files"`
+	Packages    []string          `json:"packages"`
+	Command     string            `json:"command"`
+	Args        []string          `json:"args"`
+	Stdin       string            `json:"stdin"`
+	Env         map[string]string `json:"env"`
+	Mounts      []string          `json:"mounts"`
+	TimeoutSec  int               `json:"timeout_sec"`
+	KeepFiles   bool              `json:"keep_files"`
+	AllowPublic bool              `json:"-"`
 }
 
 // NixFile is one output file produced inside a job's working directory.
@@ -441,6 +465,44 @@ func (n *Nix) start(ctx context.Context, appID uuid.UUID, slug string, appMounts
 		return NixJob{}, nil, err
 	}
 
+	if vm := n.vm(); vm != nil {
+		guestJobRoot := "/workspace/nix/" + row.ID.String()
+		guestWorkDir := guestJobRoot + "/work"
+		jobCtx, cancel := context.WithTimeout(context.Background(), timeout)
+		aj := &activeNixJob{
+			appID:   appID,
+			jobRoot: vmWorkDirPrefix + guestJobRoot,
+			cancel:  cancel,
+			done:    make(chan struct{}),
+		}
+		n.mu.Lock()
+		if n.active == nil {
+			n.active = map[uuid.UUID]*activeNixJob{}
+		}
+		n.active[row.ID] = aj
+		n.mu.Unlock()
+
+		spec := VMAppSpec{
+			AppID:       appID,
+			Slug:        slug,
+			Mounts:      appMounts,
+			AllowPublic: in.AllowPublic,
+		}
+		n.wg.Add(1)
+		go func() {
+			defer n.wg.Done()
+			defer close(aj.done)
+			defer cancel()
+			defer func() {
+				n.mu.Lock()
+				delete(n.active, row.ID)
+				n.mu.Unlock()
+			}()
+			n.runJobInVM(jobCtx, vm, aj, row, spec, guestJobRoot, guestWorkDir, v, timeout)
+		}()
+		return nixJobFromRow(row, []NixFile{}), aj, nil
+	}
+
 	jobRoot := filepath.Join(n.scratchRoot(), appID.String(), row.ID.String())
 	workDir := filepath.Join(jobRoot, "work")
 	cleanupOnErr := func() {
@@ -730,6 +792,176 @@ func (n *Nix) runJob(
 	}
 	zero := int32(0)
 	finish("done", &zero, outStr, errStr, "")
+}
+
+func (n *Nix) runJobInVM(
+	ctx context.Context,
+	vm VMBackend,
+	aj *activeNixJob,
+	row store.CustomAppNixJob,
+	spec VMAppSpec,
+	guestJobRoot, guestWorkDir string,
+	v validatedNixInput,
+	timeout time.Duration,
+) {
+	q := store.New(n.Pool)
+	finish := func(state string, exitCode *int32, outStr, errStr, errMsg string) {
+		fctx := context.WithoutCancel(ctx)
+		_, _ = q.FinishCustomAppNixJob(fctx, store.FinishCustomAppNixJobParams{
+			ID:       row.ID,
+			State:    state,
+			ExitCode: exitCode,
+			Stdout:   sanitizeJobText(outStr),
+			Stderr:   sanitizeJobText(errStr),
+			Error:    truncate(sanitizeJobText(errMsg), 400),
+		})
+	}
+
+	if err := q.SetCustomAppNixJobRunning(ctx, store.SetCustomAppNixJobRunningParams{
+		WorkDir: vmWorkDirPrefix + guestWorkDir,
+		ID:      row.ID,
+	}); err != nil {
+		finish("failed", nil, "", "", err.Error())
+		return
+	}
+
+	flakeRef := strings.TrimSpace(n.FlakeRef)
+	if flakeRef == "" {
+		flakeRef = "nixpkgs"
+	}
+
+	envMap := map[string]string{
+		"HOME":            guestJobRoot + "/home",
+		"TMPDIR":          guestJobRoot + "/tmp",
+		"XDG_CACHE_HOME":  guestJobRoot + "/home/.cache",
+		"XDG_CONFIG_HOME": guestJobRoot + "/home/.config",
+		"TZ":              "UTC",
+		"LANG":            "C.UTF-8",
+	}
+	for k, val := range v.Env {
+		envMap[k] = val
+	}
+
+	var script strings.Builder
+	script.WriteString("set -e\n")
+	fmt.Fprintf(&script, "mkdir -p %s %s %s %s\n",
+		shellQuote(guestWorkDir),
+		shellQuote(guestJobRoot+"/home/.cache"),
+		shellQuote(guestJobRoot+"/home/.config"),
+		shellQuote(guestJobRoot+"/tmp"),
+	)
+	if len(v.Mounts) > 0 {
+		fmt.Fprintf(&script, "mkdir -p %s\n", shellQuote(guestWorkDir+"/.mounts"))
+		for _, m := range v.Mounts {
+			guestMount := "/mounts/" + m.Name
+			envKey := "VESPER_MOUNT_" + strings.ToUpper(strings.ReplaceAll(m.Name, "-", "_"))
+			envMap[envKey] = guestMount
+			fmt.Fprintf(&script, "ln -sfn %s %s\n", shellQuote(guestMount), shellQuote(guestWorkDir+"/.mounts/"+m.Name))
+		}
+	}
+	fmt.Fprintf(&script, "cd %s\n", shellQuote(guestWorkDir))
+	script.WriteString("exec nix --extra-experimental-features 'nix-command flakes' shell")
+	for _, pkg := range v.Packages {
+		script.WriteByte(' ')
+		script.WriteString(shellQuote(flakeRef + "#" + pkg))
+	}
+	script.WriteString(" --command ")
+	script.WriteString(shellQuote(v.Command))
+	for _, arg := range v.Args {
+		script.WriteByte(' ')
+		script.WriteString(shellQuote(arg))
+	}
+	script.WriteByte('\n')
+
+	proc, err := vm.StartAppVMProcess(ctx, VMExecRequest{
+		App:  spec,
+		Argv: []string{"/bin/sh", "-c", script.String()},
+		Dir:  "/workspace",
+		Env:  envMap,
+	})
+	if err != nil {
+		if aj.canceled.Load() {
+			finish("canceled", nil, "", "", "canceled")
+			return
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			finish("failed", nil, "", "", fmt.Sprintf("command timed out after %s", timeout))
+			return
+		}
+		finish("failed", nil, "", "", fmt.Sprintf("start %s in VM: %v", v.Command, err))
+		return
+	}
+	defer proc.Close()
+
+	if v.Stdin != "" {
+		go func() {
+			_, _ = io.WriteString(proc.Stdin(), v.Stdin)
+			_ = proc.Stdin().Close()
+		}()
+	} else {
+		_ = proc.Stdin().Close()
+	}
+
+	stdoutBuf := &tailBuffer{limit: n.maxStdoutBytes()}
+	stderrBuf := &tailBuffer{limit: n.maxStderrBytes()}
+	var copyWG sync.WaitGroup
+	copyWG.Add(2)
+	go func() {
+		defer copyWG.Done()
+		_, _ = io.Copy(stdoutBuf, proc.Stdout())
+	}()
+	go func() {
+		defer copyWG.Done()
+		_, _ = io.Copy(stderrBuf, proc.Stderr())
+	}()
+
+	stopFlush := n.flushJobOutput(ctx, q, row.ID, stdoutBuf, stderrBuf)
+
+	type waitRes struct {
+		code int
+		err  error
+	}
+	waitCh := make(chan waitRes, 1)
+	go func() {
+		code, werr := proc.Wait()
+		copyWG.Wait()
+		waitCh <- waitRes{code: code, err: werr}
+	}()
+
+	var res waitRes
+	select {
+	case res = <-waitCh:
+	case <-ctx.Done():
+		_ = proc.Kill(2 * time.Second)
+		res = <-waitCh
+	}
+	stopFlush()
+
+	outStr := stdoutBuf.String()
+	errStr := stderrBuf.String()
+	code32 := int32(res.code)
+
+	if aj.canceled.Load() {
+		finish("canceled", &code32, outStr, errStr, "canceled")
+		return
+	}
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		finish("failed", &code32, outStr, errStr, fmt.Sprintf("command timed out after %s", timeout))
+		return
+	}
+	if res.err != nil {
+		finish("failed", &code32, outStr, errStr, res.err.Error())
+		return
+	}
+	if res.code != 0 {
+		finish("failed", &code32, outStr, errStr, fmt.Sprintf("%s exited with status %d", v.Command, res.code))
+		return
+	}
+	finish("done", &code32, outStr, errStr, "")
+}
+
+func shellQuote(s string) string {
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func (n *Nix) flushJobOutput(ctx context.Context, q *store.Queries, id uuid.UUID, outBuf, errBuf *tailBuffer) func() {
@@ -1068,6 +1300,9 @@ func (n *Nix) Status(ctx context.Context, appID, id uuid.UUID) (NixJob, error) {
 		row.State = "failed"
 		row.Error = nixInterruptedText
 	}
+	if strings.HasPrefix(row.WorkDir, vmWorkDirPrefix) {
+		return nixJobFromRow(row, []NixFile{}), nil
+	}
 	return nixJobFromRow(row, listWorkFiles(row.WorkDir)), nil
 }
 
@@ -1118,6 +1353,13 @@ func (n *Nix) Delete(ctx context.Context, appID, id uuid.UUID) error {
 	}
 	if err != nil {
 		return err
+	}
+	if strings.HasPrefix(workDir, vmWorkDirPrefix) {
+		if vm := n.vm(); vm != nil {
+			guestJobRoot := path.Dir(strings.TrimPrefix(workDir, vmWorkDirPrefix))
+			_ = vm.UnlinkAppVMPaths(ctx, VMAppSpec{AppID: appID}, []string{guestJobRoot}, true)
+		}
+		return nil
 	}
 	if workDir != "" {
 		_ = os.RemoveAll(filepath.Dir(workDir))
@@ -1193,9 +1435,8 @@ func (n *Nix) ResolveJobFile(ctx context.Context, appID, jobID uuid.UUID, relPat
 
 // ReadFile reads one output file from a job's working directory up to MaxReadBytes.
 func (n *Nix) ReadFile(ctx context.Context, appID, jobID uuid.UUID, relPath, encoding string) (map[string]any, error) {
-	absPath, cleanRel, info, err := n.ResolveJobFile(ctx, appID, jobID, relPath)
-	if err != nil {
-		return nil, err
+	if n == nil || n.Pool == nil {
+		return nil, errors.New("nix runner is unavailable")
 	}
 	enc := strings.ToLower(strings.TrimSpace(encoding))
 	if enc == "" {
@@ -1203,6 +1444,20 @@ func (n *Nix) ReadFile(ctx context.Context, appID, jobID uuid.UUID, relPath, enc
 	}
 	if enc != "utf8" && enc != "base64" {
 		return nil, apperr.Invalid("encoding", "encoding must be utf8 or base64")
+	}
+	row, err := store.New(n.Pool).GetCustomAppNixJob(ctx, store.GetCustomAppNixJobParams{ID: jobID, AppID: appID})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, apperr.ErrNotFound
+	}
+	if err != nil {
+		return nil, err
+	}
+	if strings.HasPrefix(row.WorkDir, vmWorkDirPrefix) {
+		return n.readVMJobFile(ctx, appID, strings.TrimPrefix(row.WorkDir, vmWorkDirPrefix), relPath, enc)
+	}
+	absPath, cleanRel, info, err := n.ResolveJobFile(ctx, appID, jobID, relPath)
+	if err != nil {
+		return nil, err
 	}
 	limit := n.maxReadBytes()
 	if info.Size() > limit {
@@ -1220,6 +1475,37 @@ func (n *Nix) ReadFile(ctx context.Context, appID, jobID uuid.UUID, relPath, enc
 	if int64(len(raw)) > limit {
 		return nil, apperr.Invalid("path", "file exceeds the %d MB limit", limit>>20)
 	}
+	return encodeNixReadFileResult(cleanRel, enc, raw)
+}
+
+func (n *Nix) readVMJobFile(ctx context.Context, appID uuid.UUID, guestWorkDir, relPath, enc string) (map[string]any, error) {
+	vm := n.vm()
+	if vm == nil {
+		return nil, errors.New("custom app VM backend is unavailable")
+	}
+	rawPath := strings.TrimSpace(relPath)
+	if rawPath == "" || strings.ContainsRune(rawPath, 0) || strings.ContainsRune(rawPath, '\\') || strings.HasPrefix(rawPath, "/") {
+		return nil, apperr.Invalid("path", "path must be a relative file inside the job working directory")
+	}
+	cleanRel := path.Clean(rawPath)
+	if cleanRel == "." || cleanRel == ".." || strings.HasPrefix(cleanRel, "../") || strings.Contains(cleanRel, "/../") {
+		return nil, apperr.Invalid("path", "path must stay inside the job working directory")
+	}
+	if cleanRel == ".mounts" || strings.HasPrefix(cleanRel, ".mounts/") {
+		return nil, apperr.Invalid("path", "mounted host directories cannot be read back through nix.readFile")
+	}
+	limit := n.maxReadBytes()
+	raw, err := vm.ReadAppVMFile(ctx, VMAppSpec{AppID: appID}, path.Join(guestWorkDir, cleanRel), limit+1)
+	if err != nil {
+		return nil, err
+	}
+	if int64(len(raw)) > limit {
+		return nil, apperr.Invalid("path", "file exceeds the %d MB limit", limit>>20)
+	}
+	return encodeNixReadFileResult(cleanRel, enc, raw)
+}
+
+func encodeNixReadFileResult(cleanRel, enc string, raw []byte) (map[string]any, error) {
 	var content string
 	if enc == "utf8" {
 		if !utf8.Valid(raw) {
@@ -1250,10 +1536,10 @@ func (n *Nix) forget(_ context.Context, rows []store.ListCustomAppNixJobWorkDirs
 			aj.cancel()
 			<-aj.done
 		}
-		if r.WorkDir != "" {
+		if r.WorkDir != "" && !strings.HasPrefix(r.WorkDir, vmWorkDirPrefix) {
 			_ = os.RemoveAll(filepath.Dir(r.WorkDir))
 		}
-		if jobRoot != "" {
+		if jobRoot != "" && !strings.HasPrefix(jobRoot, vmWorkDirPrefix) {
 			_ = os.RemoveAll(jobRoot)
 		}
 	}
@@ -1419,6 +1705,7 @@ func handleNixRPC(ctx context.Context, mc *MCPCallContext, method string, raw js
 				return nil, err
 			}
 		}
+		in.AllowPublic = ModeFor(mc.Capabilities, "app.http:outbound") == agentdef.Allowed
 		if method == "nix_start" {
 			return mc.Nix.Start(ctx, mc.AppID, mc.Slug, mc.Mounts, in)
 		}

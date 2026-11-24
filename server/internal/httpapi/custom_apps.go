@@ -28,7 +28,39 @@ import (
 )
 
 func (s *Server) customApps() *customapps.Service {
-	return &customapps.Service{Pool: s.Pool, Secrets: s.userSecrets(), Media: s.mediaDownloads(), HLSRelay: s.hlsRelay(), Nix: s.nixRunner()}
+	s.customAppSvcOnce.Do(func() {
+		svc := &customapps.Service{
+			Pool:     s.Pool,
+			Secrets:  s.userSecrets(),
+			Media:    s.mediaDownloads(),
+			HLSRelay: s.hlsRelay(),
+			Nix:      s.nixRunner(),
+		}
+		if vm := s.customAppVMBackend(); vm != nil {
+			svc.SetVM(vm)
+		}
+		s.customAppSvc = svc
+	})
+	return s.customAppSvc
+}
+
+func (s *Server) customAppVMBackend() customapps.VMBackend {
+	s.customAppVMMu.RLock()
+	defer s.customAppVMMu.RUnlock()
+	return s.customAppVM
+}
+
+// SetCustomAppVM attaches or clears the Custom App microVM backend on the
+// server's Custom Apps service and Nix runner.
+func (s *Server) SetCustomAppVM(vm customapps.VMBackend) {
+	s.customAppVMMu.Lock()
+	s.customAppVM = vm
+	s.customAppVMMu.Unlock()
+	if s.customAppSvc != nil {
+		s.customAppSvc.SetVM(vm)
+	} else if s.customAppNix != nil {
+		s.customAppNix.SetVM(vm)
+	}
 }
 
 // CustomApps returns the custom apps service wired with this server's media
@@ -73,6 +105,9 @@ func (s *Server) nixRunner() *customapps.Nix {
 			ScratchDir:     s.CustomAppNixScratchDir,
 			Resolve:        s.CustomAppNixResolve,
 			DisableSandbox: s.CustomAppNixDisableSandbox,
+		}
+		if vm := s.customAppVMBackend(); vm != nil {
+			s.customAppNix.SetVM(vm)
 		}
 	})
 	return s.customAppNix
@@ -943,4 +978,66 @@ func (s *Server) dispatchCustomAppAPI(ctx context.Context, u store.User, method,
 		return nil, apperr.Conflict("%s", msg)
 	}
 	return parsed, nil
+}
+
+func writeCustomAppVMError(w http.ResponseWriter, err error) {
+	status := http.StatusInternalServerError
+	code := "internal"
+	var ce *apperr.ConflictError
+	switch {
+	case errors.Is(err, apperr.ErrNotFound):
+		status = http.StatusNotFound
+		code = "not_found"
+	case errors.As(err, &ce):
+		status = http.StatusConflict
+		code = "conflict"
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	_ = json.NewEncoder(w).Encode(map[string]string{
+		"code":    code,
+		"message": err.Error(),
+	})
+}
+
+func (s *Server) handleGetCustomAppVM(w http.ResponseWriter, r *http.Request) {
+	u, _, ws := me(r.Context())
+	st, err := s.customApps().AppVMStatus(r.Context(), ws, u.ID, r.PathValue("slug"))
+	if err != nil {
+		writeCustomAppVMError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(st)
+}
+
+func (s *Server) handleStopCustomAppVM(w http.ResponseWriter, r *http.Request) {
+	u, _, ws := me(r.Context())
+	st, err := s.customApps().StopAppVM(r.Context(), ws, u.ID, r.PathValue("slug"))
+	if err != nil {
+		writeCustomAppVMError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(st)
+}
+
+func (s *Server) handleRestartCustomAppVM(w http.ResponseWriter, r *http.Request) {
+	u, _, ws := me(r.Context())
+	st, err := s.customApps().RestartAppVM(r.Context(), ws, u.ID, r.PathValue("slug"))
+	if err != nil {
+		writeCustomAppVMError(w, err)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(st)
+}
+
+func (s *Server) handleCustomAppWindowClosed(w http.ResponseWriter, r *http.Request) {
+	u, _, ws := me(r.Context())
+	if err := s.customApps().NotifyAppWindowClosed(r.Context(), ws, u.ID, r.PathValue("slug")); err != nil {
+		writeCustomAppVMError(w, err)
+		return
+	}
+	w.WriteHeader(http.StatusNoContent)
 }

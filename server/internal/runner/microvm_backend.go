@@ -103,10 +103,19 @@ type MicroVM struct {
 	UsageTimeout   time.Duration
 
 	// Optional disk template sizes (defaults to 64G/16G/32G sparse ext4 images).
-	TestWorkspaceBytes int64
-	TestHomeBytes      int64
-	TestDockerBytes    int64
-	TestNixBytes       int64
+	TestWorkspaceBytes     int64
+	TestHomeBytes          int64
+	TestDockerBytes        int64
+	TestNixBytes           int64
+	TestCustomAppWorkBytes int64
+
+	// Custom App microVM tuning (defaults: 2 vCPU, 1024 MiB RAM, max 4 VMs,
+	// 45s idle pause, 10m idle stop).
+	CustomAppCPUs           int
+	CustomAppMemoryMB       int64
+	CustomAppMaxVMs         int
+	CustomAppIdlePauseDelay time.Duration
+	CustomAppIdleStopTTL    time.Duration
 
 	tmplMu      sync.Mutex
 	runsMu      sync.Mutex
@@ -116,6 +125,8 @@ type MicroVM struct {
 	playgrounds map[uuid.UUID]*activePlaygroundVM
 	devMu       sync.Mutex
 	devVMs      map[uuid.UUID]*devWorkspaceVM
+	customAppMu sync.Mutex
+	customApps  map[uuid.UUID]*customAppVM
 	semOnce     sync.Once
 	listSem     chan struct{}
 	usageSem    chan struct{}
@@ -1198,6 +1209,7 @@ func (b *MicroVM) Cleanup(ctx context.Context) error {
 	}
 	b.cleanupPlaygrounds(ctx)
 	b.cleanupDevWorkspaces(ctx)
+	b.cleanupCustomApps(ctx)
 	b.stopSpares()
 	if b.MacOS != nil {
 		b.MacOS.StopAll()

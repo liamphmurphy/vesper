@@ -321,3 +321,107 @@ func TestEgressRoutesMacHostToItsHandler(t *testing.T) {
 		t.Fatalf("with handler: %d %q", code, body)
 	}
 }
+
+func TestEgressAllowPublicGate(t *testing.T) {
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_, _ = io.WriteString(w, "public-ok")
+	}))
+	defer up.Close()
+
+	allow := false
+	resolved := 0
+	eg := NewEgress(EgressConfig{
+		AllowPublic: func() bool { return allow },
+		CacheHandler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			_, _ = io.WriteString(w, "cache-ok")
+		}),
+		Resolver: func(context.Context, string) ([]net.IP, error) {
+			resolved++
+			return []net.IP{net.IPv4(93, 184, 216, 34)}, nil
+		},
+		TestUpstreams: map[string]string{
+			"public.example": strings.TrimPrefix(up.URL, "http://"),
+		},
+	})
+	defer eg.Close()
+
+	// 1. Public DNS refused while AllowPublic is false, and resolver is not called.
+	resp, err := eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, "public.example", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr, ips := parseDNSResponse(t, resp); hdr.RCode != dnsmessage.RCodeRefused || len(ips) != 0 {
+		t.Fatalf("public DNS while denied = rcode %v ips %v, want REFUSED", hdr.RCode, ips)
+	}
+	if resolved != 0 {
+		t.Fatalf("resolver called %d times while public egress denied", resolved)
+	}
+
+	// 2. Internal host (cache.vesper.internal) remains reachable while public egress is denied.
+	cacheResp, err := eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, InternalCacheHost, dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr, ips := parseDNSResponse(t, cacheResp); hdr.RCode != dnsmessage.RCodeSuccess || len(ips) != 1 || ips[0] != internalCacheIP {
+		t.Fatalf("cache DNS while public denied = %v %v", hdr.RCode, ips)
+	}
+	cacheClient := &http.Client{Transport: &http.Transport{
+		DialContext: func(context.Context, string, string) (net.Conn, error) {
+			c, s := net.Pipe()
+			go eg.ServeTCPConn(s)
+			_ = guestproto.WriteEgressTCPHeader(c, net.IP(internalCacheIP[:]), 80)
+			return c, nil
+		},
+	}}
+	res, err := cacheClient.Get("http://" + InternalCacheHost + "/nix-cache-info")
+	if err != nil {
+		t.Fatalf("cache HTTP while public denied: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != 200 || string(body) != "cache-ok" {
+		t.Fatalf("cache response = %d %q", res.StatusCode, body)
+	}
+
+	// 3. Flip AllowPublic true: DNS resolves and TCP dial succeeds.
+	allow = true
+	resp, err = eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, "public.example", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	hdr, ips := parseDNSResponse(t, resp)
+	if hdr.RCode != dnsmessage.RCodeSuccess || len(ips) != 1 {
+		t.Fatalf("public DNS while allowed = %v %v", hdr.RCode, ips)
+	}
+	synthIP := net.IPv4(ips[0][0], ips[0][1], ips[0][2], ips[0][3])
+
+	dialPublic := func() (string, error) {
+		hc := &http.Client{Transport: &http.Transport{
+			DisableKeepAlives: true,
+			DialContext: func(context.Context, string, string) (net.Conn, error) {
+				c, s := net.Pipe()
+				go eg.ServeTCPConn(s)
+				if err := guestproto.WriteEgressTCPHeader(c, synthIP, 80); err != nil {
+					return nil, err
+				}
+				return c, nil
+			},
+		}}
+		r, err := hc.Get("http://public.example/")
+		if err != nil {
+			return "", err
+		}
+		defer r.Body.Close()
+		b, err := io.ReadAll(r.Body)
+		return string(b), err
+	}
+	if got, err := dialPublic(); err != nil || got != "public-ok" {
+		t.Fatalf("public HTTP while allowed = %q, %v", got, err)
+	}
+
+	// 4. Revoke AllowPublic: previously resolved synthetic IP is immediately blocked.
+	allow = false
+	if got, err := dialPublic(); err == nil {
+		t.Fatalf("expected public HTTP after revocation to fail, got %q", got)
+	}
+}

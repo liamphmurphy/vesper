@@ -31,6 +31,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/config"
+	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/db"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
@@ -317,7 +318,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		mediaSvc := srv.MediaService()
 		go func() {
 			defer runnerStarting.Store(false)
-			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr, speechBroker, mediaSvc, func() {
+			runnerDone <- runAppMicroVMRunner(ctx, log, dataDir, exeDir, baseURL, designWorkerURL, designToken, pool, blobs, box, blobCfg.ArtifactBucket, appCfg, apiHandler, imgMgr, speechBroker, mediaSvc, srv.SetCustomAppVM, func() {
 				runnerStarting.Store(false)
 			})
 		}()
@@ -414,6 +415,7 @@ func runAppMicroVMRunner(
 	imgMgr *ImageManager,
 	speechBroker *speech.Broker,
 	mediaSvc *media.Service,
+	setCustomAppVM func(customapps.VMBackend),
 	onHeartbeat func(),
 ) error {
 	kernel := ResolveKernelPath(cfg.Runner.KernelPath, dataDir, exeDir)
@@ -472,7 +474,15 @@ func runAppMicroVMRunner(
 		SaveCodexAuth:    saveCodex,
 		Log:              log,
 	}
-	defer func() { _ = m.Close() }()
+	defer func() {
+		if setCustomAppVM != nil {
+			setCustomAppVM(nil)
+		}
+		_ = m.Close()
+	}()
+	if setCustomAppVM != nil {
+		setCustomAppVM(m)
+	}
 
 	host, _ := os.Hostname()
 	arts := &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: artifactBucket}

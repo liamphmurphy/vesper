@@ -328,6 +328,12 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
         permissionsPopover?.performClose(nil)
         permissionsPopover = nil
         app.system.store.stopObserving(detailRequest.key)
+        if let client = app.aux.client() {
+            let slug = self.slug
+            Task {
+                _ = try? await client.send(CustomAppStandaloneLogic.notifyWindowClosedRequest(slug: slug))
+            }
+        }
         toastStore.teardown()
         content.teardown()
         onClose()

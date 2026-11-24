@@ -110,6 +110,10 @@ type Server struct {
 	CustomAppNixDisableSandbox bool
 	customAppNix               *customapps.Nix
 	customAppNixOnce           sync.Once
+	customAppSvc               *customapps.Service
+	customAppSvcOnce           sync.Once
+	customAppVMMu              sync.RWMutex
+	customAppVM                customapps.VMBackend
 	// GitHubAPIURL is GitHub's REST API for shipping approved pushes;
 	// api.github.com when empty (tests point elsewhere).
 	GitHubAPIURL string
@@ -185,6 +189,10 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	s.mountAPIRoutes(mux)
 	mux.HandleFunc("GET /api/v1/custom-apps/{slug}/ws", s.handleCustomAppWS)
+	mux.HandleFunc("GET /api/v1/custom-apps/{slug}/vm", s.handleGetCustomAppVM)
+	mux.HandleFunc("POST /api/v1/custom-apps/{slug}/vm/stop", s.handleStopCustomAppVM)
+	mux.HandleFunc("POST /api/v1/custom-apps/{slug}/vm/restart", s.handleRestartCustomAppVM)
+	mux.HandleFunc("POST /api/v1/custom-apps/{slug}/vm/window-closed", s.handleCustomAppWindowClosed)
 	if s.Events != nil {
 		mux.Handle("GET /events", s.Events)
 	}

@@ -194,6 +194,78 @@ public enum CustomAppStandaloneLogic {
         )
     }
 
+    public struct VMStatus: Decodable, Sendable, Equatable {
+        public let available: Bool
+        public let state: String
+        public let activeCalls: Int
+        public let mountCount: Int
+        public let allowPublic: Bool
+
+        enum CodingKeys: String, CodingKey {
+            case available
+            case state
+            case activeCalls = "active_calls"
+            case mountCount = "mount_count"
+            case allowPublic = "allow_public"
+        }
+
+        public init(available: Bool, state: String, activeCalls: Int = 0, mountCount: Int = 0, allowPublic: Bool = false) {
+            self.available = available
+            self.state = state
+            self.activeCalls = activeCalls
+            self.mountCount = mountCount
+            self.allowPublic = allowPublic
+        }
+
+        public var stateLabel: String {
+            switch state {
+            case "running": return "Running"
+            case "paused": return "Paused"
+            default: return "Stopped"
+            }
+        }
+    }
+
+    private static func encodedSlug(_ slug: String) -> String {
+        slug.addingPercentEncoding(withAllowedCharacters: .urlPathAllowed) ?? slug
+    }
+
+    public static func getVMStatusRequest(slug: String) -> APIRequest<VMStatus> {
+        APIRequest(
+            method: "GET",
+            template: "/custom-apps/{slug}/vm",
+            path: "/api/v1/custom-apps/\(encodedSlug(slug))/vm",
+            decode: .json
+        )
+    }
+
+    public static func stopVMRequest(slug: String) -> APIRequest<VMStatus> {
+        APIRequest(
+            method: "POST",
+            template: "/custom-apps/{slug}/vm/stop",
+            path: "/api/v1/custom-apps/\(encodedSlug(slug))/vm/stop",
+            decode: .json
+        )
+    }
+
+    public static func restartVMRequest(slug: String) -> APIRequest<VMStatus> {
+        APIRequest(
+            method: "POST",
+            template: "/custom-apps/{slug}/vm/restart",
+            path: "/api/v1/custom-apps/\(encodedSlug(slug))/vm/restart",
+            decode: .json
+        )
+    }
+
+    public static func notifyWindowClosedRequest(slug: String) -> APIRequest<APIEmpty> {
+        APIRequest(
+            method: "POST",
+            template: "/custom-apps/{slug}/vm/window-closed",
+            path: "/api/v1/custom-apps/\(encodedSlug(slug))/vm/window-closed",
+            decode: .empty
+        )
+    }
+
     public static func updatedCapabilities(
         _ current: API.CustomAppCapabilities,
         key: String,

@@ -284,7 +284,7 @@ func TestAppMicroVMRunnerClearsStartingOnEarlyExit(t *testing.T) {
 			context.Background(),
 			slog.New(slog.NewTextHandler(io.Discard, nil)),
 			dataDir, exeDir, "http://127.0.0.1:8080", "", "", nil, nil, nil, "artifacts",
-			config.Config{}, http.NotFoundHandler(), NewImageManager(), nil, nil,
+			config.Config{}, http.NotFoundHandler(), NewImageManager(), nil, nil, nil,
 			func() { runnerStarting.Store(false) },
 		)
 	}()

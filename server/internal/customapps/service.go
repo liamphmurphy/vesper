@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -30,6 +31,34 @@ type Service struct {
 	HLSRelay *HLSRelay
 	// Nix runs approved Nix packages for apps with nix:<pkg>; nil disables it.
 	Nix *Nix
+
+	vmMu sync.RWMutex
+	vm   VMBackend
+}
+
+// SetVM attaches or clears the Custom App microVM backend on this service and
+// its Nix runner. Safe to call after the server starts (e.g. once the runner
+// finishes booting its microVM backend).
+func (s *Service) SetVM(vm VMBackend) {
+	if s == nil {
+		return
+	}
+	s.vmMu.Lock()
+	s.vm = vm
+	s.vmMu.Unlock()
+	if s.Nix != nil {
+		s.Nix.SetVM(vm)
+	}
+}
+
+// VM returns the currently attached Custom App microVM backend, if any.
+func (s *Service) VM() VMBackend {
+	if s == nil {
+		return nil
+	}
+	s.vmMu.RLock()
+	defer s.vmMu.RUnlock()
+	return s.vm
 }
 
 type AppSummary struct {
@@ -710,7 +739,11 @@ func (s *Service) SetCapabilities(ctx context.Context, ws, userID uuid.UUID, slu
 	if err != nil {
 		return nil, err
 	}
-	return decodeCapabilities(row.Capabilities), nil
+	capsOut := decodeCapabilities(row.Capabilities)
+	if vm := s.VM(); vm != nil {
+		_ = vm.SyncAppVMPolicy(ctx, vmSpecForApp(row.ID, row.Slug, decodeMounts(row.Mounts), capsOut))
+	}
+	return capsOut, nil
 }
 
 func (s *Service) SetMounts(ctx context.Context, ws, userID uuid.UUID, slug string, mounts Mounts) (Mounts, error) {
@@ -734,15 +767,21 @@ func (s *Service) SetMounts(ctx context.Context, ws, userID uuid.UUID, slug stri
 	if err != nil {
 		return nil, err
 	}
-	return decodeMounts(row.Mounts), nil
+	mountsOut := decodeMounts(row.Mounts)
+	if vm := s.VM(); vm != nil {
+		_ = vm.SyncAppVMPolicy(ctx, vmSpecForApp(row.ID, row.Slug, mountsOut, decodeCapabilities(row.Capabilities)))
+	}
+	return mountsOut, nil
 }
 
 func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string) error {
+	var deletedAppID uuid.UUID
 	var media []store.ListCustomAppMediaBlobKeysRow
 	var nixJobs []store.ListCustomAppNixJobWorkDirsRow
 	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		if cur, err := q.GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{WorkspaceID: ws, UserID: userID, Slug: slug}); err == nil {
+			deletedAppID = cur.ID
 			// The rows cascade with the app; their files are removed after commit.
 			if media, err = q.ListCustomAppMediaBlobKeys(ctx, cur.ID); err != nil {
 				return err
@@ -758,6 +797,7 @@ func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string)
 		if err != nil {
 			return err
 		}
+		deletedAppID = app.ID
 		if err := q.DeleteCustomAppDockChats(ctx, store.DeleteCustomAppDockChatsParams{
 			WorkspaceID: ws,
 			UserID:      userID,
@@ -779,6 +819,87 @@ func (s *Service) Delete(ctx context.Context, ws, userID uuid.UUID, slug string)
 	// removing downloads and scratch dirs is best effort rather than failing the delete.
 	s.Media.forget(ctx, media)
 	s.Nix.forget(ctx, nixJobs)
+	if vm := s.VM(); vm != nil && deletedAppID != uuid.Nil {
+		_ = vm.DeleteAppVM(ctx, deletedAppID)
+	}
+	return nil
+}
+
+// AppVMStatus returns the microVM status for a custom app.
+func (s *Service) AppVMStatus(ctx context.Context, ws, userID uuid.UUID, slug string) (VMStatus, error) {
+	row, err := store.New(s.Pool).GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{
+		WorkspaceID: ws, UserID: userID, Slug: slug,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return VMStatus{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return VMStatus{}, err
+	}
+	vm := s.VM()
+	if vm == nil {
+		return VMStatus{Available: false, State: VMStateStopped}, nil
+	}
+	return vm.AppVMStatus(row.ID), nil
+}
+
+// StopAppVM stops a custom app's microVM if running or paused.
+func (s *Service) StopAppVM(ctx context.Context, ws, userID uuid.UUID, slug string) (VMStatus, error) {
+	row, err := store.New(s.Pool).GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{
+		WorkspaceID: ws, UserID: userID, Slug: slug,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return VMStatus{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return VMStatus{}, err
+	}
+	vm := s.VM()
+	if vm == nil {
+		return VMStatus{Available: false, State: VMStateStopped}, nil
+	}
+	if err := vm.StopAppVM(ctx, row.ID); err != nil {
+		return VMStatus{}, err
+	}
+	return vm.AppVMStatus(row.ID), nil
+}
+
+// RestartAppVM stops any existing microVM for the custom app and boots a fresh one.
+func (s *Service) RestartAppVM(ctx context.Context, ws, userID uuid.UUID, slug string) (VMStatus, error) {
+	row, err := store.New(s.Pool).GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{
+		WorkspaceID: ws, UserID: userID, Slug: slug,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return VMStatus{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return VMStatus{}, err
+	}
+	vm := s.VM()
+	if vm == nil {
+		return VMStatus{}, apperr.Conflict("custom app microVM backend is unavailable")
+	}
+	spec := vmSpecForApp(row.ID, row.Slug, decodeMounts(row.Mounts), decodeCapabilities(row.Capabilities))
+	if err := vm.RestartAppVM(ctx, spec); err != nil {
+		return VMStatus{}, err
+	}
+	return vm.AppVMStatus(row.ID), nil
+}
+
+// NotifyAppWindowClosed hints to the VM backend that the user closed the app's window.
+func (s *Service) NotifyAppWindowClosed(ctx context.Context, ws, userID uuid.UUID, slug string) error {
+	row, err := store.New(s.Pool).GetCustomAppBySlug(ctx, store.GetCustomAppBySlugParams{
+		WorkspaceID: ws, UserID: userID, Slug: slug,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return apperr.ErrNotFound
+	}
+	if err != nil {
+		return err
+	}
+	if vm := s.VM(); vm != nil {
+		vm.NotifyAppWindowClosed(row.ID)
+	}
 	return nil
 }
 
@@ -906,6 +1027,9 @@ func (s *Service) CallMCPTool(ctx context.Context, app MCPServerApp, tool string
 	}
 	if opts.Nix == nil {
 		opts.Nix = s.Nix
+	}
+	if opts.VM == nil {
+		opts.VM = s.VM()
 	}
 	if opts.SQLQuery == nil {
 		opts.SQLQuery = func(qctx context.Context, query string, params []any) (SQLResult, error) {

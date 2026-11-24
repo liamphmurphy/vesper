@@ -11,9 +11,14 @@ struct CustomAppPermissionsPopoverView: View {
 
     @State private var updatingKey: String?
     @State private var errorMessage: String?
+    @State private var vmBusy = false
 
     private var detailRequest: APIRequest<API.CustomAppDetail> {
         API.getCustomApp(slug: slug)
+    }
+
+    private var vmStatusRequest: APIRequest<CustomAppStandaloneLogic.VMStatus> {
+        CustomAppStandaloneLogic.getVMStatusRequest(slug: slug)
     }
 
     var body: some View {
@@ -68,10 +73,17 @@ struct CustomAppPermissionsPopoverView: View {
                         if !snapshot.mounts.isEmpty {
                             mountsSection(mounts: snapshot.mounts, p: p)
                         }
+
+                        if let vm = store.entry(vmStatusRequest).data, vm.available {
+                            vmSection(vm: vm, p: p)
+                        }
                     }
                     .padding(14)
                 }
                 .frame(maxHeight: 420)
+                .task(id: slug) {
+                    _ = await store.refetch(vmStatusRequest)
+                }
             } else if let error = entry.error {
                 VStack(alignment: .leading, spacing: 8) {
                     Text("Couldn\u{2019}t load permissions")
@@ -285,6 +297,83 @@ struct CustomAppPermissionsPopoverView: View {
                     .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
                     .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
                 }
+            }
+        }
+    }
+
+    private func vmSection(vm: CustomAppStandaloneLogic.VMStatus, p: NativePalette) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("SANDBOX VM")
+                .font(.system(size: 10, weight: .semibold))
+                .tracking(0.5)
+                .foregroundStyle(p.tertiaryText)
+
+            HStack(spacing: 10) {
+                Circle()
+                    .fill(vmStateColor(vm.state, p: p))
+                    .frame(width: 7, height: 7)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(vm.stateLabel)
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(p.text)
+                    Text(vmSummary(vm))
+                        .font(.system(size: 11))
+                        .foregroundStyle(p.secondaryText)
+                }
+                Spacer(minLength: 4)
+                if vm.state != "stopped" {
+                    Button("Stop") {
+                        performVMAction(CustomAppStandaloneLogic.stopVMRequest(slug: slug))
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                    .disabled(vmBusy)
+                }
+                Button("Restart") {
+                    performVMAction(CustomAppStandaloneLogic.restartVMRequest(slug: slug))
+                }
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+                .disabled(vmBusy)
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+        }
+    }
+
+    private func vmStateColor(_ state: String, p: NativePalette) -> Color {
+        switch state {
+        case "running": return Color.green
+        case "paused": return Color.orange
+        default: return p.tertiaryText
+        }
+    }
+
+    private func vmSummary(_ vm: CustomAppStandaloneLogic.VMStatus) -> String {
+        var parts: [String] = []
+        if vm.activeCalls > 0 {
+            parts.append("\(vm.activeCalls) active")
+        }
+        if vm.mountCount > 0 {
+            parts.append("\(vm.mountCount) \(vm.mountCount == 1 ? "mount" : "mounts")")
+        }
+        parts.append(vm.allowPublic ? "outbound allowed" : "offline")
+        return parts.joined(separator: " \u{00B7} ")
+    }
+
+    private func performVMAction(_ request: APIRequest<CustomAppStandaloneLogic.VMStatus>) {
+        vmBusy = true
+        errorMessage = nil
+        let statusReq = vmStatusRequest
+        Task {
+            defer { vmBusy = false }
+            do {
+                _ = try await store.mutate(request, invalidating: QueryInvalidation(resources: ["custom-apps"]))
+                _ = await store.refetch(statusReq)
+            } catch {
+                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
             }
         }
     }
