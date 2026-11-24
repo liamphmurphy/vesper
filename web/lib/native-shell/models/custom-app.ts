@@ -15,10 +15,24 @@ export function buildCustomAppNav(i: { title?: string; items: readonly { id: str
   };
 }
 
-/** The header's Reload and Permissions buttons. */
-export function buildCustomAppActions(i: { reload: () => void; permissions: () => void }): NativeAction[] {
-  return [
+/** The header's Reload, Standalone Window, and Permissions buttons. */
+export function buildCustomAppActions(i: {
+  reload: () => void;
+  permissions: () => void;
+  openStandalone?: () => void;
+}): NativeAction[] {
+  const actions: NativeAction[] = [
     { id: "app.reload", label: "Reload app", icon: "refresh", kind: "button", run: i.reload },
-    { id: "app.permissions", label: "Permissions", icon: "shield", kind: "button", showsLabel: true, run: i.permissions },
   ];
+  if (i.openStandalone) {
+    actions.push({
+      id: "app.standalone",
+      label: "Open in Standalone Window",
+      icon: "window",
+      kind: "button",
+      run: i.openStandalone,
+    });
+  }
+  actions.push({ id: "app.permissions", label: "Permissions", icon: "shield", kind: "button", showsLabel: true, run: i.permissions });
+  return actions;
 }

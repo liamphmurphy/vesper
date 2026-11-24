@@ -5,6 +5,7 @@ import { findNavItem, routeNavCommand } from "./nav-model.ts";
 import { buildShellModel, protocolArea } from "./shell-model.ts";
 import { stripVesperSuffix } from "./title.ts";
 import { createNavigatorPublisher } from "./publisher.ts";
+import { buildCustomAppActions } from "./models/custom-app.ts";
 import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "./models/custom-app-inspector.ts";
 
 const NOW = Date.parse("2026-01-02T12:00:00Z");
@@ -358,4 +359,22 @@ test("buildCustomAppCapabilities deduplicates requested/granted secrets, keeps u
     ],
   );
   assert.equal(mountsSection?.items[1]?.placeholder, "Firefox profile (/path or ~/...)");
+});
+
+test("buildCustomAppActions includes Open in Standalone Window when callback is provided", () => {
+  const withoutStandalone = buildCustomAppActions({ reload: () => {}, permissions: () => {} });
+  assert.deepEqual(withoutStandalone.map((a) => a.id), ["app.reload", "app.permissions"]);
+
+  let opened = false;
+  const withStandalone = buildCustomAppActions({
+    reload: () => {},
+    permissions: () => {},
+    openStandalone: () => {
+      opened = true;
+    },
+  });
+  assert.deepEqual(withStandalone.map((a) => a.id), ["app.reload", "app.standalone", "app.permissions"]);
+  assert.equal(withStandalone[1].icon, "window");
+  withStandalone[1].run();
+  assert.equal(opened, true);
 });

@@ -91,6 +91,7 @@ final class AppModel {
             controller.applyAppearanceCommand(cmd)
         }
         aux.commandPalette.sendAppearance(cmd)
+        aux.broadcastAppearanceToCustomAppWindows(cmd)
     }
 
     @discardableResult
@@ -131,6 +132,7 @@ final class AppModel {
         Task {
             await installCookieIfNeeded(new)
             aux.commandPalette.connect(new)
+            aux.connectCustomAppWindows(new)
             for window in windows { window.connect(new) }
             if windows.isEmpty { restoreOrOpenFirstWindow() }
         }

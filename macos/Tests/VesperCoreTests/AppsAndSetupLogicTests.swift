@@ -79,6 +79,7 @@ final class AppsAndSetupLogicTests: XCTestCase {
         XCTAssertEqual(nav.id, AppsHomeLogic.navId)
         XCTAssertEqual(nav.sections.map(\.id), ["your-apps", "tools", "starters"])
         XCTAssertEqual(nav.sections[0].items.map(\.id), ["app:budget"])
+        XCTAssertEqual(nav.sections[0].items[0].contextMenu?.first?.id, AppsHomeLogic.openStandaloneMenu)
         XCTAssertEqual(nav.sections[1].items.last?.href, "/dev")
 
         let filtered = AppsHomeLogic.navModel(apps: [app], search: "http", devWorkspaceEnabled: false)
@@ -99,6 +100,10 @@ final class AppsAndSetupLogicTests: XCTestCase {
         XCTAssertEqual(
             AppsHomeLogic.navAction(for: .navActivate(navigatorId: AppsHomeLogic.navId, itemId: "starter:ledger")),
             .newApp(.ledger)
+        )
+        XCTAssertEqual(
+            AppsHomeLogic.navAction(for: .navAction(navigatorId: AppsHomeLogic.navId, actionId: AppsHomeLogic.openStandaloneMenu, itemId: "app:budget")),
+            .openStandalone(slug: "budget")
         )
         XCTAssertEqual(
             AppsHomeLogic.navAction(for: .navAction(navigatorId: AppsHomeLogic.navId, actionId: AppsHomeLogic.deleteAppMenu, itemId: "app:budget")),

@@ -11,7 +11,7 @@ import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "@/lib/nat
 import { buildCustomAppCapabilities, buildCustomAppInspectorSections } from "@/lib/native-shell/models/custom-app-inspector";
 import { EditorLayout, type DockTab, type NativeEditorHeader } from "@/components/shell/editor-layout";
 import { isTyping } from "@/components/shell/shortcuts";
-import { post as postToShell } from "@/lib/native-shell/bridge";
+import { isNativeShell, post as postToShell } from "@/lib/native-shell/bridge";
 import { Content, TopBar } from "@/components/shell/topbar";
 import { CustomAppPlayerStage, type StageVideo } from "./custom-app-player";
 import { Button, ButtonLink, IconButton } from "@/components/ui/button";
@@ -127,7 +127,16 @@ export function CustomAppScreen({ slug }: { slug: string }) {
             title="Custom app not found"
             actions={
               standalone ? (
-                <Button variant="primary" onClick={() => postToShell({ v: 1, type: "openInMain", path: "/apps" })}>
+                <Button
+                  variant="primary"
+                  onClick={() => {
+                    if (isNativeShell()) {
+                      postToShell({ v: 1, type: "openInMain", path: "/apps" });
+                    } else {
+                      window.location.assign("/apps");
+                    }
+                  }}
+                >
                   Open Vesper Custom Apps
                 </Button>
               ) : (
@@ -1006,7 +1015,11 @@ function useCustomAppRuntime({
 function StandaloneCustomAppScreen({ app }: { app: CustomAppDetail }) {
   const openInWorkbench = useCallback(() => {
     const target = `/apps/${app.slug}`;
-    postToShell({ v: 1, type: "openInMain", path: target });
+    if (isNativeShell()) {
+      postToShell({ v: 1, type: "openInMain", path: target });
+    } else {
+      window.location.assign(target);
+    }
   }, [app.slug]);
   const askDockRef = useRef<(prompt: string) => void>(openInWorkbench);
   useEffect(() => {
@@ -1104,7 +1117,17 @@ function CustomAppWorkbench({ app }: { app: CustomAppDetail }) {
   const header: NativeEditorHeader = {
     title: app.name,
     subtitle: `v${app.current_seq}`,
-    actions: buildCustomAppActions({ reload, permissions: () => openDockTab("permissions") }),
+    actions: buildCustomAppActions({
+      reload,
+      permissions: () => openDockTab("permissions"),
+      openStandalone: () => {
+        if (isNativeShell()) {
+          postToShell({ v: 1, type: "openCustomAppWindow", slug: app.slug });
+        } else {
+          window.open(`/apps/${app.slug}?standalone=1`, `vesper-app-${app.slug}`, "noopener,noreferrer,width=960,height=700");
+        }
+      },
+    }),
   };
   const nativeLeft =
     navItems.length > 0

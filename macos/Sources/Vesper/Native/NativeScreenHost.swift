@@ -30,6 +30,10 @@ final class NativeScreenContext {
     @ObservationIgnored var window: () -> MainWindowController? = { nil }
     /// The server root this screen connects to (local stack or a remote Tailscale host).
     @ObservationIgnored var baseURL: () -> URL? = { nil }
+    /// Opens or focuses a Custom App in its dedicated standalone window.
+    @ObservationIgnored var openCustomAppWindow: ((String) -> Void)?
+    /// Closes a standalone Custom App window if open (e.g. after deleting the app).
+    @ObservationIgnored var closeCustomAppWindow: ((String) -> Void)?
     @ObservationIgnored private let open: (String, Bool) -> Void
 
     init(match: NativeRouteMatch, store: QueryStore, open: @escaping (_ path: String, _ newTab: Bool) -> Void) {
@@ -42,6 +46,10 @@ final class NativeScreenContext {
     func navigate(_ path: String) { open(path, false) }
 
     func openInNewTab(_ path: String) { open(path, true) }
+
+    func openStandaloneCustomApp(slug: String) { openCustomAppWindow?(slug) }
+
+    func closeStandaloneCustomApp(slug: String) { closeCustomAppWindow?(slug) }
 
     /// Shows a toast in the window; `onEvent` hears its action button, dismissal or timeout.
     func showToast(_ toast: ToastItemModel, onEvent: @escaping @MainActor (ToastEventKind) -> Void = { _ in }) {

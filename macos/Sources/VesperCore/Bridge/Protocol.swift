@@ -693,12 +693,13 @@ public enum PageMessage: Sendable, Equatable, Decodable {
     case commandPaletteOpen(request: CommandPaletteRequest?)
     case commandPaletteClose
     case quickLook(items: [QuickLookItem], index: Int?)
+    case openCustomAppWindow(slug: String)
 
     private enum Keys: String, CodingKey {
         case v, type, path, area, title, subtitle, model, active, hidden, items, requestId, scope, folder, x, y, mode, menu
         case body, confirmLabel, cancelLabel, destructive, background, newTab, tokens, textSize
         case tabId, event, payloadJson
-        case label, value, placeholder, maxLength, id, description, tone, actionLabel, durationMs, request, index
+        case label, value, placeholder, maxLength, id, description, tone, actionLabel, durationMs, request, index, slug
     }
 
     public init(from decoder: Decoder) throws {
@@ -777,6 +778,12 @@ public enum PageMessage: Sendable, Equatable, Decodable {
         case "quickLook":
             self = .quickLook(items: try c.decode([QuickLookItem].self, forKey: .items),
                               index: try c.decodeIfPresent(Int.self, forKey: .index))
+        case "openCustomAppWindow":
+            let slug = try c.decode(String.self, forKey: .slug)
+            guard AppsHomeLogic.validateSlug(slug) == nil else {
+                throw DecodingError.dataCorruptedError(forKey: .slug, in: c, debugDescription: "invalid custom app slug \(slug)")
+            }
+            self = .openCustomAppWindow(slug: slug)
         default:
             throw DecodingError.dataCorruptedError(forKey: .type, in: c, debugDescription: "unknown page message type \(type)")
         }

@@ -207,6 +207,8 @@ struct AppsHomeScreen: View {
             openNew(template: template)
         case .openPath(let path, let newTab):
             if newTab { context.openInNewTab(path) } else { context.navigate(path) }
+        case .openStandalone(let slug):
+            context.openStandaloneCustomApp(slug: slug)
         case .deleteApp(let slug):
             if let target = context.store.entry(Self.listRequest).data?.apps.first(where: { $0.slug == slug }) {
                 deleteTarget = target
@@ -250,18 +252,32 @@ struct AppsHomeScreen: View {
 
                 Spacer(minLength: 4)
 
-                Button {
-                    deleteTarget = app
-                } label: {
-                    Image(systemName: "trash")
-                        .font(.system(size: 12))
-                        .foregroundStyle(p.tertiaryText)
-                        .frame(width: 24, height: 24)
-                        .contentShape(Rectangle())
+                HStack(spacing: 2) {
+                    Button {
+                        context.openStandaloneCustomApp(slug: app.slug)
+                    } label: {
+                        Image(systemName: "macwindow.on.rectangle")
+                            .font(.system(size: 12))
+                            .foregroundStyle(p.tertiaryText)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Open \(app.name) in Standalone Window")
+
+                    Button {
+                        deleteTarget = app
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 12))
+                            .foregroundStyle(p.tertiaryText)
+                            .frame(width: 24, height: 24)
+                            .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(deletingSlug == app.slug)
+                    .help("Delete \(app.name)")
                 }
-                .buttonStyle(.plain)
-                .disabled(deletingSlug == app.slug)
-                .help("Delete \(app.name)")
             }
 
             Text(app.description.isEmpty ? "Custom workbench app" : app.description)
@@ -311,6 +327,7 @@ struct AppsHomeScreen: View {
         .overlay(RoundedRectangle(cornerRadius: 12).stroke(p.border))
         .contextMenu {
             Button("Open \(app.name)") { context.navigate(href) }
+            Button("Open in Standalone Window") { context.openStandaloneCustomApp(slug: app.slug) }
             Button("Open in new tab") { context.openInNewTab(href) }
             Divider()
             Button("Copy link") {
@@ -331,8 +348,9 @@ struct AppsHomeScreen: View {
             do {
                 _ = try await context.store.mutate(
                     API.deleteCustomApp(slug: app.slug),
-                    invalidating: QueryInvalidation(resources: ["custom_apps"])
+                    invalidating: QueryInvalidation(resources: ["custom-apps"])
                 )
+                context.closeStandaloneCustomApp(slug: app.slug)
                 _ = await context.store.refetch(Self.listRequest)
                 context.showToast(ToastItemModel(id: "apps.del.\(app.slug)", title: "Deleted \(app.name)", tone: .success))
             } catch {

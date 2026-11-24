@@ -61,6 +61,10 @@ final class CommandPaletteLogicTests: XCTestCase {
         let uuid = "01a20427-8af8-7560-ae88-62e1c37d551e"
         XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/knowledge/\(uuid)"), .knowledge(id: uuid))
         XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/wiki/docs/dev%20guide"), .wiki(path: "docs/dev guide"))
+        XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/apps/budget"), .customApp(slug: "budget"))
+        XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/apps/budget?standalone=1"), .customApp(slug: "budget"))
+        XCTAssertNil(CommandPaletteLogic.pageContext(path: "/apps/docs"))
+        XCTAssertNil(CommandPaletteLogic.pageContext(path: "/apps"))
     }
 
     func testMatchPartsSnippetPartsAndPlainExcerpt() {

@@ -89,6 +89,7 @@ public enum AppsHomeLogic {
     public static let toolPrefix = "tool:"
     public static let starterPrefix = "starter:"
     public static let openNewTabMenu = "open-new-tab"
+    public static let openStandaloneMenu = "open-standalone"
     public static let deleteAppMenu = "delete-app"
 
     public struct ToolEntry: Sendable, Equatable {
@@ -144,6 +145,7 @@ public enum AppsHomeLogic {
                 icon: resolveIcon(app.icon),
                 href: "/apps/\(app.slug)",
                 contextMenu: [
+                    MenuItem(id: openStandaloneMenu, label: "Open in Standalone Window", icon: "window"),
                     MenuItem(id: openNewTabMenu, label: "Open in New Tab", icon: "external"),
                     MenuItem(id: deleteAppMenu, label: "Delete\u{2026}", icon: "trash", destructive: true),
                 ]
@@ -202,6 +204,7 @@ public enum AppsHomeLogic {
     public enum NavActionResult: Sendable, Equatable {
         case newApp(API.NewCustomApp.Template)
         case openPath(String, newTab: Bool)
+        case openStandalone(slug: String)
         case deleteApp(slug: String)
         case search(String)
     }
@@ -210,6 +213,9 @@ public enum AppsHomeLogic {
         switch command {
         case .navAction(navId, newAppAction, _, _):
             return .newApp(.blank)
+        case .navAction(navId, openStandaloneMenu, let itemId?, _):
+            guard itemId.hasPrefix(appPrefix) else { return nil }
+            return .openStandalone(slug: String(itemId.dropFirst(appPrefix.count)))
         case .navAction(navId, openNewTabMenu, let itemId?, _):
             if itemId.hasPrefix(appPrefix) {
                 return .openPath("/apps/\(itemId.dropFirst(appPrefix.count))", newTab: true)

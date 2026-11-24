@@ -116,3 +116,11 @@ test("sidebarHidden needs a boolean", () => {
   assert.equal(isPageMessage({ v: 1, type: "sidebarHidden", hidden: "yes" }), false);
   assert.equal(isPageMessage({ v: 1, type: "sidebarHidden" }), false);
 });
+
+test("openCustomAppWindow validates non-reserved custom app slugs", () => {
+  assert.equal(isPageMessage({ v: 1, type: "openCustomAppWindow", slug: "budget" }), true);
+  assert.equal(isPageMessage({ v: 1, type: "openCustomAppWindow", slug: "finance-2026" }), true);
+  for (const slug of ["", "docs", "slides", "designs", "new", "../etc", "Bad_Slug", 42]) {
+    assert.equal(isPageMessage({ v: 1, type: "openCustomAppWindow", slug }), false, String(slug));
+  }
+});

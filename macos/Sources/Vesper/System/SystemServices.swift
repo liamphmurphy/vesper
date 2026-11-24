@@ -69,6 +69,7 @@ final class SystemServices {
 
         notifications.onOpen = { [weak self] alert in self?.openHref(alert.href) }
         notifications.onOpenHref = { [weak self] href in self?.openHref(href) }
+        notifications.onOpenCustomApp = { [weak self] slug in self?.app?.aux.focusCustomAppOrOpenInMain(slug: slug) }
         notifications.onShowLogs = { [weak self] in self?.showLogs() }
         notifications.onDecide = { [weak self] alert, decision in Task { await self?.decide(alert, decision) } }
         notifications.onReply = { [weak self] alert, text in Task { await self?.reply(alert, text) } }
@@ -284,6 +285,17 @@ final class SystemServices {
     /// Settings › Test notification.
     func sendTestNotification() {
         notifications.sendTest(silent: !settings.notifications.sound)
+    }
+
+    /// Custom App OS bridge notification (`os.notifications`); returns false in an unbundled debug binary.
+    func sendCustomAppNotification(slug: String, title: String, subtitle: String?, body: String, silent: Bool) -> Bool {
+        notifications.customAppNotice(
+            slug: slug,
+            title: title,
+            subtitle: subtitle,
+            body: body,
+            silent: silent || !settings.notifications.sound
+        )
     }
 
     private func decide(_ alert: DesktopAlert, _ decision: NotificationLogic.Decision) async {

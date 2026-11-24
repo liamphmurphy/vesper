@@ -187,6 +187,9 @@ final class BridgeProtocolTests: XCTestCase {
             QuickLookItem(url: "/api/v1/library/0b5c9a6e-0000-4000-8000-000000000001/content",
                           title: "Architecture diagram", filename: "architecture.png", contentType: "image/png")
         ], index: 0)))
+        XCTAssertTrue(all.contains(.openCustomAppWindow(slug: "budget")))
+        XCTAssertThrowsError(try PageMessage.decode(fromJSONObject: ["v": 1, "type": "openCustomAppWindow", "slug": "docs"]))
+        XCTAssertThrowsError(try PageMessage.decode(fromJSONObject: ["v": 1, "type": "openCustomAppWindow", "slug": "bad slug"]))
 
         let replyValue = try NativeCommand.reply(requestId: "r6", ok: true, value: .some("Overview v2")).jsonString()
         XCTAssertTrue(replyValue.contains("\"value\":\"Overview v2\""))

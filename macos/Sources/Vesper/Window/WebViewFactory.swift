@@ -30,7 +30,12 @@ enum WebViewFactory {
     document.documentElement.classList.add("native-mac", "native-inspector-panel", "native-inspector-glass");
     """
 
-    static func makeWebView(kind: WebViewKind, bridge: WKScriptMessageHandler?, services: WebPageServices? = nil) -> WKWebView {
+    static func makeWebView(
+        kind: WebViewKind,
+        bridge: WKScriptMessageHandler?,
+        services: WebPageServices? = nil,
+        osBridge: CustomAppOSBridge? = nil
+    ) -> WKWebView {
         let config = WKWebViewConfiguration()
         config.applicationNameForUserAgent = userAgentSuffix
         // element.requestFullscreen (slides/designs present, video, dev terminal).
@@ -53,6 +58,7 @@ enum WebViewFactory {
                 disable60FPSCap(config.preferences)
             }
             if let services { WebPageServices.install(on: config.userContentController, services: services) }
+            if kind == .vesper, let osBridge { CustomAppOSBridge.install(on: config.userContentController, bridge: osBridge) }
         case .playground:
             config.websiteDataStore = playgroundStore
         }
