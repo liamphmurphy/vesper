@@ -264,4 +264,23 @@ final class CustomAppStandaloneTests: XCTestCase {
         XCTAssertNil(binObj["text"])
         XCTAssertEqual(binObj["base64"], .string(binary.base64EncodedString()))
     }
+
+    func testVMStatusDecodeAndRequests() throws {
+        let json = Data("""
+        {"available":true,"state":"paused","active_calls":2,"mount_count":1,"allow_public":false}
+        """.utf8)
+        let status = try JSONDecoder().decode(CustomAppStandaloneLogic.VMStatus.self, from: json)
+        XCTAssertTrue(status.available)
+        XCTAssertEqual(status.state, "paused")
+        XCTAssertEqual(status.stateLabel, "Paused")
+        XCTAssertEqual(status.activeCalls, 2)
+        XCTAssertEqual(status.mountCount, 1)
+        XCTAssertFalse(status.allowPublic)
+
+        XCTAssertEqual(CustomAppStandaloneLogic.getVMStatusRequest(slug: "budget").path, "/api/v1/custom-apps/budget/vm")
+        XCTAssertEqual(CustomAppStandaloneLogic.stopVMRequest(slug: "budget").method, "POST")
+        XCTAssertEqual(CustomAppStandaloneLogic.stopVMRequest(slug: "budget").path, "/api/v1/custom-apps/budget/vm/stop")
+        XCTAssertEqual(CustomAppStandaloneLogic.restartVMRequest(slug: "budget").path, "/api/v1/custom-apps/budget/vm/restart")
+        XCTAssertEqual(CustomAppStandaloneLogic.notifyWindowClosedRequest(slug: "budget").path, "/api/v1/custom-apps/budget/vm/window-closed")
+    }
 }
