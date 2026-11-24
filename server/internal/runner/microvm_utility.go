@@ -148,7 +148,7 @@ type microvmLoginProc struct {
 
 func (p *microvmLoginProc) Output() io.Reader { return p.out }
 func (p *microvmLoginProc) Input() io.Writer  { return p.in }
-func (p *microvmLoginProc) Kill() error       { return p.rp.Signal(9) }
+func (p *microvmLoginProc) Kill() error       { return p.rp.Kill(guestproto.KillGrace) }
 
 func (p *microvmLoginProc) Wait() (int, error) {
 	ex, err := p.rp.Wait()

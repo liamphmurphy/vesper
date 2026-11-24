@@ -121,7 +121,7 @@ func TestWarmSessionPoolLifecycle(t *testing.T) {
 	sess := &stubPersistentSession{stdin: proc.Stdin()}
 	sess.alive.Store(true)
 
-	ws := newWarmSession(runID, "fp-1", proc, nil, sess, agentID, tokID, nil, func(a, tk uuid.UUID) {
+	ws := newWarmSession(runID, "fp-1", proc, nil, sess, nil, agentID, tokID, nil, func(a, tk uuid.UUID) {
 		if a == agentID && tk == tokID {
 			revoked.Add(1)
 		}
@@ -148,7 +148,7 @@ func TestWarmSessionPoolLifecycle(t *testing.T) {
 	proc2 := newStubWarmProc()
 	sess2 := &stubPersistentSession{stdin: proc2.Stdin()}
 	sess2.alive.Store(true)
-	ws2 := newWarmSession(runID, "fp-1", proc2, nil, sess2, agentID, tokID, nil, func(uuid.UUID, uuid.UUID) {
+	ws2 := newWarmSession(runID, "fp-1", proc2, nil, sess2, nil, agentID, tokID, nil, func(uuid.UUID, uuid.UUID) {
 		revoked.Add(1)
 	})
 	pool.put(ws2, 5*time.Second)
