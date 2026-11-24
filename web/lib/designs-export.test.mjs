@@ -20,7 +20,7 @@ async function pdfPages(bytes) {
     const text = (await p.getTextContent()).items.map((t) => t.str).join(" ");
     pages.push({ size: [p.view[2] - p.view[0], p.view[3] - p.view[1]], text });
   }
-  await doc.destroy();
+  await doc.loadingTask.destroy();
   return pages;
 }
 
