@@ -46,6 +46,8 @@ type chatScope struct {
 	// PersonaID is the persona answering the chat (its speaker, else its host),
 	// the one persona memory it may reach.
 	PersonaID *uuid.UUID
+	// SpaceID is the chat's space, if any, regardless of its memory setting.
+	SpaceID *uuid.UUID
 	// MemorySpaceID is the chat's space when that space keeps its own memory.
 	MemorySpaceID *uuid.UUID
 	// Temporary chats reach neither the person's memory nor their past chats.
@@ -82,7 +84,7 @@ func chatScopeFor(ctx context.Context, d Deps, c agents.Caller) (*chatScope, err
 	if err != nil {
 		return nil, err
 	}
-	return &chatScope{ChatID: chat.ID, ProjectKey: p.Key, UserID: chat.CreatedBy, PersonaID: runs.ChatSpeakerID(chat), MemorySpaceID: memSpace, Temporary: chat.Temporary}, nil
+	return &chatScope{ChatID: chat.ID, ProjectKey: p.Key, UserID: chat.CreatedBy, PersonaID: runs.ChatSpeakerID(chat), SpaceID: chat.SpaceID, MemorySpaceID: memSpace, Temporary: chat.Temporary}, nil
 }
 
 // projectFilter resolves the optional project key a listing or search is

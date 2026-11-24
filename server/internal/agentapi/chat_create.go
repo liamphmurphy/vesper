@@ -65,6 +65,7 @@ func createSpace(ctx context.Context, d Deps, c agents.Caller, in CreateSpaceIn)
 type CreateScheduledTaskIn struct {
 	Name          string         `json:"name" jsonschema:"A short name, 1–120 characters"`
 	Instructions  string         `json:"instructions,omitempty" jsonschema:"For prompt tasks: what to do each time, written as the message you'll get. Nobody watches it run and the result goes to the person's Inbox, so make it self-contained"`
+	Space         *string        `json:"space,omitempty" jsonschema:"Optional space name or project key (e.g. Vesper or LAZYAGENTS) from list_projects; defaults to the chat's space when omitted. Pass an empty string for none"`
 	CustomAppSlug string         `json:"custom_app_slug,omitempty" jsonschema:"For custom_app tasks: Custom App URL slug with an MCP server (runs without an LLM turn)"`
 	CustomAppTool string         `json:"custom_app_tool,omitempty" jsonschema:"For custom_app tasks: MCP tool name exported by that app"`
 	CustomAppArgs map[string]any `json:"custom_app_args,omitempty" jsonschema:"Optional JSON object arguments passed to custom_app_tool"`
@@ -101,8 +102,12 @@ func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Create
 		sc.MonthDay = 1
 	}
 	var taskIn runs.ScheduledTaskInput
+	var projectKey, spaceName string
 	tell := "Scheduled. It runs on its own with no time or cost cap unless configured, and each result goes to their Inbox; they can pause, set limits, change or delete it in [Scheduled](/scheduled)."
 	if strings.TrimSpace(in.CustomAppSlug) != "" || strings.TrimSpace(in.CustomAppTool) != "" {
+		if in.Space != nil && strings.TrimSpace(*in.Space) != "" {
+			return nil, apperr.Invalid("space", "custom_app tasks do not run in a space")
+		}
 		taskIn = runs.ScheduledTaskInput{
 			Name:          in.Name,
 			Kind:          "custom_app",
@@ -115,14 +120,22 @@ func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Create
 		}
 		tell = "Scheduled. It runs the Custom App tool directly without an LLM turn and only posts to their Inbox if a run fails; they can pause, change or delete it in [Scheduled](/scheduled)."
 	} else {
-		// A prompt task in the chat's project, answered by this persona, with
+		if in.Space != nil {
+			projectKey, spaceName, err = resolveScheduledSpace(ctx, d, c.Agent.WorkspaceID, s.UserID, *in.Space)
+		} else {
+			projectKey, spaceName, err = defaultScheduledProject(ctx, d, c.Agent.WorkspaceID, s)
+		}
+		if err != nil {
+			return nil, err
+		}
+		// A prompt task in the chosen (or chat's) space, answered by this persona, with
 		// unlimited time/cost by default (unless explicitly capped) and no connectors.
 		taskIn = runs.ScheduledTaskInput{
 			Name:          in.Name,
 			Kind:          "prompt",
 			Instructions:  in.Instructions,
 			PersonaID:     s.PersonaID,
-			Project:       s.ProjectKey,
+			Project:       projectKey,
 			Schedule:      sc,
 			Enabled:       true,
 			MaxMinutes:    in.MaxMinutes,
@@ -134,6 +147,12 @@ func createScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Create
 		return nil, err
 	}
 	out := map[string]any{"task_id": t.ID, "name": t.Name, "href": "/scheduled", "tell_the_person": tell}
+	if projectKey != "" {
+		out["project"] = projectKey
+	}
+	if spaceName != "" {
+		out["space"] = spaceName
+	}
 	if t.NextRunAt != nil {
 		out["next_run_at"] = t.NextRunAt
 	}

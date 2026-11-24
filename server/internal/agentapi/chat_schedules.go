@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -35,6 +36,7 @@ type chatScheduledTask struct {
 	Enabled       bool       `json:"enabled"`
 	NextRunAt     *time.Time `json:"next_run_at,omitempty"`
 	Project       string     `json:"project,omitempty"`
+	Space         string     `json:"space,omitempty"`
 	Revision      int32      `json:"revision"`
 	LastRun       *lastRun   `json:"last_run,omitempty"`
 }
@@ -45,9 +47,9 @@ type lastRun struct {
 	Error     string    `json:"error,omitempty"`
 }
 
-func toChatScheduledTask(t store.ScheduledTask, project, customAppSlug string) chatScheduledTask {
+func toChatScheduledTask(t store.ScheduledTask, project, space, customAppSlug string) chatScheduledTask {
 	out := chatScheduledTask{ID: t.ID, Name: t.Name, Kind: t.Kind, Instructions: t.Instructions, CustomAppSlug: customAppSlug, Frequency: t.Frequency, Timezone: t.Timezone, Enabled: t.Enabled,
-		NextRunAt: t.NextRunAt, Project: project, Revision: t.Revision}
+		NextRunAt: t.NextRunAt, Project: project, Space: space, Revision: t.Revision}
 	if t.Kind == "custom_app" {
 		out.CustomAppTool = t.CustomAppTool
 	}
@@ -62,6 +64,123 @@ func toChatScheduledTask(t store.ScheduledTask, project, customAppSlug string) c
 		out.AtTime = t.AtTime
 	}
 	return out
+}
+
+// resolveScheduledSpace maps a space name, project key, or space UUID to an
+// active project's (key, name). An empty string explicitly leaves the task
+// without a space.
+func resolveScheduledSpace(ctx context.Context, d Deps, ws, user uuid.UUID, raw string) (key, name string, err error) {
+	ref := strings.TrimSpace(raw)
+	if ref == "" {
+		return "", "", nil
+	}
+	projects, err := d.Q.ListProjects(ctx, ws)
+	if err != nil {
+		return "", "", err
+	}
+	activeByID := make(map[uuid.UUID]store.Project, len(projects))
+	activeBySpace := make(map[uuid.UUID]store.Project, len(projects))
+	var byName []store.Project
+	var archivedMatch bool
+	for _, p := range projects {
+		if p.Archived {
+			if strings.EqualFold(p.Key, ref) || strings.EqualFold(p.Name, ref) {
+				archivedMatch = true
+			}
+			continue
+		}
+		activeByID[p.ID] = p
+		if p.SpaceID != nil {
+			activeBySpace[*p.SpaceID] = p
+		}
+		if strings.EqualFold(p.Key, ref) {
+			return p.Key, p.Name, nil
+		}
+		if strings.EqualFold(p.Name, ref) {
+			byName = append(byName, p)
+		}
+	}
+	if len(byName) == 1 {
+		return byName[0].Key, byName[0].Name, nil
+	}
+	if len(byName) > 1 {
+		return "", "", apperr.Invalid("space", "ambiguous space %q; pass its project key instead", ref)
+	}
+
+	spaces, err := d.Q.ListChatSpaces(ctx, store.ListChatSpacesParams{WorkspaceID: ws, UserID: user})
+	if err != nil {
+		return "", "", err
+	}
+	refID, isUUID := uuid.Parse(ref)
+	var matchedSpaces []store.ChatSpace
+	for _, sp := range spaces {
+		if isUUID == nil && sp.ID == refID {
+			matchedSpaces = []store.ChatSpace{sp}
+			break
+		}
+		if strings.EqualFold(sp.Name, ref) {
+			matchedSpaces = append(matchedSpaces, sp)
+		}
+	}
+	if len(matchedSpaces) > 1 {
+		return "", "", apperr.Invalid("space", "ambiguous space %q; pass its project key instead", ref)
+	}
+	if len(matchedSpaces) == 1 {
+		sp := matchedSpaces[0]
+		if p, ok := activeBySpace[sp.ID]; ok {
+			return p.Key, p.Name, nil
+		}
+		if sp.ProjectID != nil {
+			if p, ok := activeByID[*sp.ProjectID]; ok {
+				return p.Key, p.Name, nil
+			}
+		}
+		return "", "", apperr.Invalid("space", "space %q does not track a project; scheduled tasks attach to spaces that track work", sp.Name)
+	}
+	if archivedMatch {
+		return "", "", apperr.Invalid("space", "space %q is archived", ref)
+	}
+	return "", "", apperr.Invalid("space", "no space or project %q", ref)
+}
+
+// defaultScheduledProject picks the chat's active project when create_scheduled_task
+// omits space: the chat's own project first, else the project tracked by its space.
+func defaultScheduledProject(ctx context.Context, d Deps, ws uuid.UUID, s *chatScope) (key, name string, err error) {
+	if s.ProjectKey != "" {
+		p, err := d.Q.GetProjectByKey(ctx, store.GetProjectByKeyParams{WorkspaceID: ws, Key: s.ProjectKey})
+		if errors.Is(err, pgx.ErrNoRows) {
+			return s.ProjectKey, "", nil
+		}
+		if err != nil {
+			return "", "", err
+		}
+		if p.Archived {
+			return "", "", nil
+		}
+		return p.Key, p.Name, nil
+	}
+	if s.SpaceID == nil {
+		return "", "", nil
+	}
+	if p, err := d.Q.GetProjectBySpace(ctx, s.SpaceID); err == nil {
+		if !p.Archived {
+			return p.Key, p.Name, nil
+		}
+	} else if !errors.Is(err, pgx.ErrNoRows) {
+		return "", "", err
+	}
+	sp, err := d.Q.GetChatSpace(ctx, store.GetChatSpaceParams{ID: *s.SpaceID, WorkspaceID: ws, UserID: s.UserID})
+	if errors.Is(err, pgx.ErrNoRows) || sp.ProjectID == nil {
+		return "", "", nil
+	}
+	if err != nil {
+		return "", "", err
+	}
+	p, err := runs.OptionalProject(ctx, d.Q, ws, sp.ProjectID)
+	if err != nil || p.Key == "" || p.Archived {
+		return "", "", err
+	}
+	return p.Key, p.Name, nil
 }
 
 func listScheduledTasks(ctx context.Context, d Deps, c agents.Caller, _ Empty) (any, error) {
@@ -82,9 +201,9 @@ func listScheduledTasks(ctx context.Context, d Deps, c agents.Caller, _ Empty) (
 	if err != nil {
 		return nil, err
 	}
-	keys := make(map[uuid.UUID]string, len(projects))
+	projByID := make(map[uuid.UUID]store.Project, len(projects))
 	for _, p := range projects {
-		keys[p.ID] = p.Key
+		projByID[p.ID] = p
 	}
 	apps, err := d.Q.ListCustomApps(ctx, store.ListCustomAppsParams{WorkspaceID: ws, UserID: s.UserID})
 	if err != nil {
@@ -96,15 +215,17 @@ func listScheduledTasks(ctx context.Context, d Deps, c agents.Caller, _ Empty) (
 	}
 	out := make([]chatScheduledTask, len(rows))
 	for i, t := range rows {
-		project := ""
+		project, space := "", ""
 		if t.ProjectID != nil {
-			project = keys[*t.ProjectID]
+			if p, ok := projByID[*t.ProjectID]; ok {
+				project, space = p.Key, p.Name
+			}
 		}
 		appSlug := ""
 		if t.CustomAppID != nil {
 			appSlug = appSlugs[*t.CustomAppID]
 		}
-		out[i] = toChatScheduledTask(t, project, appSlug)
+		out[i] = toChatScheduledTask(t, project, space, appSlug)
 		// Newest first, so the first run of this task is its latest.
 		for _, r := range recent {
 			if r.TaskID == t.ID {
@@ -121,6 +242,7 @@ type UpdateScheduledTaskIn struct {
 	Revision     int32     `json:"revision" jsonschema:"The revision from your latest list_scheduled_tasks. A stale one is refused: list again and redo your change"`
 	Name         *string   `json:"name,omitempty" jsonschema:"A new name, 1–120 characters"`
 	Instructions *string   `json:"instructions,omitempty" jsonschema:"New instructions, for a prompt task: what to do each time, written as the message you'll get"`
+	Space        *string   `json:"space,omitempty" jsonschema:"Space name or project key (e.g. Vesper or LAZYAGENTS), or empty string to clear"`
 	Enabled      *bool     `json:"enabled,omitempty" jsonschema:"false pauses the task, true resumes it"`
 	Frequency    *string   `json:"frequency,omitempty" jsonschema:"daily, weekly, monthly or cron"`
 	AtTime       *string   `json:"at_time,omitempty" jsonschema:"Local time as HH:MM, 24-hour; not for cron"`
@@ -154,6 +276,16 @@ func updateScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Update
 	if err != nil {
 		return nil, err
 	}
+	projectKey, spaceName := project.Key, project.Name
+	if in.Space != nil {
+		if t.Kind == "custom_app" && strings.TrimSpace(*in.Space) != "" {
+			return nil, apperr.Invalid("space", "custom_app tasks do not run in a space")
+		}
+		projectKey, spaceName, err = resolveScheduledSpace(ctx, d, ws, s.UserID, *in.Space)
+		if err != nil {
+			return nil, err
+		}
+	}
 	var appSlug string
 	var appArgs map[string]any
 	if t.Kind == "custom_app" {
@@ -168,7 +300,7 @@ func updateScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Update
 			_ = json.Unmarshal(t.CustomAppArgs, &appArgs)
 		}
 	}
-	next := runs.ScheduledTaskInput{Revision: in.Revision, Name: t.Name, Kind: t.Kind, Instructions: t.Instructions, WorkflowID: t.WorkflowID, PersonaID: t.PersonaID, Project: project.Key,
+	next := runs.ScheduledTaskInput{Revision: in.Revision, Name: t.Name, Kind: t.Kind, Instructions: t.Instructions, WorkflowID: t.WorkflowID, PersonaID: t.PersonaID, Project: projectKey,
 		ConnectorIDs: t.ConnectorIds, CustomAppSlug: appSlug, CustomAppTool: t.CustomAppTool, CustomAppArgs: appArgs,
 		Enabled: t.Enabled, MaxMinutes: t.MaxMinutes, MaxCostMicros: t.MaxCostMicros,
 		Schedule: runs.Schedule{Frequency: t.Frequency, Weekdays: t.Weekdays, MonthDay: t.MonthDay, AtTime: t.AtTime, Timezone: t.Timezone, Cron: t.Cron}}
@@ -196,7 +328,7 @@ func updateScheduledTask(ctx context.Context, d Deps, c agents.Caller, in Update
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"task": toChatScheduledTask(updated, project.Key, appSlug), "href": "/scheduled",
+	return map[string]any{"task": toChatScheduledTask(updated, projectKey, spaceName, appSlug), "href": "/scheduled",
 		"tell_the_person": "Changed. Say what's different and when it next runs; they can review it in [Scheduled](/scheduled)."}, nil
 }
 
