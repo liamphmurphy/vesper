@@ -26,7 +26,7 @@ func (f *Fetcher) PageText(ctx context.Context, raw string) (title, text string,
 	if !Valid(raw) {
 		return "", "", errors.New("not a usable http(s) address")
 	}
-	body, ct, err := f.get(ctx, raw, maxPageTextBytes)
+	body, ct, err := f.get(ctx, raw, maxPageTextBytes, getOpts{accept: pageAccept})
 	if err != nil {
 		return "", "", err
 	}

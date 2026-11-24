@@ -6,6 +6,7 @@ package linkpreview
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -36,10 +37,13 @@ const (
 	maxURLBytes              = 2048
 	maxPageBytes             = 1 << 20
 	maxImageBytes            = 3 << 20
-	maxRedirects             = 3
+	maxRedirects             = 5
 	maxTitle                 = 200
 	maxDesc                  = 300
 	userAgent                = "VesperBot/1.0 (link preview)"
+	browserUserAgent         = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36"
+	pageAccept               = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8"
+	imageAccept              = "image/webp,image/jpeg,image/png,image/gif,image/avif;q=0.8,*/*;q=0.5"
 
 	KindSite  = "site"
 	KindVideo = "video"
@@ -303,7 +307,7 @@ func (f *Fetcher) Fetch(ctx context.Context, raw string) Preview {
 func (f *Fetcher) video(ctx context.Context, id string) Preview {
 	p := Preview{Kind: KindVideo, VideoID: id}
 	target := "https://www.youtube.com/watch?v=" + id
-	body, _, err := f.get(ctx, f.OEmbedBase+"/oembed?format=json&url="+url.QueryEscape(target), maxPageBytes)
+	body, _, err := f.get(ctx, f.OEmbedBase+"/oembed?format=json&url="+url.QueryEscape(target), maxPageBytes, getOpts{})
 	if err != nil {
 		return p
 	}
@@ -316,20 +320,19 @@ func (f *Fetcher) video(ctx context.Context, id string) Preview {
 		return p
 	}
 	p.Title, p.Site = clean(o.Title, maxTitle), clean(o.AuthorName, maxTitle)
-	p.Image, p.ImageType = f.image(ctx, o.ThumbnailURL)
+	p.Image, p.ImageType = f.image(ctx, o.ThumbnailURL, target)
 	return p
 }
 
 func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 	p := Preview{Kind: KindSite}
-	body, ct, err := f.get(ctx, raw, maxImageBytes)
+	body, ct, err := f.get(ctx, raw, maxImageBytes, getOpts{accept: pageAccept})
 	if err != nil {
 		return p
 	}
 	// Direct raster images (for gallery/product cards) are verified by bytes, never by header,
 	// and SVG is refused so scriptable markup can never be served back as an image.
-	switch detected := http.DetectContentType(body); detected {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	if detected := detectImageType(body); detected != "" {
 		var host string
 		if u, err := url.Parse(raw); err == nil {
 			host = strings.TrimPrefix(u.Hostname(), "www.")
@@ -349,7 +352,7 @@ func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 	if ref := first(m["og:image:secure_url"], m["og:image"], m["twitter:image"]); ref != "" && p.Title != "" {
 		if base, err := url.Parse(raw); err == nil {
 			if u, err := base.Parse(strings.TrimSpace(ref)); err == nil {
-				p.Image, p.ImageType = f.image(ctx, u.String())
+				p.Image, p.ImageType = f.image(ctx, u.String(), raw)
 			}
 		}
 	}
@@ -358,51 +361,126 @@ func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 
 // image downloads a raster image, or nothing. The type comes from the bytes,
 // never the server's header, and SVG isn't accepted.
-func (f *Fetcher) image(ctx context.Context, raw string) ([]byte, string) {
+func (f *Fetcher) image(ctx context.Context, raw, referer string) ([]byte, string) {
 	if !Valid(raw) {
 		return nil, ""
 	}
-	body, _, err := f.get(ctx, raw, maxImageBytes)
+	body, _, err := f.get(ctx, raw, maxImageBytes, getOpts{accept: imageAccept, referer: referer, isImage: true})
 	if err != nil {
 		return nil, ""
 	}
-	switch ct := http.DetectContentType(body); ct {
-	case "image/png", "image/jpeg", "image/gif", "image/webp":
+	if ct := detectImageType(body); ct != "" {
 		return body, ct
 	}
 	return nil, ""
 }
 
+// detectImageType sniffs raster image formats from magic bytes only, never from
+// HTTP headers, so SVG or scriptable markup can never be served as an image.
+func detectImageType(body []byte) string {
+	switch ct := http.DetectContentType(body); ct {
+	case "image/png", "image/jpeg", "image/gif", "image/webp":
+		return ct
+	}
+	if isAVIF(body) {
+		return "image/avif"
+	}
+	return ""
+}
+
+// isAVIF reports whether b begins with an ISO BMFF ftyp box declaring an AVIF
+// major or compatible brand.
+func isAVIF(b []byte) bool {
+	if len(b) < 12 || string(b[4:8]) != "ftyp" {
+		return false
+	}
+	boxSize := int(binary.BigEndian.Uint32(b[0:4]))
+	if boxSize < 12 || boxSize > len(b) {
+		boxSize = len(b)
+	}
+	if boxSize > 64 {
+		boxSize = 64
+	}
+	if major := string(b[8:12]); major == "avif" || major == "avis" {
+		return true
+	}
+	for off := 16; off+4 <= boxSize; off += 4 {
+		if brand := string(b[off : off+4]); brand == "avif" || brand == "avis" {
+			return true
+		}
+	}
+	return false
+}
+
+type getOpts struct {
+	accept  string
+	referer string
+	ua      string
+	isImage bool
+}
+
 // get reads a 200 response of at most limit bytes; a larger one is an error.
-func (f *Fetcher) get(ctx context.Context, raw string, limit int64) ([]byte, string, error) {
+// If the server rejects the default bot User-Agent with 403 or 406, it retries
+// once with a standard browser User-Agent.
+func (f *Fetcher) get(ctx context.Context, raw string, limit int64, opts getOpts) ([]byte, string, error) {
+	body, ct, status, err := f.doGet(ctx, raw, limit, opts)
+	if err != nil && opts.ua == "" && (status == http.StatusForbidden || status == http.StatusNotAcceptable) {
+		opts.ua = browserUserAgent
+		body, ct, _, err = f.doGet(ctx, raw, limit, opts)
+	}
+	return body, ct, err
+}
+
+func (f *Fetcher) doGet(ctx context.Context, raw string, limit int64, opts getOpts) ([]byte, string, int, error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, raw, nil)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
-	req.Header.Set("User-Agent", userAgent)
+	ua := opts.ua
+	if ua == "" {
+		ua = userAgent
+	}
+	req.Header.Set("User-Agent", ua)
+	req.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	if opts.accept != "" {
+		req.Header.Set("Accept", opts.accept)
+	}
+	if opts.referer != "" {
+		req.Header.Set("Referer", opts.referer)
+	}
+	if opts.ua == browserUserAgent {
+		if opts.isImage {
+			req.Header.Set("Sec-Fetch-Dest", "image")
+			req.Header.Set("Sec-Fetch-Mode", "no-cors")
+		} else {
+			req.Header.Set("Sec-Fetch-Dest", "document")
+			req.Header.Set("Sec-Fetch-Mode", "navigate")
+			req.Header.Set("Sec-Fetch-Site", "none")
+		}
+	}
 	res, err := f.HTTP.Do(req)
 	if err != nil {
-		return nil, "", err
+		return nil, "", 0, err
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
-		return nil, "", fmt.Errorf("status %d", res.StatusCode)
+		return nil, "", res.StatusCode, fmt.Errorf("status %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(io.LimitReader(res.Body, limit+1))
 	if err != nil {
-		return nil, "", err
+		return nil, "", res.StatusCode, err
 	}
 	// A page's metadata is at its top, so a long page is still usable; an image isn't.
 	if int64(len(body)) > limit {
 		if limit == maxImageBytes {
 			mt, _, _ := mime.ParseMediaType(res.Header.Get("Content-Type"))
 			if mt != "text/html" && mt != "application/xhtml+xml" {
-				return nil, "", errors.New("too large")
+				return nil, "", res.StatusCode, errors.New("too large")
 			}
 		}
 		body = body[:limit]
 	}
-	return bytes.Clone(body), res.Header.Get("Content-Type"), nil
+	return bytes.Clone(body), res.Header.Get("Content-Type"), res.StatusCode, nil
 }
 
 // parseMeta reads <title> and the <meta> name/property tags, stopping at <body>.
