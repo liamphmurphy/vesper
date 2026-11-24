@@ -40,6 +40,7 @@ struct SpaceScreen: View {
     @State private var savingEdit = false
     @State private var editError: String?
     @State private var deleting = false
+    @State private var syncingBranches = false
     @State private var watchedKeys: [QueryKey] = []
 
     private static let personasRequest = API.listPersonas()
@@ -123,9 +124,10 @@ struct SpaceScreen: View {
                             p: p
                         )
 
-                        let runningChats = spaceChats.filter { $0.state == .running || $0.unread > 0 }
-                        if !runningChats.isEmpty || !branches.isEmpty {
-                            inFlightSection(runningChats: runningChats, branches: branches, p: p)
+                        let runningChats = SpacesLogic.inFlightChats(spaceChats)
+                        let activeBranches = SpacesLogic.activeBranches(branches)
+                        if !runningChats.isEmpty || !activeBranches.isEmpty {
+                            inFlightSection(runningChats: runningChats, branches: activeBranches, p: p)
                         }
 
                         tasksSection(space: space, tasks: tasks, p: p)
@@ -166,7 +168,7 @@ struct SpaceScreen: View {
             syncWatches()
             installInspectorView(space: space)
         }
-        .onChange(of: chromeFingerprint(space: space, sources: sources, reposCount: repos.count, linksCount: knowledgeLinks.count, branchesCount: branches.count, personasCount: personas.count, spacesCount: spaces.count, chatsCount: spaceChats.count)) { _, _ in
+        .onChange(of: chromeFingerprint(space: space, sources: sources, reposCount: repos.count, linksCount: knowledgeLinks.count, branchesCount: branches.count, activeBranchesCount: SpacesLogic.activeBranches(branches).count, personasCount: personas.count, spacesCount: spaces.count, chatsCount: spaceChats.count)) { _, _ in
             publishChrome(
                 space: space,
                 repos: repos,
@@ -400,9 +402,32 @@ struct SpaceScreen: View {
         p: NativePalette
     ) -> some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("In Flight")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(p.text)
+            HStack {
+                Text("In Flight")
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(p.text)
+                Spacer()
+                if !branches.isEmpty {
+                    Button {
+                        syncBranches()
+                    } label: {
+                        HStack(spacing: 4) {
+                            if syncingBranches {
+                                ProgressView().controlSize(.mini)
+                            } else {
+                                Image(systemName: "arrow.clockwise")
+                                    .font(.system(size: 10.5))
+                            }
+                            Text(syncingBranches ? "Checking PRs\u{2026}" : "Refresh PRs")
+                                .font(.system(size: 11))
+                        }
+                        .foregroundStyle(p.secondaryText)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(syncingBranches)
+                    .help("Check GitHub for merged or closed pull requests")
+                }
+            }
 
             VStack(spacing: 6) {
                 ForEach(runningChats, id: \.id) { chat in
@@ -432,7 +457,7 @@ struct SpaceScreen: View {
                     .buttonStyle(.plain)
                 }
 
-                ForEach(branches.prefix(4), id: \.branch) { b in
+                ForEach(branches.prefix(6), id: \.spaceBranchKey) { b in
                     HStack(spacing: 8) {
                         Image(systemName: "arrow.triangle.branch")
                             .font(.system(size: 11))
@@ -444,12 +469,21 @@ struct SpaceScreen: View {
                         Text(ChatCodeReviewLogic.repoName(b.repoUrl))
                             .font(.system(size: 11))
                             .foregroundStyle(p.tertiaryText)
+                        Text(SpacesLogic.branchStatusLabel(for: b))
+                            .font(.system(size: 10, weight: .medium))
+                            .foregroundStyle(p.secondaryText)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(p.background, in: Capsule())
+                            .overlay(Capsule().stroke(p.border))
                         Spacer()
                         if let prUrl = b.prUrl, !prUrl.isEmpty {
-                            Button("PR \u{2197}") { context.openExternal(prUrl) }
-                                .buttonStyle(.plain)
-                                .font(.system(size: 11, weight: .medium))
-                                .foregroundStyle(p.accent)
+                            Button(b.prNumber.map { "PR #\($0) \u{2197}" } ?? "PR \u{2197}") {
+                                context.openExternal(prUrl)
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(p.accent)
                         }
                         Button("Chat \u{2192}") { context.navigate("/chat/\(b.chatId)") }
                             .buttonStyle(.plain)
@@ -668,11 +702,12 @@ struct SpaceScreen: View {
         reposCount: Int,
         linksCount: Int,
         branchesCount: Int,
+        activeBranchesCount: Int,
         personasCount: Int,
         spacesCount: Int,
         chatsCount: Int
     ) -> String {
-        "\(space?.id ?? "")|\(space?.name ?? "")|\(space?.instructions.count ?? 0)|\(space?.spaceMemory ?? false)|\(space?.personaId ?? "")|\(space?.sourceCount ?? 0)|\(sources.count)|\(reposCount)|\(linksCount)|\(branchesCount)|\(personasCount)|\(spacesCount)|\(chatsCount)|\(editing)|\(inspectorOpen)|\(inspectorTabId)"
+        "\(space?.id ?? "")|\(space?.name ?? "")|\(space?.instructions.count ?? 0)|\(space?.spaceMemory ?? false)|\(space?.personaId ?? "")|\(space?.sourceCount ?? 0)|\(sources.count)|\(reposCount)|\(linksCount)|\(branchesCount)|\(activeBranchesCount)|\(personasCount)|\(spacesCount)|\(chatsCount)|\(editing)|\(inspectorOpen)|\(inspectorTabId)"
     }
 
     private func publishChrome(
@@ -712,13 +747,14 @@ struct SpaceScreen: View {
         var tabs: [InspectorTab] = [
             InspectorTab(id: "context", label: "Context", icon: "sidebar", kind: .native),
         ]
+        let activeBranchesCount = SpacesLogic.activeBranches(branches).count
         if !repos.isEmpty || !branches.isEmpty {
             tabs.append(InspectorTab(
                 id: "branches",
                 label: "Branches",
                 icon: "branch",
                 kind: .native,
-                badge: branches.isEmpty ? nil : NavBadge(text: "\(branches.count)")
+                badge: activeBranchesCount == 0 ? nil : NavBadge(text: "\(activeBranchesCount)")
             ))
         }
         tabs.append(InspectorTab(id: "chat", label: "Chat", icon: "msg", kind: .companion))
@@ -961,6 +997,26 @@ struct SpaceScreen: View {
                 )
             } catch {
                 context.showToast(ToastItemModel(id: "space.task.del", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
+            }
+        }
+    }
+
+    private func syncBranches() {
+        guard !syncingBranches, !spaceId.isEmpty else { return }
+        syncingBranches = true
+        Task {
+            defer { syncingBranches = false }
+            do {
+                let refreshed = try await context.store.mutate(
+                    API.syncChatSpaceBranches(spaceId: spaceId),
+                    invalidating: QueryInvalidation(resources: ["chat-spaces", "spaces"])
+                )
+                context.store.setData(
+                    API.ListChatSpaceBranchesResponse(branches: refreshed.branches),
+                    for: branchesRequest
+                )
+            } catch {
+                context.showToast(ToastItemModel(id: "space.branches.sync", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
             }
         }
     }

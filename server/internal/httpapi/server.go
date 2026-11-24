@@ -76,6 +76,8 @@ type Server struct {
 	// Usage keeps harness plan-usage readings for the activity orb; nil
 	// leaves the orb without usage.
 	Usage *usage.Service
+	// SyncSpacePRs refreshes open GitHub PR states for a space on demand; nil skips sync.
+	SyncSpacePRs func(ctx context.Context, workspaceID, userID, spaceID uuid.UUID) error
 	// AnonymousAPI serves the person-facing API without a browser session.
 	// Tests only: agent containers can reach the API, so a real server must
 	// never trust a request just because it arrived.

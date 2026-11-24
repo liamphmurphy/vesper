@@ -94,6 +94,53 @@ public enum SpacesLogic {
         }
     }
 
+    public static func inFlightChats(_ chats: [API.ChatSession]) -> [API.ChatSession] {
+        sortChats(chats.filter { $0.state == .running || $0.unread > 0 }, sort: .newest)
+    }
+
+    public static func activeBranches(_ branches: [API.ChatSpaceBranch]) -> [API.ChatSpaceBranch] {
+        branches.filter(\.active)
+    }
+
+    public static func closedBranches(_ branches: [API.ChatSpaceBranch]) -> [API.ChatSpaceBranch] {
+        branches.filter { !$0.active }
+    }
+
+    public static func branchStatusLabel(for branch: API.ChatSpaceBranch) -> String {
+        if let prState = branch.prState {
+            switch prState {
+            case .merged: return branch.active ? "New commits" : "Merged"
+            case .closed: return branch.active ? "New commits" : "Closed"
+            case .draft: return "Draft PR"
+            case .open: return "Open PR"
+            default: break
+            }
+        }
+        if let pushState = branch.pushState {
+            switch pushState {
+            case "staging", "pending": return "Pending push"
+            case "pushing": return "Pushing"
+            case "pushed": return branch.prUrl != nil ? "Open PR" : "Pushed"
+            case "declined": return branch.active ? "Local edits" : "Declined"
+            case "failed": return "Push failed"
+            default: break
+            }
+        }
+        if branch.live { return "Editing" }
+        if branch.dirty { return "Uncommitted" }
+        return "Local branch"
+    }
+
+    public static func sortSpacesByActivity(_ spaces: [API.ChatSpace]) -> [API.ChatSpace] {
+        spaces.sorted { a, b in
+            let ta = APIDate.parse(a.lastActivityAt ?? a.updatedAt) ?? .distantPast
+            let tb = APIDate.parse(b.lastActivityAt ?? b.updatedAt) ?? .distantPast
+            if ta != tb { return ta > tb }
+            let cmp = a.name.localizedStandardCompare(b.name)
+            return cmp == .orderedSame ? a.id < b.id : cmp == .orderedAscending
+        }
+    }
+
     public static func subtitle(for space: API.ChatSpace) -> String {
         func plural(_ count: Int, _ noun: String) -> String {
             "\(count) \(noun)\(count == 1 ? "" : "s")"
@@ -522,4 +569,8 @@ public enum SpacesLogic {
             )
         }
     }
+}
+
+public extension API.ChatSpaceBranch {
+    var spaceBranchKey: String { "\(chatId)|\(repoUrl)|\(branch)" }
 }

@@ -1401,6 +1401,68 @@ func (q *Queries) SetWorkspaceRunnerSettings(ctx context.Context, arg SetWorkspa
 	return err
 }
 
+const spacePushRequestsWithOpenPRs = `-- name: SpacePushRequestsWithOpenPRs :many
+SELECT p.id, p.workspace_id, p.chat_id, p.repo_url, p.branch, p.run_id, p.pr_url, p.pr_number, p.pr_state, cs.project_id
+FROM push_requests p
+JOIN chat_sessions cs ON cs.id = p.chat_id
+WHERE cs.space_id = $1 AND cs.workspace_id = $2 AND cs.created_by = $3
+  AND NOT cs.hidden AND NOT cs.archived
+  AND p.pr_url IS NOT NULL AND coalesce(p.pr_state, 'open') IN ('draft', 'open')
+ORDER BY p.pr_synced_at NULLS FIRST
+LIMIT 50
+`
+
+type SpacePushRequestsWithOpenPRsParams struct {
+	SpaceID     *uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type SpacePushRequestsWithOpenPRsRow struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	ChatID      uuid.UUID
+	RepoUrl     string
+	Branch      string
+	RunID       *uuid.UUID
+	PrUrl       *string
+	PrNumber    *int32
+	PrState     *string
+	ProjectID   *uuid.UUID
+}
+
+// Open PRs in one space for on-demand refresh (bypasses min_age_s).
+func (q *Queries) SpacePushRequestsWithOpenPRs(ctx context.Context, arg SpacePushRequestsWithOpenPRsParams) ([]SpacePushRequestsWithOpenPRsRow, error) {
+	rows, err := q.db.Query(ctx, spacePushRequestsWithOpenPRs, arg.SpaceID, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []SpacePushRequestsWithOpenPRsRow{}
+	for rows.Next() {
+		var i SpacePushRequestsWithOpenPRsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.WorkspaceID,
+			&i.ChatID,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.RunID,
+			&i.PrUrl,
+			&i.PrNumber,
+			&i.PrState,
+			&i.ProjectID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const strandedRuns = `-- name: StrandedRuns :many
 SELECT r.id FROM runs r
 WHERE r.mode = 'managed' AND r.state = 'running' AND r.purpose <> 'chat'

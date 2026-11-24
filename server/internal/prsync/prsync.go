@@ -95,6 +95,38 @@ func (s *Syncer) Once(ctx context.Context) (int, error) {
 	return len(rows) + len(pushRows), nil
 }
 
+// SyncSpace immediately refreshes every open PR belonging to spaceID, bypassing MinAge.
+func (s *Syncer) SyncSpace(ctx context.Context, workspaceID, userID, spaceID uuid.UUID) (int, error) {
+	q := store.New(s.Pool)
+	rows, err := q.SpacePushRequestsWithOpenPRs(ctx, store.SpacePushRequestsWithOpenPRsParams{
+		SpaceID:     &spaceID,
+		WorkspaceID: workspaceID,
+		UserID:      userID,
+	})
+	if err != nil {
+		return 0, err
+	}
+	for _, r := range rows {
+		p := store.PushRequestsWithOpenPRsRow{
+			ID:          r.ID,
+			WorkspaceID: r.WorkspaceID,
+			ChatID:      r.ChatID,
+			RepoUrl:     r.RepoUrl,
+			Branch:      r.Branch,
+			RunID:       r.RunID,
+			PrUrl:       r.PrUrl,
+			PrNumber:    r.PrNumber,
+			PrState:     r.PrState,
+			ProjectID:   r.ProjectID,
+		}
+		if err := s.syncPushRequest(ctx, q, p); err != nil {
+			s.Log.Warn("pr sync space", "space", spaceID, "push_request", p.ID, "err", err)
+			_ = q.TouchPushRequestPRSync(ctx, p.ID)
+		}
+	}
+	return len(rows), nil
+}
+
 func (s *Syncer) fetch(ctx context.Context, token, owner, repo string, n int, prevETag string) (pr PR, newETag string, notModified bool, err error) {
 	url := fmt.Sprintf("%s/repos/%s/%s/pulls/%d", s.baseURL(), owner, repo, n)
 	status, newETag, raw, err := s.doConditionalGET(ctx, url, token, prevETag)

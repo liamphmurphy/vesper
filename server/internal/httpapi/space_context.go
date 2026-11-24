@@ -455,100 +455,288 @@ func (s *Server) DeleteChatSpaceTask(ctx context.Context, req api.DeleteChatSpac
 	return api.DeleteChatSpaceTask204Response{}, nil
 }
 
+type spaceBranchReview struct {
+	spaceID   *uuid.UUID
+	spaceName *string
+	chatID    uuid.UUID
+	chatTitle string
+	repoURL   string
+	branch    string
+	headSHA   string
+	dirty     bool
+	live      bool
+	updatedAt time.Time
+}
+
+type spaceBranchPush struct {
+	spaceID   *uuid.UUID
+	spaceName *string
+	chatID    uuid.UUID
+	chatTitle string
+	repoURL   string
+	branch    string
+	headSHA   string
+	prTitle   string
+	state     string
+	prState   *string
+	prURL     *string
+	prNumber  *int32
+	createdAt time.Time
+	decidedAt *time.Time
+}
+
+// buildSpaceBranches correlates chat_code_reviews with push_requests per (chat, repo, branch)
+// and computes whether each branch/PR is still active (in flight).
+func buildSpaceBranches(reviews []spaceBranchReview, pushes []spaceBranchPush, activeOnly bool) []api.ChatSpaceBranch {
+	type key struct {
+		chatID  uuid.UUID
+		repoURL string
+		branch  string
+	}
+	type entry struct {
+		branch        api.ChatSpaceBranch
+		hasReview     bool
+		reviewHeadSHA string
+		hasPush       bool
+		pushHeadSHA   string
+	}
+	byKey := map[key]*entry{}
+	order := []key{}
+
+	for _, r := range reviews {
+		if r.branch == "" {
+			continue
+		}
+		k := key{chatID: r.chatID, repoURL: r.repoURL, branch: r.branch}
+		byKey[k] = &entry{
+			branch: api.ChatSpaceBranch{
+				SpaceId:   r.spaceID,
+				SpaceName: r.spaceName,
+				ChatId:    r.chatID,
+				ChatTitle: r.chatTitle,
+				RepoUrl:   r.repoURL,
+				Branch:    r.branch,
+				Dirty:     r.dirty,
+				Live:      r.live,
+				UpdatedAt: r.updatedAt,
+			},
+			hasReview:     true,
+			reviewHeadSHA: r.headSHA,
+		}
+		order = append(order, k)
+	}
+
+	// Pushes arrive newest-first; keep the latest push request per (chat, repo, branch).
+	for _, pr := range pushes {
+		k := key{chatID: pr.chatID, repoURL: pr.repoURL, branch: pr.branch}
+		state := pr.state
+		prTitle := pr.prTitle
+		var prNum *int
+		if pr.prNumber != nil {
+			n := int(*pr.prNumber)
+			prNum = &n
+		}
+		var prState *api.PullRequestState
+		if pr.prState != nil && *pr.prState != "" {
+			ps := api.PullRequestState(*pr.prState)
+			prState = &ps
+		}
+		ts := pr.createdAt
+		if pr.decidedAt != nil && pr.decidedAt.After(ts) {
+			ts = *pr.decidedAt
+		}
+		if cur, ok := byKey[k]; ok {
+			if !cur.hasPush {
+				cur.hasPush = true
+				cur.pushHeadSHA = pr.headSHA
+				cur.branch.PushState = &state
+				cur.branch.PrUrl = pr.prURL
+				cur.branch.PrNumber = prNum
+				cur.branch.PrTitle = &prTitle
+				cur.branch.PrState = prState
+				if ts.After(cur.branch.UpdatedAt) {
+					cur.branch.UpdatedAt = ts
+				}
+			}
+			continue
+		}
+		byKey[k] = &entry{
+			branch: api.ChatSpaceBranch{
+				SpaceId:   pr.spaceID,
+				SpaceName: pr.spaceName,
+				ChatId:    pr.chatID,
+				ChatTitle: pr.chatTitle,
+				RepoUrl:   pr.repoURL,
+				Branch:    pr.branch,
+				Dirty:     false,
+				Live:      false,
+				PrUrl:     pr.prURL,
+				PrNumber:  prNum,
+				PrTitle:   &prTitle,
+				PrState:   prState,
+				PushState: &state,
+				UpdatedAt: ts,
+			},
+			hasPush:     true,
+			pushHeadSHA: pr.headSHA,
+		}
+		order = append(order, k)
+	}
+
+	out := make([]api.ChatSpaceBranch, 0, len(order))
+	for _, k := range order {
+		e := byKey[k]
+		hasNewerLocal := e.hasReview && (e.branch.Dirty || e.branch.Live ||
+			(e.pushHeadSHA != "" && e.reviewHeadSHA != "" && e.reviewHeadSHA != e.pushHeadSHA))
+		active := true
+		if e.hasPush && e.branch.PushState != nil {
+			switch *e.branch.PushState {
+			case "staging", "pending", "pushing":
+				active = true
+			case "pushed":
+				if e.branch.PrState != nil && (*e.branch.PrState == api.PullRequestStateMerged || *e.branch.PrState == api.PullRequestStateClosed) {
+					active = hasNewerLocal
+				} else {
+					active = true
+				}
+			case "declined", "failed":
+				active = hasNewerLocal
+			}
+		}
+		e.branch.Active = active
+		if activeOnly && !active {
+			continue
+		}
+		out = append(out, e.branch)
+	}
+
+	// Active branches first, then newest activity first.
+	for i := 0; i < len(out); i++ {
+		for j := i + 1; j < len(out); j++ {
+			swap := false
+			if out[i].Active != out[j].Active {
+				swap = out[j].Active
+			} else if out[j].UpdatedAt.After(out[i].UpdatedAt) {
+				swap = true
+			}
+			if swap {
+				out[i], out[j] = out[j], out[i]
+			}
+		}
+	}
+	return out
+}
+
+func (s *Server) listSpaceBranches(ctx context.Context, ws, userID, spaceID uuid.UUID, spaceName string) ([]api.ChatSpaceBranch, error) {
+	reviews, err := s.Q.ListChatSpaceCodeReviews(ctx, store.ListChatSpaceCodeReviewsParams{
+		SpaceID: &spaceID, WorkspaceID: ws, UserID: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pushes, err := s.Q.ListChatSpacePushRequests(ctx, store.ListChatSpacePushRequestsParams{
+		SpaceID: &spaceID, WorkspaceID: ws, UserID: userID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	revIn := make([]spaceBranchReview, 0, len(reviews))
+	for _, r := range reviews {
+		if r.Branch == nil || *r.Branch == "" {
+			continue
+		}
+		spID := spaceID
+		spName := spaceName
+		revIn = append(revIn, spaceBranchReview{
+			spaceID: &spID, spaceName: &spName,
+			chatID: r.ChatID, chatTitle: r.ChatTitle, repoURL: r.RepoUrl,
+			branch: *r.Branch, headSHA: deref(r.HeadSha), dirty: r.Dirty, live: r.Live, updatedAt: r.UpdatedAt,
+		})
+	}
+	pushIn := make([]spaceBranchPush, 0, len(pushes))
+	for _, pr := range pushes {
+		spID := spaceID
+		spName := spaceName
+		pushIn = append(pushIn, spaceBranchPush{
+			spaceID: &spID, spaceName: &spName,
+			chatID: pr.ChatID, chatTitle: pr.ChatTitle, repoURL: pr.RepoUrl,
+			branch: pr.Branch, headSHA: deref(pr.HeadSha), prTitle: pr.PrTitle,
+			state: pr.State, prState: pr.PrState, prURL: pr.PrUrl, prNumber: pr.PrNumber,
+			createdAt: pr.CreatedAt, decidedAt: pr.DecidedAt,
+		})
+	}
+	return buildSpaceBranches(revIn, pushIn, false), nil
+}
+
+func (s *Server) ListAllChatSpaceBranches(ctx context.Context, _ api.ListAllChatSpaceBranchesRequestObject) (api.ListAllChatSpaceBranchesResponseObject, error) {
+	u, _, ws := me(ctx)
+	reviews, err := s.Q.ListAllChatSpaceCodeReviews(ctx, store.ListAllChatSpaceCodeReviewsParams{
+		WorkspaceID: ws, UserID: u.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	pushes, err := s.Q.ListAllChatSpacePushRequests(ctx, store.ListAllChatSpacePushRequestsParams{
+		WorkspaceID: ws, UserID: u.ID,
+	})
+	if err != nil {
+		return nil, err
+	}
+	revIn := make([]spaceBranchReview, 0, len(reviews))
+	for _, r := range reviews {
+		if r.Branch == nil || *r.Branch == "" {
+			continue
+		}
+		spID := r.SpaceID
+		spName := r.SpaceName
+		revIn = append(revIn, spaceBranchReview{
+			spaceID: &spID, spaceName: &spName,
+			chatID: r.ChatID, chatTitle: r.ChatTitle, repoURL: r.RepoUrl,
+			branch: *r.Branch, headSHA: deref(r.HeadSha), dirty: r.Dirty, live: r.Live, updatedAt: r.UpdatedAt,
+		})
+	}
+	pushIn := make([]spaceBranchPush, 0, len(pushes))
+	for _, pr := range pushes {
+		spID := pr.SpaceID
+		spName := pr.SpaceName
+		pushIn = append(pushIn, spaceBranchPush{
+			spaceID: &spID, spaceName: &spName,
+			chatID: pr.ChatID, chatTitle: pr.ChatTitle, repoURL: pr.RepoUrl,
+			branch: pr.Branch, headSHA: deref(pr.HeadSha), prTitle: pr.PrTitle,
+			state: pr.State, prState: pr.PrState, prURL: pr.PrUrl, prNumber: pr.PrNumber,
+			createdAt: pr.CreatedAt, decidedAt: pr.DecidedAt,
+		})
+	}
+	return api.ListAllChatSpaceBranches200JSONResponse{Branches: buildSpaceBranches(revIn, pushIn, true)}, nil
+}
+
 func (s *Server) ListChatSpaceBranches(ctx context.Context, req api.ListChatSpaceBranchesRequestObject) (api.ListChatSpaceBranchesResponseObject, error) {
 	u, _, ws := me(ctx)
 	sp, err := s.ownSpace(ctx, req.SpaceId)
 	if err != nil {
 		return nil, err
 	}
-	reviews, err := s.Q.ListChatSpaceCodeReviews(ctx, store.ListChatSpaceCodeReviewsParams{
-		SpaceID: &sp.ID, WorkspaceID: ws, UserID: u.ID,
-	})
+	out, err := s.listSpaceBranches(ctx, ws, u.ID, sp.ID, sp.Name)
 	if err != nil {
 		return nil, err
 	}
-	pushes, err := s.Q.ListChatSpacePushRequests(ctx, store.ListChatSpacePushRequestsParams{
-		SpaceID: &sp.ID, WorkspaceID: ws, UserID: u.ID,
-	})
-	if err != nil {
-		return nil, err
-	}
-	type key struct {
-		chatID  uuid.UUID
-		repoURL string
-		branch  string
-	}
-	byKey := map[key]*api.ChatSpaceBranch{}
-	order := []key{}
-	for _, r := range reviews {
-		if r.Branch == nil || *r.Branch == "" {
-			continue
-		}
-		k := key{chatID: r.ChatID, repoURL: r.RepoUrl, branch: *r.Branch}
-		byKey[k] = &api.ChatSpaceBranch{
-			ChatId:    r.ChatID,
-			ChatTitle: r.ChatTitle,
-			RepoUrl:   r.RepoUrl,
-			Branch:    *r.Branch,
-			Dirty:     r.Dirty,
-			Live:      r.Live,
-			UpdatedAt: r.UpdatedAt,
-		}
-		order = append(order, k)
-	}
-	for _, pr := range pushes {
-		k := key{chatID: pr.ChatID, repoURL: pr.RepoUrl, branch: pr.Branch}
-		state := pr.State
-		prTitle := pr.PrTitle
-		var prNum *int
-		if pr.PrNumber != nil {
-			n := int(*pr.PrNumber)
-			prNum = &n
-		}
-		ts := pr.CreatedAt
-		if pr.DecidedAt != nil && pr.DecidedAt.After(ts) {
-			ts = *pr.DecidedAt
-		}
-		if cur, ok := byKey[k]; ok {
-			if cur.PushState == nil {
-				cur.PushState = &state
-				cur.PrUrl = pr.PrUrl
-				cur.PrNumber = prNum
-				cur.PrTitle = &prTitle
-				if ts.After(cur.UpdatedAt) {
-					cur.UpdatedAt = ts
-				}
-			}
-			continue
-		}
-		byKey[k] = &api.ChatSpaceBranch{
-			ChatId:    pr.ChatID,
-			ChatTitle: pr.ChatTitle,
-			RepoUrl:   pr.RepoUrl,
-			Branch:    pr.Branch,
-			Dirty:     false,
-			Live:      false,
-			PrUrl:     pr.PrUrl,
-			PrNumber:  prNum,
-			PrTitle:   &prTitle,
-			PushState: &state,
-			UpdatedAt: ts,
-		}
-		order = append(order, k)
-	}
-	out := make([]api.ChatSpaceBranch, 0, len(order))
-	for _, k := range order {
-		out = append(out, *byKey[k])
-	}
-	// Newest activity first.
-	for i := 0; i < len(out); i++ {
-		for j := i + 1; j < len(out); j++ {
-			if out[j].UpdatedAt.After(out[i].UpdatedAt) {
-				out[i], out[j] = out[j], out[i]
-			}
-		}
-	}
-	// Keep return time non-zero.
-	_ = time.UTC
 	return api.ListChatSpaceBranches200JSONResponse{Branches: out}, nil
+}
+
+func (s *Server) SyncChatSpaceBranches(ctx context.Context, req api.SyncChatSpaceBranchesRequestObject) (api.SyncChatSpaceBranchesResponseObject, error) {
+	u, _, ws := me(ctx)
+	sp, err := s.ownSpace(ctx, req.SpaceId)
+	if err != nil {
+		return nil, err
+	}
+	if s.SyncSpacePRs != nil {
+		if err := s.SyncSpacePRs(ctx, ws, u.ID, sp.ID); err != nil {
+			s.Log.Warn("sync space PRs", "space", sp.ID, "err", err)
+		}
+	}
+	out, err := s.listSpaceBranches(ctx, ws, u.ID, sp.ID, sp.Name)
+	if err != nil {
+		return nil, err
+	}
+	return api.SyncChatSpaceBranches200JSONResponse{Branches: out}, nil
 }

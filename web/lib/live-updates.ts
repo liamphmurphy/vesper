@@ -26,11 +26,11 @@ const prefixes: Record<string, string[]> = {
   // A chat's playground starting, resetting or stopping on the runner.
   playground: ["playgrounds"],
   // A coding chat's Code dock, refreshed while a turn edits the workspace.
-  code_review: ["code-review"],
+  code_review: ["code-review", "spaces"],
   // A persona's push request staged, approved, pushed or failed.
-  push_request: ["push-requests"],
+  push_request: ["push-requests", "spaces"],
   // PR check runs and unresolved review threads synced from GitHub.
-  pr_feedback: ["tickets", "push-requests", "inbox", "bootstrap"],
+  pr_feedback: ["tickets", "push-requests", "inbox", "bootstrap", "spaces"],
   // A persona edit changes the name, color and avatar every chat using it embeds.
   persona: ["personas", "chats", "dock"],
   // A Safari tab shared with a chat: started, re-snapshotted, read by a persona or stopped.

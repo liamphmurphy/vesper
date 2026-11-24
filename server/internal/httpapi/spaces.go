@@ -108,10 +108,14 @@ func (s *Server) toSpaces(ctx context.Context, spaces []store.ChatSpace) ([]api.
 		if err != nil {
 			return nil, err
 		}
+		lastActivity := st.LastActivityAt
+		if lastActivity.IsZero() {
+			lastActivity = sp.UpdatedAt
+		}
 		item := api.ChatSpace{Id: sp.ID, Name: sp.Name, Description: sp.Description, Color: api.ChatSpaceColor(sp.Color), Instructions: sp.Instructions,
 			PersonaId: sp.PersonaID, ConnectorIds: sp.ConnectorIds, SpaceMemory: sp.SpaceMemory, ChatCount: int(st.ChatCount), SourceCount: int(st.SourceCount),
 			MemoryCount: int(st.MemoryCount), RepoCount: &repoCount, KnowledgeCount: &knowledgeCount, OpenTaskCount: &openTaskCount,
-			Repositories: &repos, KnowledgeLinks: &links, InlineTokens: runs.SpaceInlineTokens(sources), CreatedAt: sp.CreatedAt, UpdatedAt: sp.UpdatedAt}
+			Repositories: &repos, KnowledgeLinks: &links, InlineTokens: runs.SpaceInlineTokens(sources), LastActivityAt: &lastActivity, CreatedAt: sp.CreatedAt, UpdatedAt: sp.UpdatedAt}
 		if sp.PersonaID != nil {
 			if p, ok := personasByID[*sp.PersonaID]; ok {
 				item.Persona = &api.ChatSpacePersonaRef{Id: p.ID, Name: p.Name, Color: p.Color, AvatarUrl: personaAvatarURL(p)}

@@ -57,14 +57,18 @@ WITH d AS (
 SELECT s.blob_key::text FROM chat_space_sources s JOIN d ON d.id = s.space_id WHERE s.blob_key IS NOT NULL;
 
 -- name: ChatSpaceStats :many
--- Per space: active chats, sources, live memories, repos, knowledge links and open tasks.
+-- Per space: active chats, sources, live memories, repos, knowledge links, open tasks and latest activity.
 SELECT s.id,
   (SELECT count(*) FROM chat_sessions c WHERE c.space_id = s.id AND NOT c.archived AND NOT c.hidden)::int AS chat_count,
   (SELECT count(*) FROM chat_space_sources x WHERE x.space_id = s.id)::int AS source_count,
   (SELECT count(*) FROM memories m WHERE m.space_id = s.id AND m.superseded_by IS NULL)::int AS memory_count,
   (SELECT count(*) FROM chat_space_repositories r WHERE r.space_id = s.id)::int AS repo_count,
   (SELECT count(*) FROM chat_space_knowledge_links k WHERE k.space_id = s.id)::int AS knowledge_count,
-  (SELECT count(*) FROM chat_space_tasks t WHERE t.space_id = s.id AND NOT t.done)::int AS open_task_count
+  (SELECT count(*) FROM chat_space_tasks t WHERE t.space_id = s.id AND NOT t.done)::int AS open_task_count,
+  GREATEST(
+    s.updated_at,
+    COALESCE((SELECT max(coalesce(c.last_message_at, c.created_at)) FROM chat_sessions c WHERE c.space_id = s.id AND NOT c.archived AND NOT c.hidden), s.updated_at)
+  )::timestamptz AS last_activity_at
 FROM chat_spaces s WHERE s.id = ANY(@ids::uuid[]);
 
 -- name: ListChatSpaceRepositories :many
@@ -186,22 +190,48 @@ WHERE id = @id AND space_id = @space_id;
 DELETE FROM chat_space_tasks WHERE id = @id AND space_id = @space_id RETURNING *;
 
 -- name: ListChatSpacePushRequests :many
-SELECT pr.id, pr.chat_id, c.title AS chat_title, pr.repo_url, pr.branch, pr.title AS pr_title,
-       pr.state, pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
+SELECT pr.id, pr.chat_id, c.title AS chat_title, c.space_id, pr.repo_url, pr.branch, pr.head_sha,
+       pr.title AS pr_title, pr.state, pr.pr_state, pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
 FROM push_requests pr
 JOIN chat_sessions c ON c.id = pr.chat_id
-WHERE c.space_id = @space_id AND c.workspace_id = @workspace_id AND c.created_by = @user_id AND NOT c.hidden
+WHERE c.space_id = @space_id AND c.workspace_id = @workspace_id AND c.created_by = @user_id
+  AND NOT c.hidden AND NOT c.archived
 ORDER BY pr.created_at DESC
 LIMIT 50;
 
 -- name: ListChatSpaceCodeReviews :many
-SELECT cr.chat_id, c.title AS chat_title, cr.repo_url, cr.branch, cr.dirty, cr.live, cr.updated_at
+SELECT cr.chat_id, c.title AS chat_title, c.space_id, cr.repo_url, cr.branch, cr.head_sha, cr.dirty, cr.live, cr.updated_at
 FROM chat_code_reviews cr
 JOIN chat_sessions c ON c.id = cr.chat_id
-WHERE c.space_id = @space_id AND c.workspace_id = @workspace_id AND c.created_by = @user_id AND NOT c.hidden
+WHERE c.space_id = @space_id AND c.workspace_id = @workspace_id AND c.created_by = @user_id
+  AND NOT c.hidden AND NOT c.archived
   AND cr.branch IS NOT NULL AND cr.branch <> ''
 ORDER BY cr.updated_at DESC
 LIMIT 50;
+
+-- name: ListAllChatSpacePushRequests :many
+SELECT pr.id, pr.chat_id, c.title AS chat_title, s.id AS space_id, s.name AS space_name,
+       pr.repo_url, pr.branch, pr.head_sha, pr.title AS pr_title, pr.state, pr.pr_state,
+       pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
+FROM push_requests pr
+JOIN chat_sessions c ON c.id = pr.chat_id
+JOIN chat_spaces s ON s.id = c.space_id AND s.app IS NULL
+WHERE c.workspace_id = @workspace_id AND c.created_by = @user_id
+  AND NOT c.hidden AND NOT c.archived
+ORDER BY pr.created_at DESC
+LIMIT 100;
+
+-- name: ListAllChatSpaceCodeReviews :many
+SELECT cr.chat_id, c.title AS chat_title, s.id AS space_id, s.name AS space_name,
+       cr.repo_url, cr.branch, cr.head_sha, cr.dirty, cr.live, cr.updated_at
+FROM chat_code_reviews cr
+JOIN chat_sessions c ON c.id = cr.chat_id
+JOIN chat_spaces s ON s.id = c.space_id AND s.app IS NULL
+WHERE c.workspace_id = @workspace_id AND c.created_by = @user_id
+  AND NOT c.hidden AND NOT c.archived
+  AND cr.branch IS NOT NULL AND cr.branch <> ''
+ORDER BY cr.updated_at DESC
+LIMIT 100;
 
 -- name: CreateChatSpaceSource :one
 INSERT INTO chat_space_sources (space_id, kind, title, url, body, filename, content_type, size_bytes, blob_key, tokens)

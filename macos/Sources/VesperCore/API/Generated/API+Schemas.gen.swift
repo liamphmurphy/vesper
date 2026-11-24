@@ -5336,6 +5336,8 @@ extension API {
         /// Live Knowledge folders and pages linked to this space
         public var knowledgeCount: Swift.Int?
         public var knowledgeLinks: [ChatSpaceKnowledgeLink]?
+        /// Most recent chat activity or update in this space
+        public var lastActivityAt: Swift.String?
         /// Live entries in the space's memory
         public var memoryCount: Swift.Int
         public var name: Swift.String
@@ -5367,6 +5369,7 @@ extension API {
             instructions: Swift.String,
             knowledgeCount: Swift.Int? = nil,
             knowledgeLinks: [ChatSpaceKnowledgeLink]? = nil,
+            lastActivityAt: Swift.String? = nil,
             memoryCount: Swift.Int,
             name: Swift.String,
             openTaskCount: Swift.Int? = nil,
@@ -5390,6 +5393,7 @@ extension API {
             self.instructions = instructions
             self.knowledgeCount = knowledgeCount
             self.knowledgeLinks = knowledgeLinks
+            self.lastActivityAt = lastActivityAt
             self.memoryCount = memoryCount
             self.name = name
             self.openTaskCount = openTaskCount
@@ -5415,6 +5419,7 @@ extension API {
             case instructions
             case knowledgeCount = "knowledge_count"
             case knowledgeLinks = "knowledge_links"
+            case lastActivityAt = "last_activity_at"
             case memoryCount = "memory_count"
             case name
             case openTaskCount = "open_task_count"
@@ -5441,6 +5446,7 @@ extension API {
             self.instructions = try c.decode(Swift.String.self, forKey: .instructions)
             self.knowledgeCount = try c.decodeIfPresent(Swift.Int.self, forKey: .knowledgeCount)
             self.knowledgeLinks = try c.decodeIfPresent([ChatSpaceKnowledgeLink].self, forKey: .knowledgeLinks)
+            self.lastActivityAt = try c.decodeIfPresent(Swift.String.self, forKey: .lastActivityAt)
             self.memoryCount = try c.decode(Swift.Int.self, forKey: .memoryCount)
             self.name = try c.decode(Swift.String.self, forKey: .name)
             self.openTaskCount = try c.decodeIfPresent(Swift.Int.self, forKey: .openTaskCount)
@@ -5467,6 +5473,7 @@ extension API {
             try c.encode(instructions, forKey: .instructions)
             try c.encodeIfPresent(knowledgeCount, forKey: .knowledgeCount)
             try c.encodeIfPresent(knowledgeLinks, forKey: .knowledgeLinks)
+            try c.encodeIfPresent(lastActivityAt, forKey: .lastActivityAt)
             try c.encode(memoryCount, forKey: .memoryCount)
             try c.encode(name, forKey: .name)
             try c.encodeIfPresent(openTaskCount, forKey: .openTaskCount)
@@ -5483,85 +5490,110 @@ extension API {
     }
 
     public struct ChatSpaceBranch: Codable, Sendable, Equatable {
+        /// True while the branch or PR is still in flight (open/draft PR, pending push, or unpushed local work)
+        public var active: Swift.Bool
         public var branch: Swift.String
         public var chatId: Swift.String
         public var chatTitle: Swift.String
         public var dirty: Swift.Bool
         public var live: Swift.Bool
         public var prNumber: Swift.Int?
+        public var prState: PullRequestState?
         public var prTitle: Swift.String?
         public var prUrl: Swift.String?
         public var pushState: Swift.String?
         public var repoUrl: Swift.String
+        public var spaceId: Swift.String?
+        public var spaceName: Swift.String?
         public var updatedAt: Swift.String
 
         public init(
+            active: Swift.Bool,
             branch: Swift.String,
             chatId: Swift.String,
             chatTitle: Swift.String,
             dirty: Swift.Bool,
             live: Swift.Bool,
             prNumber: Swift.Int? = nil,
+            prState: PullRequestState? = nil,
             prTitle: Swift.String? = nil,
             prUrl: Swift.String? = nil,
             pushState: Swift.String? = nil,
             repoUrl: Swift.String,
+            spaceId: Swift.String? = nil,
+            spaceName: Swift.String? = nil,
             updatedAt: Swift.String
         ) {
+            self.active = active
             self.branch = branch
             self.chatId = chatId
             self.chatTitle = chatTitle
             self.dirty = dirty
             self.live = live
             self.prNumber = prNumber
+            self.prState = prState
             self.prTitle = prTitle
             self.prUrl = prUrl
             self.pushState = pushState
             self.repoUrl = repoUrl
+            self.spaceId = spaceId
+            self.spaceName = spaceName
             self.updatedAt = updatedAt
         }
 
         enum CodingKeys: Swift.String, CodingKey {
+            case active
             case branch
             case chatId = "chat_id"
             case chatTitle = "chat_title"
             case dirty
             case live
             case prNumber = "pr_number"
+            case prState = "pr_state"
             case prTitle = "pr_title"
             case prUrl = "pr_url"
             case pushState = "push_state"
             case repoUrl = "repo_url"
+            case spaceId = "space_id"
+            case spaceName = "space_name"
             case updatedAt = "updated_at"
         }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.active = try c.decode(Swift.Bool.self, forKey: .active)
             self.branch = try c.decode(Swift.String.self, forKey: .branch)
             self.chatId = try c.decode(Swift.String.self, forKey: .chatId)
             self.chatTitle = try c.decode(Swift.String.self, forKey: .chatTitle)
             self.dirty = try c.decode(Swift.Bool.self, forKey: .dirty)
             self.live = try c.decode(Swift.Bool.self, forKey: .live)
             self.prNumber = try c.decodeIfPresent(Swift.Int.self, forKey: .prNumber)
+            self.prState = try c.decodeIfPresent(PullRequestState.self, forKey: .prState)
             self.prTitle = try c.decodeIfPresent(Swift.String.self, forKey: .prTitle)
             self.prUrl = try c.decodeIfPresent(Swift.String.self, forKey: .prUrl)
             self.pushState = try c.decodeIfPresent(Swift.String.self, forKey: .pushState)
             self.repoUrl = try c.decode(Swift.String.self, forKey: .repoUrl)
+            self.spaceId = try c.decodeIfPresent(Swift.String.self, forKey: .spaceId)
+            self.spaceName = try c.decodeIfPresent(Swift.String.self, forKey: .spaceName)
             self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
         }
 
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(active, forKey: .active)
             try c.encode(branch, forKey: .branch)
             try c.encode(chatId, forKey: .chatId)
             try c.encode(chatTitle, forKey: .chatTitle)
             try c.encode(dirty, forKey: .dirty)
             try c.encode(live, forKey: .live)
             try c.encodeIfPresent(prNumber, forKey: .prNumber)
+            try c.encodeIfPresent(prState, forKey: .prState)
             try c.encodeIfPresent(prTitle, forKey: .prTitle)
             try c.encodeIfPresent(prUrl, forKey: .prUrl)
             try c.encodeIfPresent(pushState, forKey: .pushState)
             try c.encode(repoUrl, forKey: .repoUrl)
+            try c.encodeIfPresent(spaceId, forKey: .spaceId)
+            try c.encodeIfPresent(spaceName, forKey: .spaceName)
             try c.encode(updatedAt, forKey: .updatedAt)
         }
     }
@@ -26570,7 +26602,55 @@ extension API {
         }
     }
 
+    public struct ListAllChatSpaceBranchesResponse: Codable, Sendable, Equatable {
+        public var branches: [ChatSpaceBranch]
+
+        public init(
+            branches: [ChatSpaceBranch]
+        ) {
+            self.branches = branches
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case branches
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.branches = try c.decodeIfPresent([ChatSpaceBranch].self, forKey: .branches) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(branches, forKey: .branches)
+        }
+    }
+
     public struct ListChatSpaceBranchesResponse: Codable, Sendable, Equatable {
+        public var branches: [ChatSpaceBranch]
+
+        public init(
+            branches: [ChatSpaceBranch]
+        ) {
+            self.branches = branches
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case branches
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.branches = try c.decodeIfPresent([ChatSpaceBranch].self, forKey: .branches) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(branches, forKey: .branches)
+        }
+    }
+
+    public struct SyncChatSpaceBranchesResponse: Codable, Sendable, Equatable {
         public var branches: [ChatSpaceBranch]
 
         public init(

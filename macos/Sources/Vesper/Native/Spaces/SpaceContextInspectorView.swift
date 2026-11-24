@@ -29,6 +29,8 @@ struct SpaceContextInspectorView: View {
     @State private var selectedSuggestionIndex = 0
     @State private var suggestionsDismissed = false
     @State private var suppressNextPathChange = false
+    @State private var syncingBranches = false
+    @State private var showClosedBranches = false
     @FocusState private var knowledgePathFocused: Bool
 
     private static let personasRequest = API.listPersonas()
@@ -546,57 +548,123 @@ struct SpaceContextInspectorView: View {
     // MARK: - Branches & PRs
 
     private func branchesSection(branches: [API.ChatSpaceBranch], p: NativePalette) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Text("BRANCHES & PULL REQUESTS")
-                .font(.system(size: 10.5, weight: .semibold))
-                .foregroundStyle(p.tertiaryText)
+        let active = SpacesLogic.activeBranches(branches)
+        let closed = SpacesLogic.closedBranches(branches)
+
+        return VStack(alignment: .leading, spacing: 10) {
+            HStack {
+                Text("BRANCHES & PULL REQUESTS")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(p.tertiaryText)
+                Spacer()
+                Button {
+                    syncBranches()
+                } label: {
+                    if syncingBranches {
+                        ProgressView().controlSize(.mini)
+                    } else {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(p.accent)
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(syncingBranches)
+                .help("Check GitHub for merged or closed pull requests")
+            }
 
             if branches.isEmpty {
                 Text("No branches or pull requests in this Space yet.")
                     .font(.system(size: 12))
                     .foregroundStyle(p.tertiaryText)
             } else {
-                ForEach(branches, id: \.branch) { b in
-                    VStack(alignment: .leading, spacing: 4) {
-                        HStack(spacing: 6) {
-                            Image(systemName: "arrow.triangle.branch")
-                                .font(.system(size: 11))
-                                .foregroundStyle(p.accent)
-                            Text(b.branch)
-                                .font(.system(size: 12, weight: .medium, design: .monospaced))
-                                .foregroundStyle(p.text)
-                                .lineLimit(1)
-                            Spacer()
-                            if let prUrl = b.prUrl, !prUrl.isEmpty {
-                                Button("PR \u{2197}") { context.openExternal(prUrl) }
-                                    .buttonStyle(.plain)
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(p.accent)
-                            }
-                        }
-                        HStack(spacing: 6) {
-                            Text(ChatCodeReviewLogic.repoName(b.repoUrl))
-                                .font(.system(size: 10.5))
-                                .foregroundStyle(p.tertiaryText)
-                            if let status = b.pushState, !status.isEmpty {
-                                Text("\u{00B7} \(status)")
-                                    .font(.system(size: 10.5))
-                                    .foregroundStyle(p.secondaryText)
-                            }
-                            Spacer()
-                            Button(b.chatTitle.isEmpty ? "Open chat" : b.chatTitle) {
-                                context.navigate("/chat/\(b.chatId)")
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: 10.5))
-                            .foregroundStyle(p.accent)
-                            .lineLimit(1)
-                        }
+                if active.isEmpty {
+                    Text("No branches or pull requests in flight.")
+                        .font(.system(size: 12))
+                        .foregroundStyle(p.tertiaryText)
+                } else {
+                    ForEach(active, id: \.spaceBranchKey) { b in
+                        branchRow(b, dimmed: false, p: p)
                     }
-                    .padding(8)
-                    .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
-                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
                 }
+
+                if !closed.isEmpty {
+                    DisclosureGroup(isExpanded: $showClosedBranches) {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(closed, id: \.spaceBranchKey) { b in
+                                branchRow(b, dimmed: true, p: p)
+                            }
+                        }
+                        .padding(.top, 6)
+                    } label: {
+                        Text("Merged & Closed (\(closed.count))")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(p.secondaryText)
+                    }
+                    .padding(.top, 4)
+                }
+            }
+        }
+    }
+
+    private func branchRow(_ b: API.ChatSpaceBranch, dimmed: Bool, p: NativePalette) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: b.prState == .merged ? "arrow.triangle.merge" : "arrow.triangle.branch")
+                    .font(.system(size: 11))
+                    .foregroundStyle(dimmed ? p.tertiaryText : p.accent)
+                Text(b.branch)
+                    .font(.system(size: 12, weight: .medium, design: .monospaced))
+                    .foregroundStyle(dimmed ? p.secondaryText : p.text)
+                    .lineLimit(1)
+                Spacer()
+                if let prUrl = b.prUrl, !prUrl.isEmpty {
+                    Button(b.prNumber.map { "PR #\($0) \u{2197}" } ?? "PR \u{2197}") {
+                        context.openExternal(prUrl)
+                    }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(p.accent)
+                }
+            }
+            HStack(spacing: 6) {
+                Text(ChatCodeReviewLogic.repoName(b.repoUrl))
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(p.tertiaryText)
+                Text("\u{00B7} \(SpacesLogic.branchStatusLabel(for: b))")
+                    .font(.system(size: 10.5))
+                    .foregroundStyle(p.secondaryText)
+                Spacer()
+                Button(b.chatTitle.isEmpty ? "Open chat" : b.chatTitle) {
+                    context.navigate("/chat/\(b.chatId)")
+                }
+                .buttonStyle(.plain)
+                .font(.system(size: 10.5))
+                .foregroundStyle(p.accent)
+                .lineLimit(1)
+            }
+        }
+        .padding(8)
+        .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+    }
+
+    private func syncBranches() {
+        guard !syncingBranches else { return }
+        syncingBranches = true
+        Task {
+            defer { syncingBranches = false }
+            do {
+                let refreshed = try await context.store.mutate(
+                    API.syncChatSpaceBranches(spaceId: spaceId),
+                    invalidating: QueryInvalidation(resources: ["chat-spaces", "spaces"])
+                )
+                context.store.setData(
+                    API.ListChatSpaceBranchesResponse(branches: refreshed.branches),
+                    for: branchesRequest
+                )
+            } catch {
+                context.showToast(ToastItemModel(id: "space.branches.sync", title: (error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error))
             }
         }
     }

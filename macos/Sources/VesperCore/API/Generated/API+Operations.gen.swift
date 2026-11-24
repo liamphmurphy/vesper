@@ -435,6 +435,17 @@ extension API {
         )
     }
 
+    /// Active (in-flight) branches and pull requests across all spaces
+    ///
+    /// `GET /chat-spaces/branches`
+    public static func listAllChatSpaceBranches() -> APIRequest<ListAllChatSpaceBranchesResponse> {
+        return APIRequest(
+            method: "GET", template: "/chat-spaces/branches",
+            path: "/api/v1/chat-spaces/branches",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
     /// One of your spaces
     ///
     /// `GET /chat-spaces/{spaceId}`
@@ -472,13 +483,24 @@ extension API {
         )
     }
 
-    /// Active branches and pull requests across a space's chats
+    /// Active and recent branches and pull requests across a space's chats
     ///
     /// `GET /chat-spaces/{spaceId}/branches`
     public static func listChatSpaceBranches(spaceId: Swift.String) -> APIRequest<ListChatSpaceBranchesResponse> {
         return APIRequest(
             method: "GET", template: "/chat-spaces/{spaceId}/branches",
             path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/branches",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Immediately refresh GitHub pull request states for a space's open PRs
+    ///
+    /// `POST /chat-spaces/{spaceId}/branches/sync`
+    public static func syncChatSpaceBranches(spaceId: Swift.String) -> APIRequest<SyncChatSpaceBranchesResponse> {
+        return APIRequest(
+            method: "POST", template: "/chat-spaces/{spaceId}/branches/sync",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/branches/sync",
             query: [], headers: [:], body: nil, decode: .json
         )
     }

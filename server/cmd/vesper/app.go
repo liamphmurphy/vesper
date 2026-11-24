@@ -285,6 +285,10 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	go srv.Wiki.RunVaultWorker(ctx, log)
 	if appCfg.PRSyncInterval > 0 {
 		prSyncer := &prsync.Syncer{Pool: pool, Secrets: secretsSvc, Tracker: trackerSvc, Log: log, MinAge: time.Duration(appCfg.PRSyncInterval) * time.Second}
+		srv.SyncSpacePRs = func(ctx context.Context, ws, user, space uuid.UUID) error {
+			_, err := prSyncer.SyncSpace(ctx, ws, user, space)
+			return err
+		}
 		go prSyncer.Run(ctx, time.Duration(appCfg.PRSyncInterval)*time.Second)
 		approvals := &githubpr.ApprovalSyncer{Queries: q, Secrets: secretsSvc, GitHub: &githubpr.Service{BaseURL: srv.GitHubAPIURL}, Log: log}
 		go approvals.Run(ctx, time.Duration(appCfg.PRSyncInterval)*time.Second)

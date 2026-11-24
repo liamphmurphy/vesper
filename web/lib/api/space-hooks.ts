@@ -14,11 +14,16 @@ export const spaceKeys = {
   list: ["spaces", "list"] as const,
   detail: (id: string) => ["spaces", "detail", id] as const,
   sources: (id: string) => ["spaces", "sources", id] as const,
+  branches: ["spaces", "branches"] as const,
   canvases: ["spaces", "canvases"] as const,
 };
 
 export function useSpaces() {
   return useQuery({ queryKey: spaceKeys.list, queryFn: () => unwrap(api.GET("/chat-spaces")) });
+}
+
+export function useAllSpaceBranches() {
+  return useQuery({ queryKey: spaceKeys.branches, queryFn: () => unwrap(api.GET("/chat-spaces/branches")) });
 }
 
 export function useSpace(id?: string) {

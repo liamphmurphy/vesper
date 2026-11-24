@@ -13,7 +13,7 @@ test("harness log lines and video and audio progress refetch only their own quer
   assert.deepEqual(invalidatedBy("audio.updated"), ["audio"]);
   assert.deepEqual(invalidatedBy("custom_app.updated"), ["custom-apps"]);
   assert.deepEqual(invalidatedBy("browser_share.updated"), ["browser-shares"]);
-  assert.deepEqual(invalidatedBy("pr_feedback.updated"), ["tickets", "push-requests", "inbox", "bootstrap"]);
+  assert.deepEqual(invalidatedBy("pr_feedback.updated"), ["tickets", "push-requests", "inbox", "bootstrap", "spaces"]);
 });
 
 test("approval hints also refresh chat tool approvals", () => {
