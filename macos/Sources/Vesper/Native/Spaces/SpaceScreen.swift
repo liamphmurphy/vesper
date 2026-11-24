@@ -18,11 +18,11 @@ struct SpaceScreen: View {
     @State private var inspectorTabId = "context"
 
     // Inline new-chat composer
-    @State private var composerText = ""
     @State private var pickedPersonaId: String?
     @State private var pickedHarness: API.Harness?
     @State private var pickedModel: String?
-    @State private var researchMode = false
+    @State private var pickedEffort: API.ChatEffort?
+    @State private var pickedRepoUrl: String?
     @State private var skipReposForChat = false
     @State private var startingChat = false
     @State private var composerError: String?
@@ -302,184 +302,92 @@ struct SpaceScreen: View {
         let activePersona = personas.first(where: { $0.id == effectivePersonaId }) ?? personas.first
 
         return VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 10) {
-                TextField(
-                    researchMode ? "What should \(space.name) research?" : "New chat in \(space.name)",
-                    text: $composerText,
-                    axis: .vertical
-                )
-                .textFieldStyle(.plain)
-                .font(.system(size: 15))
-                .lineLimit(1...8)
-                .disabled(startingChat)
-                .onSubmit {
-                    startSpaceChat(space: space)
-                }
-
-                if !repos.isEmpty || !knowledgeLinks.isEmpty {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 6) {
-                            if !repos.isEmpty {
-                                Button {
-                                    skipReposForChat.toggle()
-                                } label: {
-                                    HStack(spacing: 4) {
-                                        Image(systemName: "chevron.left.forwardslash.chevron.right")
-                                            .font(.system(size: 9.5))
-                                        Text(skipReposForChat
-                                            ? "Repos skipped"
-                                            : repos.map { ChatCodeReviewLogic.repoName($0.repoUrl) }.joined(separator: ", "))
-                                            .font(.system(size: 11))
-                                            .strikethrough(skipReposForChat)
-                                    }
-                                    .foregroundStyle(skipReposForChat ? p.tertiaryText : p.secondaryText)
-                                    .padding(.horizontal, 8)
-                                    .padding(.vertical, 3)
-                                    .background(p.background, in: Capsule())
-                                    .overlay(Capsule().stroke(p.border))
-                                }
-                                .buttonStyle(.plain)
-                                .help(skipReposForChat ? "Click to include Space repos" : "Click to skip repos for a brainstorm chat")
-                            }
-                            ForEach(knowledgeLinks.prefix(3), id: \.id) { link in
+            if !repos.isEmpty || !knowledgeLinks.isEmpty {
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 6) {
+                        if !repos.isEmpty {
+                            Button {
+                                skipReposForChat.toggle()
+                            } label: {
                                 HStack(spacing: 4) {
-                                    Image(systemName: link.kind == .folder ? "folder" : "doc.text")
+                                    Image(systemName: "chevron.left.forwardslash.chevron.right")
                                         .font(.system(size: 9.5))
-                                    Text(link.kind == .folder ? "\(link.path)/" : link.path)
+                                    Text(skipReposForChat
+                                        ? "Repos skipped"
+                                        : repos.map { ChatCodeReviewLogic.repoName($0.repoUrl) }.joined(separator: ", "))
                                         .font(.system(size: 11))
-                                        .lineLimit(1)
+                                        .strikethrough(skipReposForChat)
                                 }
-                                .foregroundStyle(p.secondaryText)
+                                .foregroundStyle(skipReposForChat ? p.tertiaryText : p.secondaryText)
                                 .padding(.horizontal, 8)
                                 .padding(.vertical, 3)
-                                .background(p.background, in: Capsule())
+                                .background(p.surface, in: Capsule())
                                 .overlay(Capsule().stroke(p.border))
                             }
+                            .buttonStyle(.plain)
+                            .help(skipReposForChat ? "Click to include Space repos" : "Click to skip repos for a brainstorm chat")
                         }
-                    }
-                }
-
-                HStack(spacing: 8) {
-                    // Persona menu
-                    Menu {
-                        ForEach(personas, id: \.id) { persona in
-                            Button {
-                                pickedPersonaId = persona.id
-                            } label: {
-                                if persona.id == effectivePersonaId {
-                                    Label(persona.name, systemImage: "checkmark")
-                                } else {
-                                    Text(persona.name)
-                                }
+                        ForEach(knowledgeLinks.prefix(3), id: \.id) { link in
+                            HStack(spacing: 4) {
+                                Image(systemName: link.kind == .folder ? "folder" : "doc.text")
+                                    .font(.system(size: 9.5))
+                                Text(link.kind == .folder ? "\(link.path)/" : link.path)
+                                    .font(.system(size: 11))
+                                    .lineLimit(1)
                             }
+                            .foregroundStyle(p.secondaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 3)
+                            .background(p.surface, in: Capsule())
+                            .overlay(Capsule().stroke(p.border))
                         }
-                    } label: {
-                        HStack(spacing: 5) {
-                            WorkPersonaAvatarView(
-                                id: activePersona?.id,
-                                handle: nil,
-                                name: activePersona?.name ?? "Assistant",
-                                size: 16,
-                                active: false
-                            )
-                            Text(activePersona?.name ?? "Assistant")
-                                .font(.system(size: 12))
-                                .foregroundStyle(p.text)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(p.surface, in: Capsule())
-                        .overlay(Capsule().stroke(p.border))
                     }
-                    .menuStyle(.borderlessButton)
-
-                    // Model menu
-                    Menu {
-                        Button("Default model") {
-                            pickedHarness = nil
-                            pickedModel = nil
-                        }
-                        ForEach(models, id: \.harness.rawValue) { group in
-                            Section(group.label) {
-                                ForEach(group.models, id: \.id) { m in
-                                    Button {
-                                        pickedHarness = group.harness
-                                        pickedModel = m.id
-                                    } label: {
-                                        let selected = pickedHarness == group.harness && pickedModel == m.id
-                                        if selected {
-                                            Label(m.label, systemImage: "checkmark")
-                                        } else {
-                                            Text(m.label)
-                                        }
-                                    }
-                                    .disabled(!group.available)
-                                }
-                            }
-                        }
-                    } label: {
-                        let modelName: String = {
-                            if let h = pickedHarness, let m = pickedModel,
-                               let label = models.first(where: { $0.harness == h })?.models.first(where: { $0.id == m })?.label {
-                                return label
-                            }
-                            return "Default model"
-                        }()
-                        HStack(spacing: 4) {
-                            Text(modelName)
-                                .font(.system(size: 12))
-                                .foregroundStyle(p.secondaryText)
-                            Image(systemName: "chevron.down")
-                                .font(.system(size: 9))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                        .padding(.horizontal, 8)
-                        .padding(.vertical, 4)
-                        .background(p.surface, in: Capsule())
-                        .overlay(Capsule().stroke(p.border))
-                    }
-                    .menuStyle(.borderlessButton)
-
-                    Toggle("Research", isOn: $researchMode)
-                        .toggleStyle(.button)
-                        .controlSize(.small)
-                        .disabled(startingChat)
-
-                    Spacer()
-
-                    Button {
-                        startSpaceChat(space: space)
-                    } label: {
-                        Image(systemName: "arrow.up.circle.fill")
-                            .font(.system(size: 24))
-                            .foregroundStyle(!composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !startingChat ? p.accent : p.tertiaryText)
-                    }
-                    .buttonStyle(.plain)
-                    .disabled(startingChat || composerText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    .help(researchMode ? "Plan research" : "Start chat")
                 }
             }
-            .padding(.horizontal, 16)
-            .padding(.vertical, 12)
-            .background(p.surface, in: RoundedRectangle(cornerRadius: 14))
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(p.border))
+
+            ChatComposerSlot(
+                chatId: nil,
+                session: nil,
+                personas: personas,
+                activePersona: activePersona,
+                harnessModels: models,
+                harnesses: [],
+                workflows: [],
+                repositories: [],
+                activeTicketRuns: [],
+                selectedHarness: $pickedHarness,
+                selectedModel: $pickedModel,
+                selectedEffort: $pickedEffort,
+                selectedRepoUrl: $pickedRepoUrl,
+                onSelectNewChatPersona: { id in pickedPersonaId = id },
+                onSend: { submission in
+                    await sendFromSpaceComposer(space: space, submission: submission)
+                },
+                onCancel: {},
+                onSetRepository: { repoUrl in
+                    pickedRepoUrl = repoUrl
+                    return nil
+                },
+                onCompact: { _ in nil },
+                onStartWorkflow: { _, _ in nil },
+                onStartMusic: { _ in nil },
+                onCompare: { _, _ in nil },
+                onStartLiveVoice: {
+                    context.navigate("/chat")
+                },
+                inline: true,
+                placeholderOverride: "New chat in \(space.name)"
+            )
 
             if let composerError {
                 Text(composerError)
                     .font(.system(size: 12))
                     .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
             } else {
-                Text(
-                    researchMode
-                        ? "The persona proposes a research plan to approve; its report joins \(space.name)\u{2019}s sources."
-                        : SpacesLogic.usesSummary(for: space)
-                )
-                .font(.system(size: 12))
-                .foregroundStyle(p.tertiaryText)
-                .padding(.horizontal, 4)
+                Text(SpacesLogic.usesSummary(for: space))
+                    .font(.system(size: 12))
+                    .foregroundStyle(p.tertiaryText)
+                    .padding(.horizontal, 4)
             }
         }
     }
@@ -935,8 +843,47 @@ struct SpaceScreen: View {
         }
     }
 
-    private func startSpaceChat(space: API.ChatSpace, taskId: String? = nil, initialBody: String? = nil) {
-        let body = (initialBody ?? composerText).trimmingCharacters(in: .whitespacesAndNewlines)
+    @MainActor
+    private func sendFromSpaceComposer(space: API.ChatSpace, submission: ChatComposerSubmission) async -> String? {
+        let body = submission.body.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard (!body.isEmpty || !submission.attachmentIds.isEmpty), !startingChat else { return nil }
+        startingChat = true
+        composerError = nil
+        defer { startingChat = false }
+        do {
+            let created = try await context.store.mutate(
+                API.createChat(body: API.NewChat(
+                    effort: pickedEffort,
+                    harness: pickedHarness,
+                    model: pickedModel,
+                    noRepo: skipReposForChat ? true : nil,
+                    personaId: pickedPersonaId,
+                    repoUrl: pickedRepoUrl,
+                    spaceId: space.id
+                )),
+                invalidating: QueryInvalidation(resources: ["chats", "spaces"])
+            )
+            _ = try await context.store.mutate(
+                API.postChatMessage(
+                    id: created.id,
+                    body: API.NewChatMessage(
+                        attachmentIds: submission.attachmentIds.isEmpty ? nil : submission.attachmentIds,
+                        body: body,
+                        contextRefs: submission.contextRefs,
+                        research: submission.research ? true : nil
+                    )
+                ),
+                invalidating: QueryInvalidation(resources: ["chats", "spaces"])
+            )
+            context.navigate("/chat/\(created.id)")
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func startSpaceChat(space: API.ChatSpace, taskId: String? = nil, initialBody: String) {
+        let body = initialBody.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !body.isEmpty, !startingChat else { return }
         startingChat = true
         composerError = nil
@@ -945,10 +892,12 @@ struct SpaceScreen: View {
             do {
                 let created = try await context.store.mutate(
                     API.createChat(body: API.NewChat(
+                        effort: pickedEffort,
                         harness: pickedHarness,
                         model: pickedModel,
                         noRepo: skipReposForChat ? true : nil,
                         personaId: pickedPersonaId,
+                        repoUrl: pickedRepoUrl,
                         spaceId: space.id,
                         taskId: taskId
                     )),
@@ -957,11 +906,10 @@ struct SpaceScreen: View {
                 _ = try await context.store.mutate(
                     API.postChatMessage(
                         id: created.id,
-                        body: API.NewChatMessage(body: body, research: researchMode ? true : nil)
+                        body: API.NewChatMessage(body: body)
                     ),
                     invalidating: QueryInvalidation(resources: ["chats", "spaces"])
                 )
-                if initialBody == nil { composerText = "" }
                 context.navigate("/chat/\(created.id)")
             } catch {
                 composerError = (error as? APIError)?.userMessage ?? error.localizedDescription

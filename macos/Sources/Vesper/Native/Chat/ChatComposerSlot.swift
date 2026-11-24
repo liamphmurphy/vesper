@@ -32,6 +32,8 @@ struct ChatComposerSlot: View {
     var onOpenOutline: (@MainActor () -> Void)? = nil
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
+    var inline: Bool = false
+    var placeholderOverride: String? = nil
 
     var body: some View {
         ChatComposerView(
@@ -59,7 +61,9 @@ struct ChatComposerSlot: View {
             onStartLiveVoice: onStartLiveVoice,
             onOpenOutline: onOpenOutline,
             prefill: prefill,
-            onPrefillApplied: onPrefillApplied
+            onPrefillApplied: onPrefillApplied,
+            inline: inline,
+            placeholderOverride: placeholderOverride
         )
     }
 }
