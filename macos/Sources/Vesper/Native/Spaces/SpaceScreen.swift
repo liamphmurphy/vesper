@@ -1048,7 +1048,7 @@ struct SpaceScreen: View {
 
 /// Sources management modal for a Space: upload files, paste text, add websites, and remove sources.
 private struct SpaceSourcesSheet: View {
-    enum AddMode { case list, text, website }
+    enum AddMode { case list, text, website, library, link, canvas }
 
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -1063,6 +1063,10 @@ private struct SpaceSourcesSheet: View {
     @State private var urlInput = ""
     @State private var busy = false
     @State private var errorMessage: String?
+
+    private static let libraryRequest = API.listLibraryItems()
+    private static let savedLinksRequest = API.listLibraryItems(kind: .link)
+    private static let canvasesRequest = API.listMyCanvases()
 
     private var sourcesRequest: APIRequest<API.ChatSpaceSourceList> {
         API.listChatSpaceSources(spaceId: spaceId)
@@ -1090,33 +1094,67 @@ private struct SpaceSourcesSheet: View {
             }
 
             if mode == .list {
-                HStack(spacing: 8) {
-                    Button { uploadFile() } label: {
-                        Label("Upload file", systemImage: "doc.badge.plus")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(busy)
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack(spacing: 8) {
+                        Button { uploadFile() } label: {
+                            Label("Upload file", systemImage: "doc.badge.plus")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
 
-                    Button {
-                        mode = .text
-                        titleInput = ""
-                        textInput = ""
-                        errorMessage = nil
-                    } label: {
-                        Label("Paste text", systemImage: "text.alignleft")
-                    }
-                    .buttonStyle(.bordered)
-                    .disabled(busy)
+                        Button {
+                            mode = .text
+                            titleInput = ""
+                            textInput = ""
+                            errorMessage = nil
+                        } label: {
+                            Label("Paste text", systemImage: "text.alignleft")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
 
-                    Button {
-                        mode = .website
-                        urlInput = ""
-                        errorMessage = nil
-                    } label: {
-                        Label("Add website", systemImage: "globe")
+                        Button {
+                            mode = .website
+                            urlInput = ""
+                            errorMessage = nil
+                        } label: {
+                            Label("Add website", systemImage: "globe")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
                     }
-                    .buttonStyle(.bordered)
-                    .disabled(busy)
+
+                    HStack(spacing: 8) {
+                        Button {
+                            mode = .library
+                            errorMessage = nil
+                            context.store.load(Self.libraryRequest)
+                        } label: {
+                            Label("From Library", systemImage: "books.vertical")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
+
+                        Button {
+                            mode = .link
+                            errorMessage = nil
+                            context.store.load(Self.savedLinksRequest)
+                        } label: {
+                            Label("From saved links", systemImage: "link")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
+
+                        Button {
+                            mode = .canvas
+                            errorMessage = nil
+                            context.store.load(Self.canvasesRequest)
+                        } label: {
+                            Label("From a canvas", systemImage: "square.on.square")
+                        }
+                        .buttonStyle(.bordered)
+                        .disabled(busy)
+                    }
                 }
 
                 if let errorMessage {
@@ -1209,11 +1247,129 @@ private struct SpaceSourcesSheet: View {
                     .buttonStyle(.borderedProminent)
                     .disabled(busy || urlInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                 }
+            } else if mode == .library || mode == .link {
+                let isLinks = mode == .link
+                let entry = context.store.entry(isLinks ? Self.savedLinksRequest : Self.libraryRequest)
+                let items = (entry.data?.items ?? []).filter { isLinks ? $0.kind == .link : $0.kind != .link }
+                pickerListView(
+                    title: isLinks ? "From saved links" : "From Library",
+                    loading: entry.data == nil && entry.isFetching,
+                    isEmpty: items.isEmpty,
+                    emptyText: isLinks ? "No saved links yet." : "Nothing in your Library yet.",
+                    p: p
+                ) {
+                    ForEach(items, id: \.id) { item in
+                        Button {
+                            addLibraryOrLinkSource(itemId: item.id, kind: isLinks ? .link : .library)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: isLinks ? "link" : "doc")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(p.secondaryText)
+                                Text(item.title.isEmpty ? item.filename : item.title)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(p.text)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(isLinks ? (item.site ?? item.url ?? "link") : item.kind.rawValue)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(p.tertiaryText)
+                                    .lineLimit(1)
+                            }
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+                        Divider()
+                    }
+                }
+            } else if mode == .canvas {
+                let entry = context.store.entry(Self.canvasesRequest)
+                let canvases = entry.data?.canvases ?? []
+                pickerListView(
+                    title: "From a canvas",
+                    loading: entry.data == nil && entry.isFetching,
+                    isEmpty: canvases.isEmpty,
+                    emptyText: "No canvases yet.",
+                    p: p
+                ) {
+                    ForEach(canvases, id: \.id) { canvas in
+                        Button {
+                            addCanvasSource(canvasId: canvas.id)
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.on.square")
+                                    .font(.system(size: 12))
+                                    .foregroundStyle(p.secondaryText)
+                                Text(canvas.title.isEmpty ? "Untitled canvas" : canvas.title)
+                                    .font(.system(size: 13, weight: .medium))
+                                    .foregroundStyle(p.text)
+                                    .lineLimit(1)
+                                Spacer()
+                                Text(canvas.kind.rawValue)
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(p.tertiaryText)
+                                    .lineLimit(1)
+                            }
+                            .padding(.vertical, 6)
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(busy)
+                        Divider()
+                    }
+                }
             }
         }
         .padding(20)
         .frame(width: 560)
         .onAppear { context.store.load(sourcesRequest) }
+    }
+
+    @ViewBuilder
+    private func pickerListView<Content: View>(
+        title: String,
+        loading: Bool,
+        isEmpty: Bool,
+        emptyText: String,
+        p: NativePalette,
+        @ViewBuilder rows: () -> Content
+    ) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(p.text)
+            if loading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, minHeight: 160)
+            } else if isEmpty {
+                Text(emptyText)
+                    .font(.callout)
+                    .foregroundStyle(p.secondaryText)
+                    .frame(maxWidth: .infinity, minHeight: 160)
+            } else {
+                ScrollView {
+                    LazyVStack(spacing: 0) {
+                        rows()
+                    }
+                }
+                .frame(minHeight: 180, maxHeight: 300)
+            }
+            if let errorMessage {
+                Text(errorMessage).font(.caption).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+            }
+            HStack {
+                Button("Back") { mode = .list }
+                    .disabled(busy)
+                Spacer()
+                if busy {
+                    Text("Adding\u{2026}")
+                        .font(.caption)
+                        .foregroundStyle(p.tertiaryText)
+                }
+            }
+        }
     }
 
     private func addTextSource() {
@@ -1252,6 +1408,48 @@ private struct SpaceSourcesSheet: View {
                     API.addChatSpaceSource(
                         spaceId: spaceId,
                         body: API.NewChatSpaceSource(kind: .website, url: url)
+                    ),
+                    invalidating: QueryInvalidation(resources: ["spaces"])
+                )
+                _ = await context.store.refetch(sourcesRequest)
+                mode = .list
+            } catch {
+                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func addLibraryOrLinkSource(itemId: String, kind: API.NewChatSpaceSource.Kind) {
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await context.store.mutate(
+                    API.addChatSpaceSource(
+                        spaceId: spaceId,
+                        body: API.NewChatSpaceSource(itemId: itemId, kind: kind)
+                    ),
+                    invalidating: QueryInvalidation(resources: ["spaces"])
+                )
+                _ = await context.store.refetch(sourcesRequest)
+                mode = .list
+            } catch {
+                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+            }
+        }
+    }
+
+    private func addCanvasSource(canvasId: String) {
+        busy = true
+        errorMessage = nil
+        Task {
+            defer { busy = false }
+            do {
+                _ = try await context.store.mutate(
+                    API.addChatSpaceSource(
+                        spaceId: spaceId,
+                        body: API.NewChatSpaceSource(canvasId: canvasId, kind: .canvas)
                     ),
                     invalidating: QueryInvalidation(resources: ["spaces"])
                 )

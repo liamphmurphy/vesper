@@ -28,7 +28,7 @@ import { AttachmentChips, DropOverlay, useAttachments, useFileDrop } from "@/app
 import { PersonaAvatar, personaLook } from "@/app/(app)/chat/_components/persona";
 import { modelLabel, type Selection } from "@/app/(app)/chat/_components/model-picker";
 import { ResearchToggle } from "@/app/(app)/chat/_components/reply-tools";
-import { ColorPicker, SpaceTile, useConnectorNames, useProjectName } from "./space-parts";
+import { ColorPicker, ConnectorSelect, SpaceTile, useConnectorNames, useProjectName } from "./space-parts";
 import { SourcesDialog } from "./sources-dialog";
 
 const errorText = (e: unknown) => (e instanceof Error ? e.message : "Something went wrong. Please try again.");
@@ -298,19 +298,23 @@ function ChatList({ space }: { space: Space }) {
   );
 }
 
-/** Settings opens the name, description and color for editing in the header. */
+/** Settings opens the name, description, color and connectors for editing in the header. */
 function HeaderEditor({ space, onDone }: { space: Space; onDone: () => void }) {
   const update = useUpdateSpace();
   const [name, setName] = useState(space.name);
   const [description, setDescription] = useState(space.description);
   const [color, setColor] = useState<SpaceColor>(space.color);
+  const [connectors, setConnectors] = useState<string[]>(space.connector_ids);
   return (
     <form
       className="flex flex-1 flex-col gap-[8px]"
       onSubmit={(e) => {
         e.preventDefault();
         if (!name.trim()) return;
-        update.mutate({ id: space.id, patch: { name: name.trim(), description: description.trim(), color } }, { onSuccess: onDone });
+        update.mutate(
+          { id: space.id, patch: { name: name.trim(), description: description.trim(), color, connector_ids: connectors } },
+          { onSuccess: onDone },
+        );
       }}
     >
       <div className="flex items-center gap-[12px]">
@@ -318,6 +322,9 @@ function HeaderEditor({ space, onDone }: { space: Space; onDone: () => void }) {
         <input aria-label="Name" autoFocus value={name} maxLength={80} onChange={(e) => setName(e.target.value)} className="h-[36px] min-w-[0px] flex-1 rounded-lg border border-border-strong bg-surface-sunken px-[12px] text-18 font-semibold text-fg focus:border-accent focus:outline-none" />
       </div>
       <input aria-label="Description" value={description} maxLength={300} placeholder="What this space is for" onChange={(e) => setDescription(e.target.value)} className="ml-[48px] h-[32px] rounded-lg border border-border-strong bg-surface-sunken px-[12px] text-13 text-fg placeholder:text-fg-tertiary focus:border-accent focus:outline-none" />
+      <div className="ml-[48px] max-w-[320px]">
+        <ConnectorSelect value={connectors} onChange={setConnectors} disabled={update.isPending} />
+      </div>
       {update.isError && <p role="alert" className="ml-[48px] text-12 text-pill-blocked-fg">{errorText(update.error)}</p>}
       <div className="ml-[48px] flex gap-[8px]">
         <Button type="submit" variant="primary" disabled={update.isPending || !name.trim()}>{update.isPending ? "Saving…" : "Save"}</Button>

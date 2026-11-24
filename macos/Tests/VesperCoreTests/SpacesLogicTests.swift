@@ -185,4 +185,15 @@ final class SpacesLogicTests: XCTestCase {
             "/api/v1/chats?persona_id=all&space=all"
         )
     }
+
+    func testToggledConnectorIdsAndMemoryCountLabel() {
+        XCTAssertEqual(SpacesLogic.toggledConnectorIds([], toggling: "c1"), ["c1"])
+        XCTAssertEqual(SpacesLogic.toggledConnectorIds(["c1", "c2"], toggling: "c3"), ["c1", "c2", "c3"])
+        XCTAssertEqual(SpacesLogic.toggledConnectorIds(["c1", "c2", "c3"], toggling: "c2"), ["c1", "c3"])
+        XCTAssertEqual(SpacesLogic.toggledConnectorIds(["c1", "c1"], toggling: "c2"), ["c1", "c2"])
+
+        XCTAssertNil(SpacesLogic.memoryCountLabel(0))
+        XCTAssertEqual(SpacesLogic.memoryCountLabel(1), "1 saved memory")
+        XCTAssertEqual(SpacesLogic.memoryCountLabel(4), "4 saved memories")
+    }
 }
