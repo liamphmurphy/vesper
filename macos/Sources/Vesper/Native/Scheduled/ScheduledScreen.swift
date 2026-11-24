@@ -268,13 +268,36 @@ struct ScheduledScreen: View {
             }
 
             HStack(spacing: 16) {
-                Stepper("Time limit: \(draft.maxMinutes)m", value: $draft.maxMinutes, in: 1...240)
+                HStack(spacing: 8) {
+                    Toggle("Time limit", isOn: Binding(
+                        get: { draft.maxMinutes != nil },
+                        set: { draft.maxMinutes = $0 ? (draft.maxMinutes ?? 15) : nil }
+                    ))
+                    if let minutes = draft.maxMinutes {
+                        Stepper("\(minutes)m", value: Binding(
+                            get: { draft.maxMinutes ?? 15 },
+                            set: { draft.maxMinutes = $0 }
+                        ), in: 1...240)
+                    } else {
+                        Text("Unlimited").font(.callout).foregroundStyle(p.secondaryText)
+                    }
+                }
                 if draft.kind != .customApp {
-                    let dollars = Double(draft.maxCostMicros) / 1_000_000.0
-                    Stepper("Budget: \(ScheduledLogic.moneyLabel(micros: draft.maxCostMicros))", value: Binding(
-                        get: { dollars },
-                        set: { draft.maxCostMicros = max(10_000, Int(($0 * 1_000_000.0).rounded())) }
-                    ), in: 0.25...50.0, step: 0.25)
+                    HStack(spacing: 8) {
+                        Toggle("Budget", isOn: Binding(
+                            get: { draft.maxCostMicros != nil },
+                            set: { draft.maxCostMicros = $0 ? (draft.maxCostMicros ?? 1_000_000) : nil }
+                        ))
+                        if let micros = draft.maxCostMicros {
+                            let dollars = Double(micros) / 1_000_000.0
+                            Stepper(ScheduledLogic.moneyLabel(micros: micros), value: Binding(
+                                get: { dollars },
+                                set: { draft.maxCostMicros = max(10_000, Int(($0 * 1_000_000.0).rounded())) }
+                            ), in: 0.25...50.0, step: 0.25)
+                        } else {
+                            Text("Unlimited").font(.callout).foregroundStyle(p.secondaryText)
+                        }
+                    }
                 }
             }
         }
