@@ -161,6 +161,84 @@ final class NodeGraphTests: XCTestCase {
         XCTAssertEqual(expandedCol10?.branch.map(\.id), ["run:a", "run:b"])
     }
 
+    func testRunGraphBuildsSubagentJobsAndBranchesUnderTurn() {
+        let run = API.Run(
+            agent: .init(colorIndex: 0, handle: "judy", id: "a1", name: "Judy"),
+            approvalScopes: [],
+            costUsd: 0.10,
+            harness: "claude-code",
+            id: "r1",
+            inputTokens: 1000,
+            mode: .init(rawValue: "auto"),
+            model: "opus-5.5",
+            outputTokens: 200,
+            plan: [],
+            purpose: .chat,
+            scopes: [],
+            startedAt: "2026-11-24T20:00:00Z",
+            state: .running,
+            ticketKey: "",
+            toolCalls: 2
+        )
+        let turn = API.RunTurn(
+            endedAt: nil,
+            exitCode: nil,
+            hasLog: false,
+            inputMessage: "Fix DAG",
+            processStartedAt: nil,
+            seq: 1,
+            startedAt: "2026-11-24T20:00:00Z",
+            status: .running,
+            trigger: .start,
+            usage: nil
+        )
+        let job = API.SubagentJob(
+            agentType: .explorer,
+            batchId: .value("batch-1"),
+            cachedTokens: 100,
+            completedAt: .value("2026-11-24T20:00:12Z"),
+            costUsd: .value(0.015),
+            createdAt: "2026-11-24T20:00:02Z",
+            effort: "low",
+            error: "",
+            id: "job-1",
+            inputTokens: 500,
+            model: "haiku",
+            outputTokens: 120,
+            prompt: "Find files",
+            reason: "Fast search",
+            requestedTier: "deep",
+            resultText: "Found it",
+            role: "Codebase Researcher",
+            startedAt: .value("2026-11-24T20:00:03Z"),
+            status: .completed,
+            tier: "fast",
+            toolCalls: 4
+        )
+        let detail = API.RunDetail(
+            approvals: [],
+            childRuns: [],
+            events: [
+                API.RunEvent(at: "2026-11-24T20:00:00Z", payload: ["state": .string("turn_started"), "turn": .int(1)], seq: 1, type: .lifecycle),
+                API.RunEvent(at: "2026-11-24T20:00:02Z", payload: ["state": .string("subagent_started"), "subagent_id": .string("job-1")], seq: 2, type: .lifecycle),
+            ],
+            run: run,
+            subagentJobs: [job],
+            turns: [turn]
+        )
+
+        let graph = RunGraphLogic.buildRunGraph(detail: detail)
+        let layout = RunGraphLogic.layoutRunGraph(graph)
+        let col1 = layout.columns.first { $0.main.id == "turn:1" }
+        XCTAssertEqual(col1?.branch.map { $0.id }, ["job:job-1"])
+
+        let doc = RunGraphLogic.buildDocument(from: layout)
+        let jobDocNode = doc.nodes.first { $0.id == "job:job-1" }
+        XCTAssertEqual(jobDocNode?.title, "↳ Codebase Researcher")
+        XCTAssertTrue(jobDocNode?.subtitle.contains("capped ↓") == true)
+        XCTAssertTrue(doc.edges.contains { $0.from == "turn:1" && $0.to == "job:job-1" })
+    }
+
     // MARK: - WorkflowsLogic
 
     func testWorkflowsLogicConnectionsAncestorsRemoveDiffAndGates() {
