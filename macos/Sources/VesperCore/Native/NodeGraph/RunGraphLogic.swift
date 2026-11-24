@@ -75,6 +75,54 @@ public enum RunGraphLogic {
         public var expanded: Bool
     }
 
+    public enum SubagentFlag: String, Sendable, Equatable, Hashable {
+        case capped
+        case spinning
+        case queueBound = "queue_bound"
+        case serial
+        case failed
+
+        public var label: String {
+            switch self {
+            case .capped: "capped ↓"
+            case .spinning: "spinning"
+            case .queueBound: "queue"
+            case .serial: "serial!"
+            case .failed: "failed"
+            }
+        }
+    }
+
+    public struct SubagentJobNode: Sendable, Equatable, Identifiable {
+        public var id: String
+        public var jobId: String
+        public var turn: Int
+        public var batchId: String?
+        public var batchSize: Int
+        public var agentType: String
+        public var role: String
+        public var reason: String
+        public var requestedTier: String
+        public var tier: String
+        public var model: String
+        public var effort: String
+        public var status: NodeStatus
+        public var toolCalls: Int
+        public var inputTokens: Int
+        public var outputTokens: Int
+        public var cachedTokens: Int
+        public var costUsd: Double?
+        public var createdAt: String
+        public var startedAt: String?
+        public var completedAt: String?
+        public var queuedMs: Double?
+        public var durationMs: Double?
+        public var prompt: String
+        public var resultText: String
+        public var error: String
+        public var flags: [SubagentFlag]
+    }
+
     public struct GateNode: Sendable, Equatable, Identifiable {
         public var id: String
         public var gate: GateKind
@@ -99,6 +147,7 @@ public enum RunGraphLogic {
     public enum GraphNode: Sendable, Equatable, Identifiable {
         case turn(TurnNode)
         case subagentRun(SubagentNode)
+        case subagentJob(SubagentJobNode)
         case gate(GateNode)
         case error(ErrorNode)
         case outcome(OutcomeNode)
@@ -107,6 +156,7 @@ public enum RunGraphLogic {
             switch self {
             case .turn(let n): n.id
             case .subagentRun(let n): n.id
+            case .subagentJob(let n): n.id
             case .gate(let n): n.id
             case .error(let n): n.id
             case .outcome(let n): n.id
@@ -139,6 +189,7 @@ public enum RunGraphLogic {
         public static func turn(_ n: Int) -> String { "turn:\(n)" }
         public static func gate(afterTurn: Int) -> String { "gate:\(afterTurn)" }
         public static func run(_ id: String) -> String { "run:\(id)" }
+        public static func job(_ id: String) -> String { "job:\(id)" }
         public static func error(_ seq: Int) -> String { "error:\(seq)" }
         public static let outcome = "outcome"
         public static func group(_ firstTurn: Int) -> String { "group:\(firstTurn)" }
@@ -214,6 +265,35 @@ public enum RunGraphLogic {
         case "cancelled": .cancelled
         default: .waiting
         }
+    }
+
+    public static func subagentJobStatus(_ status: String) -> NodeStatus {
+        switch status {
+        case "queued": .pending
+        case "running": .running
+        case "completed": .done
+        case "failed": .failed
+        case "canceled", "cancelled": .cancelled
+        default: .pending
+        }
+    }
+
+    public static func subagentFlags(
+        requestedTier: String,
+        tier: String,
+        status: String,
+        toolCalls: Int,
+        queuedMs: Double?,
+        durationMs: Double?,
+        serialInTurn: Bool
+    ) -> [SubagentFlag] {
+        var flags: [SubagentFlag] = []
+        if !requestedTier.isEmpty && !tier.isEmpty && requestedTier != tier { flags.append(.capped) }
+        if status == "failed" { flags.append(.failed) }
+        if toolCalls >= 20 { flags.append(.spinning) }
+        if let q = queuedMs, q >= 5_000, durationMs == nil || q > (durationMs ?? 0) { flags.append(.queueBound) }
+        if serialInTurn { flags.append(.serial) }
+        return flags
     }
 
     private static func turnStatus(_ turn: API.RunTurn, run: API.Run, isLast: Bool) -> NodeStatus {
@@ -338,7 +418,7 @@ public enum RunGraphLogic {
         let byEvent = turnByEvent(events)
 
         var turns = detail.turns.sorted { $0.seq < $1.seq }
-        if turns.isEmpty && !events.isEmpty {
+        if turns.isEmpty && (!events.isEmpty || !(detail.subagentJobs ?? []).isEmpty) {
             turns.append(API.RunTurn(
                 endedAt: run.endedAt,
                 exitCode: nil,
@@ -475,6 +555,91 @@ public enum RunGraphLogic {
             addRun(child, from: NodeID.turn(resolvedTurn), depth: 1)
         }
 
+        // In-turn explorer/helper subagent jobs: attach via their first lifecycle event
+        // (or timestamp fallback), preserve creation order, and compute batching/anomaly flags.
+        var jobTurn: [String: Int] = [:]
+        for e in events where e.type.rawValue == "lifecycle" {
+            let state = e.payload["state"]?.stringValue
+            guard state == "subagent_queued" || state == "subagent_started" else { continue }
+            let sid = e.payload["subagent_id"]?.stringValue ?? ""
+            if !sid.isEmpty && jobTurn[sid] == nil {
+                jobTurn[sid] = byEvent[e.seq] ?? 0
+            }
+        }
+        let sortedJobs = (detail.subagentJobs ?? []).sorted { a, b in
+            let ta = APIDate.epoch(a.createdAt), tb = APIDate.epoch(b.createdAt)
+            return ta == tb ? a.id < b.id : ta < tb
+        }
+        var batchCount: [String: Int] = [:]
+        for j in sortedJobs {
+            if let bid = j.batchId?.value, !bid.isEmpty {
+                batchCount[bid, default: 0] += 1
+            }
+        }
+        let resolvedJobs: [(job: API.SubagentJob, turn: Int)] = sortedJobs.compactMap { j in
+            let rawTurn = jobTurn[j.id] ?? turnAt(starts, at: j.createdAt)
+            guard let turn = turnOf(rawTurn) else { return nil }
+            return (j, turn)
+        }
+        var unbatchedPerTurn: [Int: Int] = [:]
+        for item in resolvedJobs {
+            if item.job.batchId?.value?.isEmpty ?? true {
+                unbatchedPerTurn[item.turn, default: 0] += 1
+            }
+        }
+        for (j, turn) in resolvedJobs {
+            let id = NodeID.job(j.id)
+            let createdEpoch = APIDate.epoch(j.createdAt)
+            let startedAt = j.startedAt?.value
+            let completedAt = j.completedAt?.value
+            let queuedMs: Double? = startedAt.map { max(0, (APIDate.epoch($0) - createdEpoch) * 1000.0) }
+            let durationMs: Double? = (startedAt != nil && completedAt != nil)
+                ? max(0, (APIDate.epoch(completedAt!) - APIDate.epoch(startedAt!)) * 1000.0)
+                : nil
+            let batchId = (j.batchId?.value).flatMap { $0.isEmpty ? nil : $0 }
+            let batchSize = batchId.flatMap { batchCount[$0] } ?? 1
+            let status = subagentJobStatus(j.status.rawValue)
+            let flags = subagentFlags(
+                requestedTier: j.requestedTier,
+                tier: j.tier,
+                status: j.status.rawValue,
+                toolCalls: j.toolCalls,
+                queuedMs: queuedMs,
+                durationMs: durationMs,
+                serialInTurn: batchId == nil && (unbatchedPerTurn[turn] ?? 0) >= 3
+            )
+            nodes.append(.subagentJob(SubagentJobNode(
+                id: id,
+                jobId: j.id,
+                turn: turn,
+                batchId: batchId,
+                batchSize: batchSize,
+                agentType: j.agentType.rawValue,
+                role: j.role,
+                reason: j.reason,
+                requestedTier: j.requestedTier,
+                tier: j.tier,
+                model: j.model,
+                effort: j.effort,
+                status: status,
+                toolCalls: j.toolCalls,
+                inputTokens: j.inputTokens,
+                outputTokens: j.outputTokens,
+                cachedTokens: j.cachedTokens,
+                costUsd: j.costUsd?.value,
+                createdAt: j.createdAt,
+                startedAt: startedAt,
+                completedAt: completedAt,
+                queuedMs: queuedMs,
+                durationMs: durationMs,
+                prompt: j.prompt,
+                resultText: j.resultText,
+                error: j.error,
+                flags: flags
+            )))
+            addEdge(.delegation, NodeID.turn(turn), id)
+        }
+
         if endedStates.contains(run.state.rawValue) {
             nodes.append(.outcome(OutcomeNode(id: NodeID.outcome, status: runStatus(run.state.rawValue), text: run.outcome ?? "")))
             if let last = turns.last {
@@ -527,6 +692,11 @@ public enum RunGraphLogic {
             let targets = out[turnId] ?? []
             for k in targets {
                 if case .subagentRun = byId[k] { walk(k, depth: 1) }
+            }
+            for k in targets {
+                if let n = byId[k], case .subagentJob = n {
+                    items.append(.node(n, depth: 1))
+                }
             }
             for k in targets {
                 if let n = byId[k], case .error = n {
@@ -629,6 +799,19 @@ public enum RunGraphLogic {
         case .subagentRun(let n):
             let cost = String(format: "$%.2f", n.costUsd)
             return ItemLabels(title: "↳ \(n.agent)", subtitle: "\(n.status.label) · \(cost)", status: n.status)
+        case .subagentJob(let n):
+            let name = n.role.isEmpty ? n.agentType : n.role
+            let timing: String
+            if n.status == .running {
+                timing = "live"
+            } else if n.durationMs != nil {
+                timing = APIDate.duration(since: n.startedAt ?? n.createdAt, until: n.completedAt)
+            } else {
+                timing = n.status.label
+            }
+            let tierPart = n.tier.isEmpty ? n.agentType : n.tier
+            let flagSuffix = n.flags.isEmpty ? "" : " · \(n.flags.map(\.label).joined(separator: " "))"
+            return ItemLabels(title: "↳ \(name)", subtitle: "\(tierPart) · \(timing)\(flagSuffix)", status: n.status)
         case .gate(let n):
             let suffix = n.state == .pending ? "?" : " ✓"
             return ItemLabels(

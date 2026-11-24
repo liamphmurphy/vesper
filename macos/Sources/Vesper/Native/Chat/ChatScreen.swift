@@ -1015,6 +1015,16 @@ struct ChatScreen: View {
                     .environment(\.colorScheme, model.colorScheme)
                 )
             }
+            if tabId == ChatInspectorLogic.activityTabId,
+               let currentChatId = context.match.params["id"] {
+                return AnyView(
+                    ChatActivityInspectorView(chatId: currentChatId)
+                        .id("activity:\(currentChatId)")
+                        .environment(context)
+                        .environment(\.vesperTheme, model.theme)
+                        .environment(\.colorScheme, model.colorScheme)
+                )
+            }
             return nil
         }
     }
