@@ -2150,27 +2150,44 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 		harnessStart = time.Now()
 		setupMS = harnessStart.Sub(turnClaimedAt).Milliseconds()
 		if psh, ok := h.(harness.PersistentSessionHarness); warmEligible && ok {
-			openCtx, cancelOpen := context.WithTimeout(ctx, maxRuntime-used)
-			stopKill := context.AfterFunc(openCtx, func() { _ = proc.Kill() })
-			sess, openErr := psh.OpenSession(openCtx, proc.Stdin(), proc.Stdout(), ws, hTurn, harness.SessionCallbacks{
+			// stderr is read from the start (see stderrTail), and the handshake is
+			// supervised like a turn: stopping the chat, the runtime limit or
+			// shutdown kills a harness that never finishes starting.
+			stderr := drainStderr(proc)
+			var initRaw bytes.Buffer
+			openErrs := make(chan error, 1)
+			stopOpen := r.supervise(ctx, c, proc, maxRuntime-used, openErrs, nil)
+			sess, openErr := psh.OpenSession(ctx, proc.Stdin(), proc.Stdout(), ws, hTurn, harness.SessionCallbacks{
 				OnSession: onSession,
+				OnRaw: func(line []byte) {
+					if initRaw.Len() < 1<<20 {
+						initRaw.Write(line)
+						initRaw.WriteByte('\n')
+					}
+				},
 			})
-			stopKill()
-			cancelOpen()
+			_, _ = stopOpen()
 			if openErr != nil {
 				_ = proc.Kill()
 				if procCancel != nil {
 					procCancel()
 				}
 				_, _ = io.Copy(io.Discard, proc.Stdout())
-				_, _ = io.Copy(io.Discard, proc.Stderr())
 				code, _ = proc.Wait()
+				stderr.wait(2 * time.Second)
 				if code == 0 {
 					code = 1
 				}
 				waitErr = openErr
+				stderrBytes := stderr.take()
+				raw = append(initRaw.Bytes(), stderrBytes...)
+				res.Error = harnessStartFailure(c.spec.Harness, stderrBytes, sensitive)
+				if ctx.Err() == nil {
+					r.Log.Warn("harness session did not start", "run", c.run.ID, "harness", c.spec.Harness,
+						"exit_code", code, "err", openErr, "stderr", redact(tailString(stderrBytes, 4<<10), sensitive))
+				}
 			} else {
-				warmWS := newWarmSession(c.run.ID, warmFP, proc, procCancel, sess, c.agent.ID, tok.ID, sensitive, r.revokeToken)
+				warmWS := newWarmSession(c.run.ID, warmFP, proc, procCancel, sess, stderr, c.agent.ID, tok.ID, sensitive, r.revokeToken)
 				procCancel = nil
 				keepToken = true
 				res, raw, code, _, waitErr = r.runWarmTurn(ctx, c, warmWS, hTurn, maxRuntime-used, r.policyCheck(c), onSession, onText, true)

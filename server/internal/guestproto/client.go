@@ -8,6 +8,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 // Client calls vesper-guest-agent over PortRPC streams.
@@ -180,6 +181,7 @@ type RemoteProcess struct {
 	done     chan struct{}
 	exit     ExecExit
 	exitErr  error
+	killOnce sync.Once
 }
 
 // StartExec launches a command inside the guest and begins streaming stdio.
@@ -312,6 +314,31 @@ func (p *RemoteProcess) Resize(rows, cols uint16) error {
 
 func (p *RemoteProcess) Signal(sig uint32) error {
 	return p.sw.WriteFrame(Frame{Type: FrameSignal, ID: 1, Data: EncodeSignal(sig)})
+}
+
+// KillGrace is how long Kill waits for the guest to report the exit before it
+// hangs up the stream.
+const KillGrace = 10 * time.Second
+
+// Kill sends SIGKILL and makes sure Wait returns: if the guest hasn't
+// reported the exit within grace (it may be wedged, or the stream backed up
+// behind output nobody reads), the stream is closed, and Wait returns an error.
+func (p *RemoteProcess) Kill(grace time.Duration) error {
+	err := p.Signal(9)
+	if err != nil {
+		_ = p.Close()
+		return err
+	}
+	p.killOnce.Do(func() {
+		time.AfterFunc(grace, func() {
+			select {
+			case <-p.done:
+			default:
+				_ = p.Close()
+			}
+		})
+	})
+	return nil
 }
 
 func (p *RemoteProcess) Wait() (ExecExit, error) {

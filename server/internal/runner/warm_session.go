@@ -7,9 +7,11 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"slices"
 	"sort"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -39,17 +41,75 @@ type warmSession struct {
 	sensitive   map[string]string
 	onRevoke    func(agentID, tokenID uuid.UUID)
 
-	stderrMu   sync.Mutex
-	stderrBuf  bytes.Buffer
-	stderrDone chan struct{}
+	stderr *stderrTail
 
 	idleMu    sync.Mutex
 	idleTimer *time.Timer
 	closeOnce sync.Once
 }
 
-func newWarmSession(runID uuid.UUID, fp string, proc Process, procCancel context.CancelFunc, sess harness.PersistentSession, agentID, tokenID uuid.UUID, sensitive map[string]string, onRevoke func(agentID, tokenID uuid.UUID)) *warmSession {
-	ws := &warmSession{
+// stderrTail reads a process's stderr from the moment it starts, keeping up
+// to 1 MiB of it as "[stderr] " lines. It has to start with the process: in a
+// microVM, stdout and stderr share one unbuffered stream, so a harness that
+// writes to stderr while only stdout is read (say, before it answers
+// `initialize`) blocks both, and the answer never arrives.
+type stderrTail struct {
+	mu   sync.Mutex
+	buf  bytes.Buffer
+	done chan struct{}
+}
+
+func drainStderr(proc Process) *stderrTail {
+	s := &stderrTail{done: make(chan struct{})}
+	go func() {
+		defer close(s.done)
+		sc := bufio.NewScanner(proc.Stderr())
+		sc.Buffer(make([]byte, 64<<10), 4<<20)
+		for sc.Scan() {
+			s.mu.Lock()
+			if s.buf.Len() < 1<<20 {
+				s.buf.WriteString("[stderr] ")
+				s.buf.Write(sc.Bytes())
+				s.buf.WriteByte('\n')
+			}
+			s.mu.Unlock()
+		}
+		_, _ = io.Copy(io.Discard, proc.Stderr())
+	}()
+	return s
+}
+
+func (s *stderrTail) reset() {
+	s.mu.Lock()
+	s.buf.Reset()
+	s.mu.Unlock()
+}
+
+func (s *stderrTail) take() []byte {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.buf.Len() == 0 {
+		return nil
+	}
+	out := append([]byte(nil), s.buf.Bytes()...)
+	s.buf.Reset()
+	return out
+}
+
+// wait waits up to d for stderr to close, so take has everything once the
+// process has exited.
+func (s *stderrTail) wait(d time.Duration) {
+	select {
+	case <-s.done:
+	case <-time.After(d):
+	}
+}
+
+func newWarmSession(runID uuid.UUID, fp string, proc Process, procCancel context.CancelFunc, sess harness.PersistentSession, stderr *stderrTail, agentID, tokenID uuid.UUID, sensitive map[string]string, onRevoke func(agentID, tokenID uuid.UUID)) *warmSession {
+	if stderr == nil {
+		stderr = drainStderr(proc)
+	}
+	return &warmSession{
 		runID:       runID,
 		fingerprint: fp,
 		proc:        proc,
@@ -59,42 +119,50 @@ func newWarmSession(runID uuid.UUID, fp string, proc Process, procCancel context
 		tokenID:     tokenID,
 		sensitive:   sensitive,
 		onRevoke:    onRevoke,
-		stderrDone:  make(chan struct{}),
+		stderr:      stderr,
 	}
-	go func() {
-		defer close(ws.stderrDone)
-		sc := bufio.NewScanner(proc.Stderr())
-		sc.Buffer(make([]byte, 64<<10), 4<<20)
-		for sc.Scan() {
-			ws.stderrMu.Lock()
-			if ws.stderrBuf.Len() < 1<<20 {
-				ws.stderrBuf.WriteString("[stderr] ")
-				ws.stderrBuf.Write(sc.Bytes())
-				ws.stderrBuf.WriteByte('\n')
-			}
-			ws.stderrMu.Unlock()
+}
+
+// harnessStartFailure is the chat's failure message for a harness that
+// exited before its session opened: the last lines it wrote to stderr. It is
+// "" when there are none, or when they report a usage limit or a session that
+// can't be resumed, which the turn's normal stderr checks handle.
+func harnessStartFailure(name string, stderr []byte, env map[string]string) string {
+	var lines []string
+	for _, line := range strings.Split(string(stderr), "\n") {
+		line = strings.TrimSpace(strings.TrimPrefix(line, "[stderr] "))
+		if i := strings.LastIndexByte(line, '\r'); i >= 0 {
+			line = strings.TrimSpace(line[i+1:])
 		}
-		_, _ = io.Copy(io.Discard, proc.Stderr())
-	}()
-	return ws
-}
-
-func (w *warmSession) resetStderr() {
-	w.stderrMu.Lock()
-	w.stderrBuf.Reset()
-	w.stderrMu.Unlock()
-}
-
-func (w *warmSession) takeStderr() []byte {
-	w.stderrMu.Lock()
-	defer w.stderrMu.Unlock()
-	if w.stderrBuf.Len() == 0 {
-		return nil
+		if line == "" {
+			continue
+		}
+		if harness.UsageLimit(line) || sessionGone.MatchString(line) {
+			return ""
+		}
+		lines = append(lines, line)
 	}
-	out := append([]byte(nil), w.stderrBuf.Bytes()...)
-	w.stderrBuf.Reset()
-	return out
+	if len(lines) == 0 {
+		return ""
+	}
+	lines = lines[max(0, len(lines)-3):]
+	msg := redact(strings.Join(lines, "; "), env)
+	if r := []rune(msg); len(r) > 600 {
+		msg = "…" + string(r[len(r)-600:])
+	}
+	return fmt.Sprintf("%s stopped before it was ready: %s", name, msg)
 }
+
+// tailString is the last n bytes of b, for logging.
+func tailString(b []byte, n int) string {
+	if len(b) > n {
+		b = b[len(b)-n:]
+	}
+	return string(b)
+}
+
+func (w *warmSession) resetStderr()       { w.stderr.reset() }
+func (w *warmSession) takeStderr() []byte { return w.stderr.take() }
 
 func (w *warmSession) stopTimer() {
 	w.idleMu.Lock()
@@ -130,10 +198,7 @@ func (w *warmSession) close() {
 				case <-time.After(2 * time.Second):
 				}
 			}
-			select {
-			case <-w.stderrDone:
-			case <-time.After(time.Second):
-			}
+			w.stderr.wait(time.Second)
 		}
 		if w.procCancel != nil {
 			w.procCancel()
