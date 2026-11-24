@@ -89,14 +89,69 @@ public enum ChatTurnOutcome: String, Sendable, Equatable, Hashable {
     case done, failed, stopped
 }
 
-/// A finished turn's folded steps and duration for its collapsed card in chat history.
+/// Coarse timing phase of a turn, used to reset the live timer across transitions and
+/// accumulate pure thinking time separately from tool execution and reply streaming.
+public enum ChatTurnTimingPhase: String, Sendable, Equatable, Hashable {
+    case thinking
+    case tool
+    case writingReply = "writing_reply"
+}
+
+/// One completed reasoning (`kind == "thinking"`) block emitted during a turn.
+public struct ChatThinkingBlock: Sendable, Equatable, Identifiable {
+    public var id: Int { seq }
+    public var seq: Int
+    public var text: String
+    public var heading: String?
+    public var at: TimeInterval
+
+    public init(seq: Int, text: String, heading: String? = nil, at: TimeInterval = 0) {
+        self.seq = seq
+        self.text = text
+        self.heading = heading
+        self.at = at
+    }
+}
+
+/// Summary of a planned (`TodoWrite` / `TaskCreate`) step checklist for the pinned composer bar.
+public struct ChatPlanProgress: Sendable, Equatable {
+    public var steps: [ChatTurnStep]
+    public var completed: Int
+    public var failed: Int
+    public var total: Int
+    public var activeStep: ChatTurnStep?
+
+    public init(steps: [ChatTurnStep], completed: Int, failed: Int, total: Int, activeStep: ChatTurnStep?) {
+        self.steps = steps
+        self.completed = completed
+        self.failed = failed
+        self.total = total
+        self.activeStep = activeStep
+    }
+
+    public var progressLabel: String {
+        let base = "\(completed)/\(total) \(total == 1 ? "step" : "steps")"
+        return failed > 0 ? "\(base) · \(failed) failed" : base
+    }
+}
+
+/// A finished turn's folded steps, duration, pure thinking time, and thinking blocks.
 public struct ChatFinishedTurn: Sendable, Equatable {
     public var steps: [ChatTurnStep]
     public var durationMs: Int?
+    public var thinkingDurationMs: Int?
+    public var thinkingBlocks: [ChatThinkingBlock]
 
-    public init(steps: [ChatTurnStep] = [], durationMs: Int? = nil) {
+    public init(
+        steps: [ChatTurnStep] = [],
+        durationMs: Int? = nil,
+        thinkingDurationMs: Int? = nil,
+        thinkingBlocks: [ChatThinkingBlock] = []
+    ) {
         self.steps = steps
         self.durationMs = durationMs
+        self.thinkingDurationMs = thinkingDurationMs
+        self.thinkingBlocks = thinkingBlocks
     }
 }
 
@@ -124,6 +179,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
     public static let nextStepAfterMs = 8_000
     public static let quietAfterMs = 120_000
     public static let quietRunningMs = 300_000
+    public static let longTurnUsageRefreshIntervalMs = 60_000
     public static let replyBlockTool = "reply_block"
     public static let nextStepKey = "next-step"
 
@@ -140,6 +196,10 @@ public struct ChatTurnActivity: Sendable, Equatable {
     public var steps: [ChatTurnStep]
     public var planned: Bool
     public var elapsedMs: Int?
+    public var phaseElapsedMs: Int?
+    public var timingPhase: ChatTurnTimingPhase
+    public var thinkingDurationMs: Int
+    public var thinkingBlocks: [ChatThinkingBlock]
     public var idleMs: Int?
     public var between: Bool
     public var quiet: Bool
@@ -147,11 +207,15 @@ public struct ChatTurnActivity: Sendable, Equatable {
 
     public init(
         status: ChatStatusInfo, openingLine: String? = nil, steps: [ChatTurnStep] = [],
-        planned: Bool = false, elapsedMs: Int? = nil, idleMs: Int? = nil,
+        planned: Bool = false, elapsedMs: Int? = nil, phaseElapsedMs: Int? = nil,
+        timingPhase: ChatTurnTimingPhase = .thinking, thinkingDurationMs: Int = 0,
+        thinkingBlocks: [ChatThinkingBlock] = [], idleMs: Int? = nil,
         between: Bool = false, quiet: Bool = false, activePhase: Phase? = nil
     ) {
         self.status = status; self.openingLine = openingLine; self.steps = steps
-        self.planned = planned; self.elapsedMs = elapsedMs; self.idleMs = idleMs
+        self.planned = planned; self.elapsedMs = elapsedMs; self.phaseElapsedMs = phaseElapsedMs
+        self.timingPhase = timingPhase; self.thinkingDurationMs = thinkingDurationMs
+        self.thinkingBlocks = thinkingBlocks; self.idleMs = idleMs
         self.between = between; self.quiet = quiet; self.activePhase = activePhase
     }
 
@@ -357,15 +421,18 @@ public struct ChatTurnActivity: Sendable, Equatable {
 
         let started = since != nil ? minEpoch : parsed.firstAt
         let nowEpoch = now.timeIntervalSince1970
-        let elapsedMs = started.map { max(0, Int((nowEpoch - $0) * 1000)) }
+        let elapsedMs = started.map { max(0, Int(((nowEpoch - $0) * 1000).rounded())) }
+        let phaseElapsedMs = parsed.phaseStart.map { max(0, Int(((nowEpoch - $0) * 1000).rounded())) }
+        let timingPhase = parsed.timingPhase ?? .thinking
+        let thinkingDurationMs = parsed.closedThinkingMs + (parsed.timingPhase == .thinking ? (phaseElapsedMs ?? 0) : 0)
         let lastEvent = parsed.lastAt ?? started
-        let idleMs = lastEvent.map { max(0, Int((nowEpoch - $0) * 1000)) }
+        let idleMs = lastEvent.map { max(0, Int(((nowEpoch - $0) * 1000).rounded())) }
         let newest = parsed.calls.last
         let doneAt: TimeInterval? = {
             guard let newest, newest.done, newest.tool != replyBlockTool else { return nil }
             return parsed.callTimes[newest.key]?.doneAt
         }()
-        let between = doneAt.map { Int((nowEpoch - $0) * 1000) >= nextStepAfterMs } ?? false
+        let between = doneAt.map { Int(((nowEpoch - $0) * 1000).rounded()) >= nextStepAfterMs } ?? false
         let quietThreshold = (newest != nil && newest?.done == false) ? quietRunningMs : quietAfterMs
         let quiet = idleMs.map { $0 >= quietThreshold } ?? false
 
@@ -378,6 +445,10 @@ public struct ChatTurnActivity: Sendable, Equatable {
             steps: steps,
             planned: planned,
             elapsedMs: elapsedMs,
+            phaseElapsedMs: phaseElapsedMs,
+            timingPhase: timingPhase,
+            thinkingDurationMs: thinkingDurationMs,
+            thinkingBlocks: parsed.thinkingBlocks,
             idleMs: idleMs,
             between: between,
             quiet: quiet,
@@ -385,8 +456,9 @@ public struct ChatTurnActivity: Sendable, Equatable {
         )
     }
 
-    /// A finished turn's steps for the strip kept in chat history above its reply (or under a
-    /// stopped/failed turn). Plain replies with only bookkeeping/reply blocks return empty steps.
+    /// A finished turn's steps, duration, pure thinking time, and thinking blocks.
+    /// Plain replies with only bookkeeping/reply blocks return empty steps (so no working strip
+    /// renders) while still preserving `thinkingDurationMs` and `thinkingBlocks` when events exist.
     public static func finishedTurn(
         events: [ChatRunEvent],
         outcome: ChatTurnOutcome,
@@ -396,17 +468,106 @@ public struct ChatTurnActivity: Sendable, Equatable {
     ) -> ChatFinishedTurn {
         let minEpoch = since.map(APIDate.epoch) ?? 0
         let parsed = parseEventWindow(events: events, since: since, until: until)
+        let started = since != nil ? minEpoch : parsed.firstAt
+        let last = end ?? parsed.lastAt
+        let durationMs = (started != nil && last != nil) ? max(0, Int(((last! - started!) * 1000).rounded())) : nil
+        let thinkingDurationMs: Int? = {
+            guard parsed.firstAt != nil, started != nil, let last else { return nil }
+            let trailing: Int
+            if parsed.timingPhase == .thinking, let phaseStart = parsed.phaseStart {
+                trailing = max(0, Int(((last - phaseStart) * 1000).rounded()))
+            } else {
+                trailing = 0
+            }
+            return parsed.closedThinkingMs + trailing
+        }()
         guard parsed.calls.contains(where: { $0.tool != replyBlockTool && !bookkeeping.contains(bareTool($0.tool)) }) else {
-            return ChatFinishedTurn()
+            return ChatFinishedTurn(
+                steps: [],
+                durationMs: durationMs,
+                thinkingDurationMs: thinkingDurationMs,
+                thinkingBlocks: parsed.thinkingBlocks
+            )
         }
         var (steps, _) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: false, phase: nil)
         for idx in steps.indices where steps[idx].state == .active {
             steps[idx].state = outcome == .failed ? .failed : .done
         }
-        let started = since != nil ? minEpoch : parsed.firstAt
-        let last = end ?? parsed.lastAt
-        let durationMs = (started != nil && last != nil) ? max(0, Int((last! - started!) * 1000)) : nil
-        return ChatFinishedTurn(steps: steps, durationMs: durationMs)
+        return ChatFinishedTurn(
+            steps: steps,
+            durationMs: durationMs,
+            thinkingDurationMs: thinkingDurationMs,
+            thinkingBlocks: parsed.thinkingBlocks
+        )
+    }
+
+    /// Extracts plan progress from a `planned` turn for the pinned checklist bar above the composer.
+    public static func planProgress(steps: [ChatTurnStep], planned: Bool) -> ChatPlanProgress? {
+        guard planned else { return nil }
+        let planOnly = steps.filter { $0.key.contains("#") }
+        guard !planOnly.isEmpty else { return nil }
+        let completed = planOnly.filter { $0.state == .done }.count
+        let failed = planOnly.filter { $0.state == .failed }.count
+        let active = planOnly.first { $0.state == .active }
+        return ChatPlanProgress(
+            steps: planOnly,
+            completed: completed,
+            failed: failed,
+            total: planOnly.count,
+            activeStep: active
+        )
+    }
+
+    /// Delay (ms) before the first mid-turn usage/quota refresh should fire for a running turn.
+    /// Waits until the turn has been running for `intervalMs` (60s), or returns `0` if already past.
+    public static func longTurnUsageRefreshDelayMs(
+        sinceEpochMs: Int?,
+        nowEpochMs: Int,
+        intervalMs: Int = longTurnUsageRefreshIntervalMs
+    ) -> Int {
+        guard intervalMs > 0 else { return 0 }
+        guard let sinceEpochMs else { return intervalMs }
+        let elapsed = max(0, nowEpochMs - sinceEpochMs)
+        return elapsed < intervalMs ? intervalMs - elapsed : 0
+    }
+
+    /// Mirrors Go `harness.thinkingHeading` and `web/lib/chat-ui.ts` for reasoning block headings.
+    public static func thinkingHeading(_ text: String) -> String? {
+        var latest: String?
+        for raw in text.split(separator: "\n", omittingEmptySubsequences: false) {
+            let s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+            if s.isEmpty { continue }
+            var candidate = ""
+            if s.hasPrefix("**"), s.hasSuffix("**"), s.count > 4 {
+                let inner = String(s.dropFirst(2).dropLast(2))
+                if inner.contains("**") { continue }
+                candidate = inner
+            } else {
+                var hashes = 0
+                var idx = s.startIndex
+                while idx < s.endIndex && s[idx] == "#" && hashes < 4 {
+                    hashes += 1
+                    idx = s.index(after: idx)
+                }
+                guard (1...3).contains(hashes), idx < s.endIndex, s[idx] == " " || s[idx] == "\t" else { continue }
+                candidate = String(s[idx...]).trimmingCharacters(in: .whitespaces)
+            }
+            let cleaned = candidate
+                .replacingOccurrences(of: "`", with: "")
+                .split(whereSeparator: { $0.isWhitespace })
+                .joined(separator: " ")
+                .trimmingCharacters(in: CharacterSet(charactersIn: ":."))
+                .trimmingCharacters(in: .whitespaces)
+            guard cleaned.count >= 3 && cleaned.count <= 90 else { continue }
+            if cleaned.contains("://") || cleaned.contains("=")
+                || cleaned.contains("/Users/") || cleaned.contains("/home/")
+                || cleaned.contains("/etc/") || cleaned.contains("/var/")
+                || cleaned.contains("/tmp/") {
+                continue
+            }
+            latest = cleaned.count > 64 ? String(cleaned.prefix(63)) + "…" : cleaned
+        }
+        return latest
     }
 
     public static func foldSteps(_ steps: [ChatTurnStep]) -> (earlier: Int, shown: [ChatTurnStep], later: Int) {
@@ -428,8 +589,13 @@ public struct ChatTurnActivity: Sendable, Equatable {
         return (earlier: at, shown: Array(steps.dropFirst(at)))
     }
 
-    /// Summary line for a finished working card ("Worked for 2m 14s · 7 steps").
-    public static func finishedSummary(outcome: ChatTurnOutcome, stepCount: Int, durationMs: Int?) -> String {
+    /// Summary line for a finished working card ("Worked for 2m 14s · Thought for 32s · 7 steps").
+    public static func finishedSummary(
+        outcome: ChatTurnOutcome,
+        stepCount: Int,
+        durationMs: Int?,
+        thinkingDurationMs: Int? = nil
+    ) -> String {
         let verb: String
         switch outcome {
         case .done: verb = "Worked for"
@@ -442,8 +608,13 @@ public struct ChatTurnActivity: Sendable, Equatable {
         } else {
             lead = String(verb.split(separator: " ").first ?? Substring(verb))
         }
+        var parts = [lead]
+        if let thinkingDurationMs, thinkingDurationMs >= 1000 {
+            parts.append("Thought for \(formatSpan(ms: thinkingDurationMs))")
+        }
         let noun = stepCount == 1 ? "step" : "steps"
-        return "\(lead) · \(stepCount) \(noun)"
+        parts.append("\(stepCount) \(noun)")
+        return parts.joined(separator: " · ")
     }
 
     public static func formatSpan(ms: Int) -> String {
@@ -469,6 +640,10 @@ public struct ChatTurnActivity: Sendable, Equatable {
         var lastAt: TimeInterval?
         var openingLine: String?
         var activePhase: Phase?
+        var timingPhase: ChatTurnTimingPhase?
+        var phaseStart: TimeInterval?
+        var closedThinkingMs: Int
+        var thinkingBlocks: [ChatThinkingBlock]
     }
 
     private static func parseEventWindow(events: [ChatRunEvent], since: String?, until: String?) -> ParsedEventWindow {
@@ -477,17 +652,45 @@ public struct ChatTurnActivity: Sendable, Equatable {
 
         var calls: [ChatToolCall] = []
         var openCalls: [String: Int] = [:]
+        var openToolIds: Set<String> = []
         var callTimes: [Int: (at: TimeInterval, doneAt: TimeInterval?)] = [:]
         var firstAt: TimeInterval?
         var lastAt: TimeInterval?
         var firstAssistantText: String?
         var openingLine: String?
         var activePhase: Phase?
+        var timingPhase: ChatTurnTimingPhase? = since != nil ? .thinking : nil
+        var phaseStart: TimeInterval? = since != nil ? minEpoch : nil
+        var closedThinkingMs = 0
+        var thinkingBlocks: [ChatThinkingBlock] = []
+
+        func transition(to next: ChatTurnTimingPhase, at: TimeInterval, resetIfSame: Bool = false) {
+            guard let current = timingPhase else {
+                timingPhase = next
+                phaseStart = at
+                return
+            }
+            if current == next {
+                if resetIfSame { phaseStart = at }
+                return
+            }
+            if current == .thinking, let start = phaseStart {
+                closedThinkingMs += max(0, Int(((at - start) * 1000).rounded()))
+            }
+            timingPhase = next
+            phaseStart = at
+        }
 
         for e in events {
             let at = APIDate.epoch(e.at)
             if at < minEpoch || at > maxEpoch { continue }
-            if firstAt == nil { firstAt = at }
+            if firstAt == nil {
+                firstAt = at
+                if timingPhase == nil {
+                    timingPhase = .thinking
+                    phaseStart = at
+                }
+            }
             lastAt = max(lastAt ?? at, at)
             if case .bool(true) = e.payload["subagent"] { continue }
 
@@ -501,6 +704,8 @@ public struct ChatTurnActivity: Sendable, Equatable {
                 let tool = e.payload["tool"]?.stringValue ?? ""
                 let input = e.payload["input"] ?? .object([:])
                 if !id.isEmpty { openCalls[id] = calls.count }
+                openToolIds.insert(id.isEmpty ? "#\(e.seq)" : id)
+                transition(to: .tool, at: at)
                 calls.append(ChatToolCall(key: e.seq, tool: tool, input: input, done: false))
                 callTimes[e.seq] = (at, nil)
 
@@ -514,12 +719,16 @@ public struct ChatTurnActivity: Sendable, Equatable {
                         times.doneAt = at
                         callTimes[calls[idx].key] = times
                     }
+                    if openToolIds.remove(id) != nil, openToolIds.isEmpty {
+                        transition(to: .thinking, at: at)
+                    }
                 }
 
             case "lifecycle":
                 let state = e.payload["state"]?.stringValue ?? ""
                 if state == replyBlockTool {
                     activePhase = nil
+                    transition(to: .writingReply, at: at, resetIfSame: true)
                     let kind = e.payload["kind"]?.stringValue ?? ""
                     calls.append(ChatToolCall(key: e.seq, tool: replyBlockTool, input: .object(["kind": .string(kind)]), done: true))
                     callTimes[e.seq] = (at, at)
@@ -527,9 +736,20 @@ public struct ChatTurnActivity: Sendable, Equatable {
                     let phase = e.payload["phase"]?.stringValue ?? ""
                     if phase == "thinking" {
                         let detail = e.payload["detail"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines)
-                        activePhase = .thinking(detail: (detail?.isEmpty == false) ? detail : nil)
+                        let prevDetail: String? = {
+                            if case .thinking(let d) = activePhase { return d }
+                            return nil
+                        }()
+                        let resolved = (detail?.isEmpty == false) ? detail : prevDetail
+                        activePhase = .thinking(detail: resolved)
+                        if openToolIds.isEmpty {
+                            transition(to: .thinking, at: at)
+                        }
                     } else if phase == "writing_reply" {
                         activePhase = .writingReply
+                        if openToolIds.isEmpty {
+                            transition(to: .writingReply, at: at)
+                        }
                     }
                 }
 
@@ -538,11 +758,21 @@ public struct ChatTurnActivity: Sendable, Equatable {
                 let role = e.payload["role"]?.stringValue ?? ""
                 let text = e.payload["text"]?.stringValue?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
                 if kind == "thinking" {
-                    activePhase = .thinking(detail: nil)
+                    let heading = thinkingHeading(text)
+                    activePhase = .thinking(detail: heading)
+                    if !text.isEmpty {
+                        thinkingBlocks.append(ChatThinkingBlock(seq: e.seq, text: text, heading: heading, at: at))
+                    }
+                    if openToolIds.isEmpty {
+                        transition(to: .thinking, at: at)
+                    }
                 } else if role == "assistant" && kind.isEmpty {
                     activePhase = nil
                     if firstAssistantText == nil && !text.isEmpty {
                         firstAssistantText = text
+                    }
+                    if openToolIds.isEmpty {
+                        transition(to: .writingReply, at: at)
                     }
                 }
 
@@ -557,7 +787,11 @@ public struct ChatTurnActivity: Sendable, Equatable {
             firstAt: firstAt,
             lastAt: lastAt,
             openingLine: openingLine,
-            activePhase: activePhase
+            activePhase: activePhase,
+            timingPhase: timingPhase,
+            phaseStart: phaseStart,
+            closedThinkingMs: closedThinkingMs,
+            thinkingBlocks: thinkingBlocks
         )
     }
 
@@ -569,8 +803,103 @@ public struct ChatTurnActivity: Sendable, Equatable {
         }
         if case .writingReply = phase { return ChatStatusInfo(kind: .writingReply, phrase: "drafting a reply") }
         guard let newest = calls.last else { return ChatStatusInfo(kind: .thinking, phrase: "thinking") }
-        if between { return ChatStatusInfo(kind: .nextStep, phrase: "planning the next step") }
+        let hasThinkingHeading: Bool = {
+            if case .thinking(let d) = phase, let d, !d.isEmpty { return true }
+            return false
+        }()
+        if between || hasThinkingHeading {
+            return ChatStatusInfo(kind: .nextStep, phrase: "planning the next step")
+        }
         return statusOf(tool: newest.tool, input: newest.input)
+    }
+
+    private struct PlanItem {
+        var id: String
+        var title: String
+        var state: ChatStepState
+    }
+
+    private struct PlanVersion {
+        var items: [PlanItem]
+        var callIndex: Int
+    }
+
+    private static func planState(for raw: String) -> ChatStepState {
+        switch raw {
+        case "completed": .done
+        case "failed": .failed
+        case "in_progress": .active
+        default: .planned
+        }
+    }
+
+    private static func planVersions(from calls: [ChatToolCall]) -> [PlanVersion] {
+        var versions: [PlanVersion] = []
+        var tasks: [PlanItem] = []
+
+        for (idx, call) in calls.enumerated() {
+            let tool = bareTool(call.tool)
+            switch tool {
+            case "TodoWrite", "todowrite":
+                guard case .array(let items) = call.input["todos"] else { continue }
+                var parsed: [PlanItem] = []
+                for (i, item) in items.enumerated() {
+                    let title = item["content"]?.stringValue ?? ""
+                    let rawState = item["status"]?.stringValue ?? ""
+                    guard !title.isEmpty, rawState != "cancelled" else { continue }
+                    parsed.append(PlanItem(id: String(i), title: title, state: planState(for: rawState)))
+                }
+                versions.append(PlanVersion(items: parsed, callIndex: idx))
+
+            case "TaskCreate":
+                let subject = call.input["subject"]?.stringValue ?? ""
+                let id: String = {
+                    if let out = call.output,
+                       let range = out.range(of: #"#(\d+)"#, options: .regularExpression) {
+                        return String(out[range].dropFirst())
+                    }
+                    return String(tasks.count + 1)
+                }()
+                tasks.append(PlanItem(id: id, title: subject, state: .planned))
+                versions.append(PlanVersion(items: tasks, callIndex: idx))
+
+            case "TaskUpdate":
+                let id = call.input["taskId"]?.stringValue ?? ""
+                guard tasks.contains(where: { $0.id == id }) else { continue }
+                let status = call.input["status"]?.stringValue ?? ""
+                if status == "deleted" {
+                    tasks.removeAll { $0.id == id }
+                } else {
+                    let nextSubject = call.input["subject"]?.stringValue
+                    tasks = tasks.map { item in
+                        guard item.id == id else { return item }
+                        var copy = item
+                        if let nextSubject, !nextSubject.isEmpty { copy.title = nextSubject }
+                        if !status.isEmpty { copy.state = planState(for: status) }
+                        return copy
+                    }
+                }
+                versions.append(PlanVersion(items: tasks, callIndex: idx))
+
+            default:
+                break
+            }
+        }
+        return versions
+    }
+
+    private static func planWork(calls: [ChatToolCall], versions: [PlanVersion]) -> [String: (kind: ActivitySceneKind, failed: Bool)] {
+        var work: [String: (kind: ActivitySceneKind, failed: Bool)] = [:]
+        var v = -1
+        for (i, call) in calls.enumerated() {
+            while v + 1 < versions.count && versions[v + 1].callIndex <= i { v += 1 }
+            if v < 0 || bookkeeping.contains(bareTool(call.tool)) || call.tool == replyBlockTool { continue }
+            guard let active = versions[v].items.first(where: { $0.state == .active }) else { continue }
+            let info = statusOf(tool: call.tool, input: call.input)
+            let failed = call.failed && failableKinds.contains(info.kind)
+            work[active.title] = (info.kind, failed)
+        }
+        return work
     }
 
     private static func buildSteps(
@@ -579,18 +908,39 @@ public struct ChatTurnActivity: Sendable, Equatable {
         between: Bool,
         phase: Phase?
     ) -> ([ChatTurnStep], Bool) {
-        // Check for TodoWrite plan first.
-        if let latestTodos = calls.last(where: { bareTool($0.tool).lowercased() == "todowrite" }),
-           case .array(let items) = latestTodos.input["todos"] {
-            var steps: [ChatTurnStep] = []
-            for (idx, item) in items.enumerated() {
-                let title = item["content"]?.stringValue ?? ""
-                let rawState = item["status"]?.stringValue ?? ""
-                guard !title.isEmpty, rawState != "cancelled" else { continue }
-                let state: ChatStepState = rawState == "completed" ? .done : rawState == "in_progress" ? .active : .planned
-                steps.append(ChatTurnStep(key: "\(title)#\(idx)", title: title, state: state))
+        // Check for TodoWrite / TaskCreate plan first (matching web/lib/chat-ui.ts).
+        let versions = planVersions(from: calls)
+        if let latest = versions.last?.items, !latest.isEmpty {
+            let baseline = versions.first(where: { $0.items.contains { $0.state != .planned } })?.items
+            let original = Set((baseline ?? latest).map(\.title))
+            let work = planWork(calls: calls, versions: versions)
+            var seen: [String: Int] = [:]
+            var steps: [ChatTurnStep] = latest.map { item in
+                let n = seen[item.title, default: 0]
+                seen[item.title] = n + 1
+                let w = item.state == .planned ? nil : work[item.title]
+                let state: ChatStepState = (item.state == .done && w?.failed == true) ? .failed : item.state
+                return ChatTurnStep(
+                    key: "\(item.title)#\(n)",
+                    title: item.title,
+                    state: state,
+                    kind: w?.kind,
+                    added: !original.contains(item.title)
+                )
             }
-            if !steps.isEmpty { return (steps, true) }
+            let newest = calls.last
+            if let phase, (newest == nil || (newest!.done && newest!.tool != replyBlockTool)),
+               let activeIdx = steps.firstIndex(where: { $0.state == .active }) {
+                switch phase {
+                case .writingReply:
+                    steps[activeIdx].detail = "Drafting a reply"
+                case .thinking(let detail):
+                    if let detail, !detail.isEmpty {
+                        steps[activeIdx].detail = detail
+                    }
+                }
+            }
+            return (steps, true)
         }
 
         // Planless: coalesce consecutive calls with the same phrase.

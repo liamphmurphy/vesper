@@ -914,45 +914,150 @@ export const NEXT_STEP_AFTER_MS = 8_000;
 export const QUIET_AFTER_MS = 2 * 60_000;
 /** The same while a call is still running, since tests or a build can legitimately take minutes. */
 export const QUIET_RUNNING_MS = 5 * 60_000;
+/** How often a long-running turn refreshes harness quota/usage data once past 60s. */
+export const LONG_TURN_USAGE_REFRESH_INTERVAL_MS = 60_000;
 
-/** When the turn began, when anything last happened, and when each call (by seq) started and finished, in ms. */
-export type TurnClock = { started?: number; last?: number; calls: Map<number, { at: number; doneAt?: number }> };
+/** Coarse timing phase of a turn for per-phase live timers and pure thinking accumulation. */
+export type TurnTimingPhase = "thinking" | "tool" | "writing_reply";
+
+/** One completed reasoning (`kind === "thinking"`) block emitted during a turn. */
+export type ThinkingBlock = { seq: number; text: string; heading?: string; at: number };
+
+/** Summary of a planned (`TodoWrite` / `TaskCreate`) step checklist for the pinned composer bar. */
+export type PlanChecklistProgress = {
+  steps: ChatStep[];
+  completed: number;
+  failed: number;
+  total: number;
+  activeStep?: ChatStep;
+  label: string;
+};
+
+/** Delay (ms) before the first mid-turn usage/quota refresh should fire for a running turn. */
+export function longTurnUsageRefreshDelayMs(
+  sinceEpochMs: number | undefined,
+  nowEpochMs: number,
+  intervalMs = LONG_TURN_USAGE_REFRESH_INTERVAL_MS,
+): number {
+  if (intervalMs <= 0) return 0;
+  if (sinceEpochMs === undefined || !Number.isFinite(sinceEpochMs)) return intervalMs;
+  const elapsed = Math.max(0, nowEpochMs - sinceEpochMs);
+  return elapsed < intervalMs ? intervalMs - elapsed : 0;
+}
+
+/** When the turn began, when anything last happened, each call's times, and phase-timing state (ms). */
+export type TurnClock = {
+  started?: number;
+  last?: number;
+  calls: Map<number, { at: number; doneAt?: number }>;
+  phase?: TurnTimingPhase;
+  phaseStart?: number;
+  closedThinkingMs: number;
+  hasEvents: boolean;
+};
 
 export function turnClock(events: RunEventLike[] | undefined, since?: string, until?: string): TurnClock {
   const t = since ? Date.parse(since) : 0;
   const hi = until ? Date.parse(until) : Infinity;
   const calls: TurnClock["calls"] = new Map();
   const open = new Map<string, number>();
+  const openToolIds = new Set<string>();
   let first: number | undefined;
   let last: number | undefined;
+  let phase: TurnTimingPhase | undefined = since ? "thinking" : undefined;
+  let phaseStart: number | undefined = since ? t : undefined;
+  let closedThinkingMs = 0;
+
+  const transition = (next: TurnTimingPhase, at: number, resetIfSame = false) => {
+    if (phase === undefined) {
+      phase = next;
+      phaseStart = at;
+      return;
+    }
+    if (phase === next) {
+      if (resetIfSame) phaseStart = at;
+      return;
+    }
+    if (phase === "thinking" && phaseStart !== undefined) {
+      closedThinkingMs += Math.max(0, at - phaseStart);
+    }
+    phase = next;
+    phaseStart = at;
+  };
+
   for (const e of events ?? []) {
     const at = Date.parse(e.at);
     if (at < t || at > hi) continue;
-    first ??= at;
+    if (first === undefined) {
+      first = at;
+      if (phase === undefined) {
+        phase = "thinking";
+        phaseStart = at;
+      }
+    }
     last = Math.max(last ?? at, at);
     const p = e.payload;
     if (isSubagentEvent(p)) continue;
     if (e.type === "tool_call") {
       calls.set(e.seq, { at });
-      if (p.id) open.set(str(p.id), e.seq);
+      const id = str(p.id);
+      if (id) open.set(id, e.seq);
+      openToolIds.add(id || `#${e.seq}`);
+      transition("tool", at);
     } else if (e.type === "tool_result" && p.id && open.has(str(p.id))) {
-      calls.get(open.get(str(p.id))!)!.doneAt = at;
+      const id = str(p.id);
+      calls.get(open.get(id)!)!.doneAt = at;
+      if (openToolIds.delete(id) && openToolIds.size === 0) {
+        transition("thinking", at);
+      }
     } else if (e.type === "lifecycle" && p.state === REPLY_BLOCK) {
       calls.set(e.seq, { at, doneAt: at });
+      transition("writing_reply", at, true);
+    } else if (e.type === "lifecycle" && p.state === "activity" && (p.phase === "thinking" || p.phase === "writing_reply")) {
+      if (openToolIds.size === 0) {
+        transition(p.phase as TurnTimingPhase, at);
+      }
+    } else if (e.type === "message" && p.kind === "thinking") {
+      if (openToolIds.size === 0) {
+        transition("thinking", at);
+      }
+    } else if (e.type === "message" && p.role === "assistant" && !p.kind) {
+      if (openToolIds.size === 0) {
+        transition("writing_reply", at);
+      }
     }
   }
-  return { started: since ? t : first, last, calls };
+  return {
+    started: since ? t : first,
+    last,
+    calls,
+    phase,
+    phaseStart,
+    closedThinkingMs,
+    hasEvents: first !== undefined,
+  };
 }
 
 /**
- * The turn's pulse at `now`: how long it has run, how long since anything happened, whether
- * it is between steps (the newest call finished NEXT_STEP_AFTER_MS ago), and whether it has
- * been quiet long enough to offer a check-in.
+ * The turn's pulse at `now`: total turn elapsed, current phase elapsed (resetting across
+ * thinking/tool/writing_reply transitions), cumulative pure thinking duration, idle time,
+ * between-steps state, and quiet state.
  */
-export type TurnPulse = { elapsed?: number; idle?: number; between: boolean; quiet: boolean };
+export type TurnPulse = {
+  elapsed?: number;
+  phase: TurnTimingPhase;
+  phaseElapsed?: number;
+  thinkingDurationMs: number;
+  idle?: number;
+  between: boolean;
+  quiet: boolean;
+};
 
 export function turnPulse(calls: ToolCall[], clock: TurnClock, now: number): TurnPulse {
   const elapsed = clock.started === undefined ? undefined : Math.max(0, now - clock.started);
+  const phase: TurnTimingPhase = clock.phase ?? "thinking";
+  const phaseElapsed = clock.phaseStart === undefined ? undefined : Math.max(0, now - clock.phaseStart);
+  const thinkingDurationMs = clock.closedThinkingMs + (clock.phase === "thinking" ? (phaseElapsed ?? 0) : 0);
   const lastAt = clock.last ?? clock.started;
   const idle = lastAt === undefined ? undefined : Math.max(0, now - lastAt);
   const newest = calls.at(-1);
@@ -960,7 +1065,41 @@ export function turnPulse(calls: ToolCall[], clock: TurnClock, now: number): Tur
   const doneAt = newest?.done && newest.tool !== REPLY_BLOCK ? clock.calls.get(newest.key)?.doneAt : undefined;
   const between = doneAt !== undefined && now - doneAt >= NEXT_STEP_AFTER_MS;
   const quiet = idle !== undefined && idle >= (newest && !newest.done ? QUIET_RUNNING_MS : QUIET_AFTER_MS);
-  return { elapsed, idle, between, quiet };
+  return { elapsed, phase, phaseElapsed, thinkingDurationMs, idle, between, quiet };
+}
+
+/** Completed reasoning blocks (`message` with `kind === "thinking"`) inside a turn window. */
+export function thinkingBlocks(events: RunEventLike[] | undefined, since?: string, until?: string): ThinkingBlock[] {
+  const t = since ? Date.parse(since) : 0;
+  const hi = until ? Date.parse(until) : Infinity;
+  const out: ThinkingBlock[] = [];
+  for (const e of events ?? []) {
+    const at = Date.parse(e.at);
+    if (at < t || at > hi) continue;
+    const p = e.payload;
+    if (isSubagentEvent(p)) continue;
+    if (e.type === "message" && p.kind === "thinking") {
+      const text = str(p.text).trim();
+      if (!text) continue;
+      const heading = thinkingHeading(text);
+      out.push({ seq: e.seq, text, ...(heading ? { heading } : {}), at });
+    }
+  }
+  return out;
+}
+
+/** Plan checklist progress for a running `TodoWrite` / `TaskCreate` turn, excluding synthetic reply-block steps. */
+export function planProgress(steps: ChatStep[], planned: boolean): PlanChecklistProgress | undefined {
+  if (!planned) return undefined;
+  const planOnly = steps.filter((s) => s.key.includes("#"));
+  if (planOnly.length === 0) return undefined;
+  const completed = planOnly.filter((s) => s.state === "done").length;
+  const failed = planOnly.filter((s) => s.state === "failed").length;
+  const activeStep = planOnly.find((s) => s.state === "active");
+  const total = planOnly.length;
+  const base = `${completed}/${total} ${total === 1 ? "step" : "steps"}`;
+  const label = failed > 0 ? `${base} · ${failed} failed` : base;
+  return { steps: planOnly, completed, failed, total, activeStep, label };
 }
 
 /** A duration for the card: "12s", "4m 05s", "1h 02m". */
@@ -1004,10 +1143,10 @@ export type ChatStep = {
 /** The rail's stand-in while the newest call has finished and the next hasn't started. */
 export const NEXT_STEP_KEY = "next-step";
 
-type PlanState = "planned" | "active" | "done";
+type PlanState = "planned" | "active" | "done" | "failed";
 type PlanItem = { id: string; title: string; state: PlanState };
 
-const planState = (v: unknown): PlanState => (v === "completed" ? "done" : v === "in_progress" ? "active" : "planned");
+const planState = (v: unknown): PlanState => (v === "completed" ? "done" : v === "failed" ? "failed" : v === "in_progress" ? "active" : "planned");
 const records = (list: unknown) => (Array.isArray(list) ? (list as Record<string, unknown>[]) : []);
 const planItems = (list: unknown): PlanItem[] =>
   records(list)
@@ -1619,26 +1758,61 @@ export function foldSteps(steps: ChatStep[]): { earlier: number; shown: ChatStep
 
 /** How a finished turn ended: with a reply, an error, or the person stopping (or interrupting) it. */
 export type TurnOutcome = "done" | "failed" | "stopped";
-export type FinishedTurn = { steps: ChatStep[]; duration?: number };
+export type FinishedTurn = {
+  steps: ChatStep[];
+  duration?: number;
+  thinkingDurationMs?: number;
+  thinkingBlocks: ThinkingBlock[];
+};
+
+const OUTCOME_VERB: Record<TurnOutcome, string> = {
+  done: "Worked for",
+  failed: "Failed after",
+  stopped: "Stopped after",
+};
+
+/** Summary line for a finished working card ("Worked for 2m 14s · Thought for 32s · 7 steps"). */
+export function finishedSummary(
+  outcome: TurnOutcome,
+  stepCount: number,
+  durationMs?: number,
+  thinkingDurationMs?: number,
+): string {
+  const verb = OUTCOME_VERB[outcome];
+  const lead = durationMs !== undefined && durationMs >= 1000 ? `${verb} ${formatSpan(durationMs)}` : verb.split(" ")[0];
+  const parts = [lead];
+  if (thinkingDurationMs !== undefined && thinkingDurationMs >= 1000) {
+    parts.push(`Thought for ${formatSpan(thinkingDurationMs)}`);
+  }
+  parts.push(`${stepCount} ${stepCount === 1 ? "step" : "steps"}`);
+  return parts.join(" · ");
+}
 
 /**
- * A finished turn's steps for the strip kept above its reply: the live card's steps, none
- * still under way. The last step was "active" when the turn ended; it finished, or for a
- * failed turn, it is where the turn failed. No steps when the turn did no work beyond
- * bookkeeping and blocks written into the reply, so a plain answer gets no strip.
+ * A finished turn's steps, duration, pure thinking duration, and thinking blocks.
+ * Plain replies with only bookkeeping and reply blocks return empty steps (so no working strip
+ * renders) while still preserving thinkingDurationMs and thinkingBlocks when events exist.
  * `end` (ms) is when the turn ended, its reply's time when there is one.
  */
 export function finishedTurn(events: RunEventLike[] | undefined, outcome: TurnOutcome, since?: string, until?: string, end?: number): FinishedTurn {
   const calls = chatCalls(events, since, until);
-  if (!calls.some((c) => c.tool !== REPLY_BLOCK && !BOOKKEEPING.has(bareTool(c.tool)))) return { steps: [] };
   const clock = turnClock(events, since, until);
+  const blocks = thinkingBlocks(events, since, until);
+  const last = end ?? clock.last;
+  const duration = clock.started !== undefined && last !== undefined ? Math.max(0, last - clock.started) : undefined;
+  const thinkingDurationMs =
+    clock.hasEvents && clock.started !== undefined && last !== undefined
+      ? clock.closedThinkingMs + (clock.phase === "thinking" && clock.phaseStart !== undefined ? Math.max(0, last - clock.phaseStart) : 0)
+      : undefined;
+  if (!calls.some((c) => c.tool !== REPLY_BLOCK && !BOOKKEEPING.has(bareTool(c.tool)))) {
+    return { steps: [], duration, thinkingDurationMs, thinkingBlocks: blocks };
+  }
   const { steps } = chatSteps(calls, turnNotes(events, since, until), { clock });
   for (const st of steps) {
     if (st.state !== "active") continue;
     st.state = outcome === "failed" ? "failed" : "done";
   }
-  const last = end ?? clock.last;
-  return { steps, duration: clock.started !== undefined && last !== undefined ? Math.max(0, last - clock.started) : undefined };
+  return { steps, duration, thinkingDurationMs, thinkingBlocks: blocks };
 }
 
 /** Where a turn that ended without a reply shows its strip, and the events it covers. */
