@@ -125,4 +125,53 @@ final class SpacesLogicTests: XCTestCase {
         let limited = SpacesLogic.knowledgeLinkSuggestions(query: "", kind: .page, pages: pages, existingLinks: [], limit: 2)
         XCTAssertEqual(limited.count, 2)
     }
+
+    func testActiveAndClosedBranchesAndLabels() {
+        let openPR = API.ChatSpaceBranch(
+            active: true, branch: "feat/open", chatId: "c1", chatTitle: "Open",
+            dirty: false, live: false, prNumber: 42, prState: .open, prUrl: "https://github.com/a/b/pull/42",
+            pushState: "pushed", repoUrl: "https://github.com/a/b.git", updatedAt: "2026-11-24T05:00:00Z"
+        )
+        let mergedPR = API.ChatSpaceBranch(
+            active: false, branch: "feat/merged", chatId: "c2", chatTitle: "Merged",
+            dirty: false, live: false, prNumber: 41, prState: .merged, prUrl: "https://github.com/a/b/pull/41",
+            pushState: "pushed", repoUrl: "https://github.com/a/b.git", updatedAt: "2026-11-24T04:00:00Z"
+        )
+        let continuedAfterMerge = API.ChatSpaceBranch(
+            active: true, branch: "feat/continued", chatId: "c3", chatTitle: "Continued",
+            dirty: true, live: false, prNumber: 40, prState: .merged, prUrl: "https://github.com/a/b/pull/40",
+            pushState: "pushed", repoUrl: "https://github.com/a/b.git", updatedAt: "2026-11-24T06:00:00Z"
+        )
+        let pendingPush = API.ChatSpaceBranch(
+            active: true, branch: "fix/pending", chatId: "c4", chatTitle: "Pending",
+            dirty: false, live: false, pushState: "pending",
+            repoUrl: "https://github.com/a/b.git", updatedAt: "2026-11-24T03:00:00Z"
+        )
+
+        let all = [openPR, mergedPR, continuedAfterMerge, pendingPush]
+        XCTAssertEqual(SpacesLogic.activeBranches(all).map(\.branch), ["feat/open", "feat/continued", "fix/pending"])
+        XCTAssertEqual(SpacesLogic.closedBranches(all).map(\.branch), ["feat/merged"])
+
+        XCTAssertEqual(SpacesLogic.branchStatusLabel(for: openPR), "Open PR")
+        XCTAssertEqual(SpacesLogic.branchStatusLabel(for: mergedPR), "Merged")
+        XCTAssertEqual(SpacesLogic.branchStatusLabel(for: continuedAfterMerge), "New commits")
+        XCTAssertEqual(SpacesLogic.branchStatusLabel(for: pendingPush), "Pending push")
+    }
+
+    func testSortSpacesByActivity() {
+        func makeSpace(id: String, name: String, updated: String, lastActivity: String?) -> API.ChatSpace {
+            API.ChatSpace(
+                chatCount: 1, color: .green, connectorIds: [], createdAt: "2026-11-01T00:00:00Z",
+                description: "", id: id, inlineTokens: 0, instructions: "",
+                lastActivityAt: lastActivity, memoryCount: 0, name: name,
+                sourceCount: 0, spaceMemory: false, updatedAt: updated
+            )
+        }
+        let older = makeSpace(id: "1", name: "Alpha", updated: "2026-11-20T00:00:00Z", lastActivity: "2026-11-21T00:00:00Z")
+        let newest = makeSpace(id: "2", name: "Vesper", updated: "2026-11-19T00:00:00Z", lastActivity: "2026-11-24T05:00:00Z")
+        let fallback = makeSpace(id: "3", name: "Umbra", updated: "2026-11-22T00:00:00Z", lastActivity: nil)
+
+        let sorted = SpacesLogic.sortSpacesByActivity([older, newest, fallback])
+        XCTAssertEqual(sorted.map(\.name), ["Vesper", "Umbra", "Alpha"])
+    }
 }
