@@ -24,8 +24,10 @@ import {
   useChatModels,
   useCreateChat,
   useDeleteChat,
+  useDelegatedRunLogs,
   useLinkPreviews,
   useQueueFollowup,
+  useRunLog,
   useSendChatMessage,
   useSetChatCommitEmail,
   useSetChatMessageBookmark,
@@ -52,7 +54,8 @@ import { StatusSlot, type StatusItem } from "./status-slot";
 import { ChatWorkflowTray, WorkflowStartCard } from "@/components/domain/workflow-cards";
 import { ChatRunsPill, ChatTicketRunTray } from "@/components/domain/dispatch-cards";
 import { ActivityScene } from "./activity-scene";
-import { Tabs } from "@/components/ui/controls";
+import { Segmented, Tabs } from "@/components/ui/controls";
+import { RunGraphView } from "./run-graph-view";
 import { focusActivityStep } from "./activity-focus";
 import { openThread, setDock } from "@/lib/chat-panels";
 import { isTyping } from "@/components/shell/shortcuts";
@@ -573,24 +576,71 @@ function ActivityLog({ list, turns, groups, running, runId, since, focus }: { li
   );
 }
 
-/** Activity's cost, model line and log, for the compact tab and the desktop dock's tab. */
+const ACTIVITY_VIEWS = [
+  { value: "list", label: "List" },
+  { value: "graph", label: "Graph" },
+] as const;
+
+/** Run graph + waterfall for the chat's run, mounted only when the person switches to Graph. */
+function ChatActivityGraph({ runId, onOpenList }: { runId: string; onOpenList: () => void }) {
+  const { data: d, isPending, isError } = useRunLog(runId, true);
+  const childDetails = useDelegatedRunLogs(d?.child_runs ?? []);
+  if (isPending) {
+    return (
+      <div className="mx-auto flex max-w-[860px] flex-col gap-3">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-60 w-full rounded-lg" />
+      </div>
+    );
+  }
+  if (isError || !d) {
+    return <EmptyState icon="msg" title="Graph unavailable">Could not load run details for this conversation.</EmptyState>;
+  }
+  return (
+    <div data-testid="activity-graph" className="mx-auto flex max-w-[860px] flex-col gap-2">
+      <RunGraphView d={d} childDetails={childDetails.map((q) => q.data)} embedded onOpenTurn={onOpenList} onOpenEvent={onOpenList} />
+    </div>
+  );
+}
+
+/** Activity's cost, model line and log (or run graph), for the compact tab and the desktop dock's tab. */
 const ActivityBody = memo(function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<ReturnType<typeof useChat>["data"]>; list: Message[] | undefined; groups: Groups; focus?: { key: string; at: number } }) {
   const current: Selection = { harness: c.harness, model: c.model, auto: !!c.auto_model };
   const running = c.state === "running";
   const lastUser = list?.findLast((m) => m.role === "user");
   const since = runningSince(list) ?? lastUser?.created_at;
   const turns = useMemo(() => turnWindows(list), [list]);
+  const graphRunId = c.current_run_id ?? list?.findLast((m) => m.run_id)?.run_id;
+  const [picked, setPicked] = useState<{ view: "list" | "graph"; focusAt?: number }>({ view: "list" });
+  // Clicking a step or subagent card in Chat bumps focus.at, returning Activity to List view.
+  const view = picked.focusAt === focus?.at ? picked.view : "list";
+  const setView = (next: "list" | "graph") => setPicked({ view: next, focusAt: focus?.at });
+  const activeView = graphRunId ? view : "list";
   return (
     <>
       <div className="mx-auto mb-4 flex max-w-[860px] flex-wrap items-center gap-2">
         <ChatCostChip chatId={c.id} project={c.project} />
-        <span className="truncate font-mono text-12 text-fg-tertiary">
+        <span className="min-w-0 flex-1 truncate font-mono text-12 text-fg-tertiary">
           {modelLabel(groups, current).harness} · {modelLabel(groups, current).model}
           {current.auto && " (auto)"}
           {c.effort && ` · ${effortLabel(c.effort)} effort`}
         </span>
+        {graphRunId && (
+          <div className="ml-auto flex flex-none items-center gap-2">
+            {activeView === "graph" && (
+              <Link href={`/runs/${graphRunId}?view=graph`} className="text-12 text-fg-tertiary hover:text-fg hover:underline">
+                Open run ↗
+              </Link>
+            )}
+            <Segmented small label="Activity view" options={ACTIVITY_VIEWS} value={activeView} onChange={setView} />
+          </div>
+        )}
       </div>
-      <ActivityLog list={list} turns={turns} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
+      {activeView === "graph" && graphRunId ? (
+        <ChatActivityGraph runId={graphRunId} onOpenList={() => setView("list")} />
+      ) : (
+        <ActivityLog list={list} turns={turns} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
+      )}
     </>
   );
 });
