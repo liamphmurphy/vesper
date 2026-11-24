@@ -6,20 +6,19 @@ import type { IconName } from "@/components/ui/icon";
 import { inAppsMenu, isActive, type NavBadge } from "./project-scope.ts";
 
 /** The areas on the icon row, in order. Apps is the flyout of Custom Apps and tools. */
-export type Area = "chat" | "work" | "runs" | "tickets" | "knowledge" | "library" | "apps";
+export type Area = "chat" | "spaces" | "knowledge" | "library" | "apps";
 
-export const AREAS: { area: Exclude<Area, "apps" | "runs" | "tickets">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
+export const AREAS: { area: Exclude<Area, "apps">; href: string; label: string; icon: IconName; badge?: NavBadge }[] = [
   { area: "chat", href: "/chat", label: "Chat", icon: "msg" },
-  { area: "work", href: "/work", label: "Work", icon: "tickets", badge: "runs" },
+  { area: "spaces", href: "/spaces", label: "Spaces", icon: "epics" },
   { area: "knowledge", href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
   { area: "library", href: "/library", label: "Library", icon: "library" },
 ];
 
 /** The area a path belongs to, for the icon row's current mark; null on screens of no area (Settings, Customization). */
 export function currentArea(pathname: string): Area | null {
-  if (pathname === "/" || isActive(pathname, "/chat") || isActive(pathname, "/spaces")) return "chat";
-  if (isActive(pathname, "/work") || isActive(pathname, "/runs")) return "work";
-  if (isActive(pathname, "/tickets") || isActive(pathname, "/epics")) return "work";
+  if (pathname === "/" || isActive(pathname, "/chat")) return "chat";
+  if (isActive(pathname, "/spaces")) return "spaces";
   // Decks and designs are Knowledge pages; their old addresses lead there.
   if (isActive(pathname, "/knowledge") || isActive(pathname, "/apps/designs") || isActive(pathname, "/apps/slides")) return "knowledge";
   if (isActive(pathname, "/library")) return "library";

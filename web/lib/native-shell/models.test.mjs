@@ -107,23 +107,23 @@ test("findNavItem looks in children", () => {
   assert.equal(findNavItem(m, "z"), undefined);
 });
 
-test("shell model: areas with badge dots, apps, work for runs and tickets", () => {
+test("shell model: areas with badge dots, apps, spaces area", () => {
   const areas = [
     { area: "chat", href: "/chat", label: "Chat", icon: "msg" },
-    { area: "work", href: "/work", label: "Work", icon: "tickets", badge: "runs" },
+    { area: "spaces", href: "/spaces", label: "Spaces", icon: "epics" },
     { area: "knowledge", href: "/knowledge", label: "Knowledge", icon: "wiki", badge: "wiki" },
   ];
   const m = buildShellModel({
     areas,
-    counts: { runs: 2, wiki: 0 },
-    current: "tickets",
+    counts: { wiki: 2 },
+    current: "spaces",
     customApps: [{ slug: "budget", name: "Budget", icon: "dollar" }],
     tools: [{ href: "/workflows", label: "Workflows", icon: "graph" }],
   });
-  assert.deepEqual(m.areas.map((a) => [a.id, a.badge]), [["chat", undefined], ["work", { tone: "done" }], ["knowledge", undefined]]);
+  assert.deepEqual(m.areas.map((a) => [a.id, a.badge]), [["chat", undefined], ["spaces", undefined], ["knowledge", { tone: "accent" }]]);
   assert.deepEqual(m.apps.map((a) => [a.id, a.href]), [["app:budget", "/apps/budget"], ["tool:/workflows", "/workflows"]]);
-  assert.equal(m.currentArea, "work");
-  assert.equal(protocolArea("runs"), "work");
+  assert.equal(m.currentArea, "spaces");
+  assert.equal(protocolArea("spaces"), "spaces");
   assert.equal(protocolArea(null), null);
 });
 

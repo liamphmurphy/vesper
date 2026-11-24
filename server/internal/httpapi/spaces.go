@@ -53,6 +53,7 @@ func (s *Server) toSpaces(ctx context.Context, spaces []store.ChatSpace) ([]api.
 		return out, nil
 	}
 	_, _, ws := me(ctx)
+	u, _, _ := me(ctx)
 	ids := make([]uuid.UUID, len(spaces))
 	for i, sp := range spaces {
 		ids[i] = sp.ID
@@ -65,6 +66,30 @@ func (s *Server) toSpaces(ctx context.Context, spaces []store.ChatSpace) ([]api.
 	for _, st := range stats {
 		byID[st.ID] = st
 	}
+	repoRows, err := s.Q.ListChatSpaceRepositoriesBySpaceIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	reposBySpace := map[uuid.UUID][]store.ChatSpaceRepository{}
+	for _, r := range repoRows {
+		reposBySpace[r.SpaceID] = append(reposBySpace[r.SpaceID], r)
+	}
+	linkRows, err := s.Q.ListChatSpaceKnowledgeLinksBySpaceIDs(ctx, ids)
+	if err != nil {
+		return nil, err
+	}
+	linksBySpace := map[uuid.UUID][]store.ChatSpaceKnowledgeLink{}
+	for _, l := range linkRows {
+		linksBySpace[l.SpaceID] = append(linksBySpace[l.SpaceID], l)
+	}
+	personaRows, err := s.Q.ListPersonas(ctx, store.ListPersonasParams{WorkspaceID: ws, UserID: u.ID})
+	if err != nil {
+		return nil, err
+	}
+	personasByID := map[uuid.UUID]store.Persona{}
+	for _, p := range personaRows {
+		personasByID[p.ID] = p
+	}
 	projects, err := s.Q.ListProjects(ctx, ws)
 	if err != nil {
 		return nil, err
@@ -75,9 +100,23 @@ func (s *Server) toSpaces(ctx context.Context, spaces []store.ChatSpace) ([]api.
 			return nil, err
 		}
 		st := byID[sp.ID]
+		repoCount := int(st.RepoCount)
+		knowledgeCount := int(st.KnowledgeCount)
+		openTaskCount := int(st.OpenTaskCount)
+		repos := toSpaceRepos(reposBySpace[sp.ID])
+		links, err := s.toSpaceKnowledgeLinks(ctx, ws, u.ID, linksBySpace[sp.ID])
+		if err != nil {
+			return nil, err
+		}
 		item := api.ChatSpace{Id: sp.ID, Name: sp.Name, Description: sp.Description, Color: api.ChatSpaceColor(sp.Color), Instructions: sp.Instructions,
 			PersonaId: sp.PersonaID, ConnectorIds: sp.ConnectorIds, SpaceMemory: sp.SpaceMemory, ChatCount: int(st.ChatCount), SourceCount: int(st.SourceCount),
-			MemoryCount: int(st.MemoryCount), InlineTokens: runs.SpaceInlineTokens(sources), CreatedAt: sp.CreatedAt, UpdatedAt: sp.UpdatedAt}
+			MemoryCount: int(st.MemoryCount), RepoCount: &repoCount, KnowledgeCount: &knowledgeCount, OpenTaskCount: &openTaskCount,
+			Repositories: &repos, KnowledgeLinks: &links, InlineTokens: runs.SpaceInlineTokens(sources), CreatedAt: sp.CreatedAt, UpdatedAt: sp.UpdatedAt}
+		if sp.PersonaID != nil {
+			if p, ok := personasByID[*sp.PersonaID]; ok {
+				item.Persona = &api.ChatSpacePersonaRef{Id: p.ID, Name: p.Name, Color: p.Color, AvatarUrl: personaAvatarURL(p)}
+			}
+		}
 		if item.ConnectorIds == nil {
 			item.ConnectorIds = []uuid.UUID{}
 		}

@@ -419,6 +419,11 @@ type ChatInput struct {
 	Temporary bool
 	// NoRepo keeps a coding persona's chat out of its repositories.
 	NoRepo bool
+	// RepoURLs, when non-nil, overrides which repositories attach at chat start
+	// (an empty slice attaches none; used by Space composer context toggles).
+	RepoURLs *[]string
+	// TaskID optionally links the created chat to a space task.
+	TaskID *uuid.UUID
 	// CommitEmail is one of the creator's addresses for the chat's commits;
 	// empty leaves it unpicked (their primary is used). Only with a repository.
 	CommitEmail string
@@ -546,12 +551,64 @@ func (s *Service) startChat(ctx context.Context, q *store.Queries, ws, user uuid
 		if persona != nil {
 			personaID = &persona.ID
 		}
-		repo, err := chatRepo(persona, in.RepoURL)
-		if err != nil {
-			return err
-		}
-		if in.NoRepo {
-			repo = ""
+		var attachedRepos []string
+		if !in.NoRepo {
+			switch {
+			case in.RepoURLs != nil:
+				for _, raw := range *in.RepoURLs {
+					raw = strings.TrimSpace(raw)
+					if raw == "" {
+						continue
+					}
+					u, err := chatRepo(persona, raw)
+					if err != nil {
+						return err
+					}
+					if !slices.Contains(attachedRepos, u) {
+						attachedRepos = append(attachedRepos, u)
+					}
+				}
+			case strings.TrimSpace(in.RepoURL) != "":
+				u, err := chatRepo(persona, in.RepoURL)
+				if err != nil {
+					return err
+				}
+				if u != "" {
+					attachedRepos = append(attachedRepos, u)
+				}
+			case space != nil:
+				spaceRepos, err := q.ListChatSpaceRepositories(ctx, *space)
+				if err != nil {
+					return err
+				}
+				if len(spaceRepos) > 0 {
+					// Implicit space repos only attach when the persona can code;
+					// non-coding personas can still chat in the space without erroring.
+					if persona != nil && persona.CanCode {
+						for _, sr := range spaceRepos {
+							if u, err := repositories.Canonical(sr.RepoUrl); err == nil && !slices.Contains(attachedRepos, u) {
+								attachedRepos = append(attachedRepos, u)
+							}
+						}
+					}
+				} else {
+					u, err := chatRepo(persona, "")
+					if err != nil {
+						return err
+					}
+					if u != "" {
+						attachedRepos = append(attachedRepos, u)
+					}
+				}
+			default:
+				u, err := chatRepo(persona, "")
+				if err != nil {
+					return err
+				}
+				if u != "" {
+					attachedRepos = append(attachedRepos, u)
+				}
+			}
 		}
 		title := in.Title
 		if title == "" && in.Message != nil {
@@ -566,15 +623,30 @@ func (s *Service) startChat(ctx context.Context, q *store.Queries, ws, user uuid
 				return err
 			}
 		}
-		if repo != "" {
+		if len(attachedRepos) > 0 {
+			primary := attachedRepos[0]
 			// No branch yet: the persona makes one when a change is asked for.
-			out, err = q.SetChatRepo(ctx, store.SetChatRepoParams{ID: out.ID, RepoUrl: &repo})
+			out, err = q.SetChatRepo(ctx, store.SetChatRepoParams{ID: out.ID, RepoUrl: &primary})
 			if err != nil {
 				return err
 			}
+			usedDirs := map[string]bool{".": true}
+			for i, r := range attachedRepos {
+				dir := "."
+				if i > 0 {
+					dir = repositories.Directory(r)
+					for n := 2; usedDirs[dir]; n++ {
+						dir = fmt.Sprintf("%s-%d", repositories.Directory(r), n)
+					}
+					usedDirs[dir] = true
+				}
+				if _, err = q.AttachChatRepository(ctx, store.AttachChatRepositoryParams{ChatID: out.ID, RepoUrl: r, Directory: dir}); err != nil {
+					return err
+				}
+			}
 		}
-		if repo != "" {
-			if _, err = q.AttachChatRepository(ctx, store.AttachChatRepositoryParams{ChatID: out.ID, RepoUrl: repo, Directory: "."}); err != nil {
+		if in.TaskID != nil && space != nil {
+			if err = q.LinkChatSpaceTaskChat(ctx, store.LinkChatSpaceTaskChatParams{ID: *in.TaskID, SpaceID: *space, ChatID: &out.ID}); err != nil {
 				return err
 			}
 		}

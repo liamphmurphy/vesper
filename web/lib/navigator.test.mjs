@@ -5,10 +5,8 @@ import { AREAS, claimNavigator, currentArea, navigatorClaimed, subscribeNavigato
 test("a path selects its area on the icon row", () => {
   assert.equal(currentArea("/"), "chat");
   assert.equal(currentArea("/chat/abc"), "chat");
-  assert.equal(currentArea("/spaces/s1"), "chat");
-  assert.equal(currentArea("/runs/r1"), "work");
-  assert.equal(currentArea("/tickets/WEB-1"), "work");
-  assert.equal(currentArea("/epics/e1"), "work");
+  assert.equal(currentArea("/spaces/s1"), "spaces");
+  assert.equal(currentArea("/spaces"), "spaces");
   // Knowledge and Library live on the main bar, not in the Apps flyout.
   assert.equal(currentArea("/knowledge/p1/notes"), "knowledge");
   assert.equal(currentArea("/library"), "library");
@@ -22,7 +20,7 @@ test("a path selects its area on the icon row", () => {
 });
 
 test("AREAS lists the top-level areas in order", () => {
-  assert.deepEqual(AREAS.map((a) => a.area), ["chat", "work", "knowledge", "library"]);
+  assert.deepEqual(AREAS.map((a) => a.area), ["chat", "spaces", "knowledge", "library"]);
 });
 
 test("the navigator is claimed while any screen holds it, and tells its listeners", () => {

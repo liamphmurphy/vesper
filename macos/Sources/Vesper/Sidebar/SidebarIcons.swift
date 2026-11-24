@@ -6,7 +6,7 @@ import VesperCore
 enum SidebarIcons {
     static let table: [String: String] = [
         "dashboard": "square.grid.2x2", "inbox": "tray", "tickets": "checkmark.circle", "slides": "play.rectangle",
-        "designs": "pencil.and.ruler", "board": "rectangle.split.3x1", "epics": "square.stack.3d.up", "agents": "cpu",
+        "designs": "pencil.and.ruler", "board": "rectangle.split.3x1", "epics": "square.stack.3d.up", "spaces": "square.stack.3d.up", "agents": "cpu",
         "artifacts": "doc", "wiki": "book", "learn": "graduationcap", "graph": "point.3.connected.trianglepath.dotted",
         "search": "magnifyingglass", "plus": "plus", "chev": "chevron.down", "chevl": "chevron.left", "chevr": "chevron.right", "x": "xmark",
         "expand": "arrow.up.left.and.arrow.down.right", "shrink": "arrow.down.right.and.arrow.up.left", "chevronUp": "chevron.up",

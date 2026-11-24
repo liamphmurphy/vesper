@@ -81,7 +81,7 @@ final class ShellState {
     /// The area the area bar and tab icon mark. Under a native screen the web view is hidden and
     /// its reported route can lag or stick (it kept Knowledge lit after going back to Chat), so the
     /// shown screen's own area wins.
-    var currentArea: AreaId? { native != nil ? nativeArea : area }
+    var currentArea: AreaId? { native != nil ? (native?.areaOverride ?? nativeArea) : area }
     /// The page has sent `ready`: commands will be heard.
     var ready = false
 
@@ -160,7 +160,7 @@ final class ShellState {
     static let fallbackShell = ShellModel(
         areas: [
             ShellArea(id: .chat, label: "Chat", icon: "msg", href: "/chat"),
-            ShellArea(id: .work, label: "Work", icon: "tickets", href: "/work"),
+            ShellArea(id: .spaces, label: "Spaces", icon: "spaces", href: "/spaces"),
             ShellArea(id: .knowledge, label: "Knowledge", icon: "wiki", href: "/knowledge"),
             ShellArea(id: .library, label: "Library", icon: "library", href: "/library"),
         ],

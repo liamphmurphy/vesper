@@ -12,6 +12,66 @@ import (
 	"github.com/google/uuid"
 )
 
+const addChatSpaceKnowledgeLink = `-- name: AddChatSpaceKnowledgeLink :one
+INSERT INTO chat_space_knowledge_links (space_id, kind, path, is_default_target, pinned)
+VALUES ($1, $2, $3, $4, $5)
+RETURNING id, space_id, kind, path, is_default_target, pinned, created_at
+`
+
+type AddChatSpaceKnowledgeLinkParams struct {
+	SpaceID         uuid.UUID
+	Kind            string
+	Path            string
+	IsDefaultTarget bool
+	Pinned          bool
+}
+
+func (q *Queries) AddChatSpaceKnowledgeLink(ctx context.Context, arg AddChatSpaceKnowledgeLinkParams) (ChatSpaceKnowledgeLink, error) {
+	row := q.db.QueryRow(ctx, addChatSpaceKnowledgeLink,
+		arg.SpaceID,
+		arg.Kind,
+		arg.Path,
+		arg.IsDefaultTarget,
+		arg.Pinned,
+	)
+	var i ChatSpaceKnowledgeLink
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Kind,
+		&i.Path,
+		&i.IsDefaultTarget,
+		&i.Pinned,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const addChatSpaceRepository = `-- name: AddChatSpaceRepository :one
+INSERT INTO chat_space_repositories (space_id, repo_url, read_only)
+VALUES ($1, $2, $3)
+RETURNING id, space_id, repo_url, read_only, created_at
+`
+
+type AddChatSpaceRepositoryParams struct {
+	SpaceID  uuid.UUID
+	RepoUrl  string
+	ReadOnly bool
+}
+
+func (q *Queries) AddChatSpaceRepository(ctx context.Context, arg AddChatSpaceRepositoryParams) (ChatSpaceRepository, error) {
+	row := q.db.QueryRow(ctx, addChatSpaceRepository, arg.SpaceID, arg.RepoUrl, arg.ReadOnly)
+	var i ChatSpaceRepository
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.RepoUrl,
+		&i.ReadOnly,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const chatLastReplies = `-- name: ChatLastReplies :many
 SELECT DISTINCT ON (session_id) session_id, left(body_md, 600)::text AS body
 FROM chat_messages WHERE session_id = ANY($1::uuid[]) AND role = 'assistant'
@@ -48,18 +108,24 @@ const chatSpaceStats = `-- name: ChatSpaceStats :many
 SELECT s.id,
   (SELECT count(*) FROM chat_sessions c WHERE c.space_id = s.id AND NOT c.archived AND NOT c.hidden)::int AS chat_count,
   (SELECT count(*) FROM chat_space_sources x WHERE x.space_id = s.id)::int AS source_count,
-  (SELECT count(*) FROM memories m WHERE m.space_id = s.id AND m.superseded_by IS NULL)::int AS memory_count
+  (SELECT count(*) FROM memories m WHERE m.space_id = s.id AND m.superseded_by IS NULL)::int AS memory_count,
+  (SELECT count(*) FROM chat_space_repositories r WHERE r.space_id = s.id)::int AS repo_count,
+  (SELECT count(*) FROM chat_space_knowledge_links k WHERE k.space_id = s.id)::int AS knowledge_count,
+  (SELECT count(*) FROM chat_space_tasks t WHERE t.space_id = s.id AND NOT t.done)::int AS open_task_count
 FROM chat_spaces s WHERE s.id = ANY($1::uuid[])
 `
 
 type ChatSpaceStatsRow struct {
-	ID          uuid.UUID
-	ChatCount   int32
-	SourceCount int32
-	MemoryCount int32
+	ID             uuid.UUID
+	ChatCount      int32
+	SourceCount    int32
+	MemoryCount    int32
+	RepoCount      int32
+	KnowledgeCount int32
+	OpenTaskCount  int32
 }
 
-// Per space: active chats, sources and live memories.
+// Per space: active chats, sources, live memories, repos, knowledge links and open tasks.
 func (q *Queries) ChatSpaceStats(ctx context.Context, ids []uuid.UUID) ([]ChatSpaceStatsRow, error) {
 	rows, err := q.db.Query(ctx, chatSpaceStats, ids)
 	if err != nil {
@@ -74,6 +140,9 @@ func (q *Queries) ChatSpaceStats(ctx context.Context, ids []uuid.UUID) ([]ChatSp
 			&i.ChatCount,
 			&i.SourceCount,
 			&i.MemoryCount,
+			&i.RepoCount,
+			&i.KnowledgeCount,
+			&i.OpenTaskCount,
 		); err != nil {
 			return nil, err
 		}
@@ -130,12 +199,45 @@ func (q *Queries) ChatSpacesByIDs(ctx context.Context, arg ChatSpacesByIDsParams
 	return items, nil
 }
 
+const clearSpaceDefaultKnowledgeTarget = `-- name: ClearSpaceDefaultKnowledgeTarget :exec
+UPDATE chat_space_knowledge_links
+SET is_default_target = false
+WHERE space_id = $1 AND is_default_target = true
+`
+
+func (q *Queries) ClearSpaceDefaultKnowledgeTarget(ctx context.Context, spaceID uuid.UUID) error {
+	_, err := q.db.Exec(ctx, clearSpaceDefaultKnowledgeTarget, spaceID)
+	return err
+}
+
 const countChatSpaceSources = `-- name: CountChatSpaceSources :one
 SELECT count(*)::int FROM chat_space_sources WHERE space_id = $1
 `
 
 func (q *Queries) CountChatSpaceSources(ctx context.Context, spaceID uuid.UUID) (int32, error) {
 	row := q.db.QueryRow(ctx, countChatSpaceSources, spaceID)
+	var column_1 int32
+	err := row.Scan(&column_1)
+	return column_1, err
+}
+
+const countNotesInFolderPrefix = `-- name: CountNotesInFolderPrefix :one
+SELECT count(*)::int FROM artifacts a
+WHERE a.workspace_id = $1
+  AND a.type = 'note'
+  AND a.path IS NOT NULL
+  AND (a.owner_user_id IS NULL OR a.owner_user_id = $2)
+  AND (a.path = $3::text OR a.path LIKE $3::text || '/%')
+`
+
+type CountNotesInFolderPrefixParams struct {
+	WorkspaceID uuid.UUID
+	UserID      *uuid.UUID
+	Folder      string
+}
+
+func (q *Queries) CountNotesInFolderPrefix(ctx context.Context, arg CountNotesInFolderPrefixParams) (int32, error) {
+	row := q.db.QueryRow(ctx, countNotesInFolderPrefix, arg.WorkspaceID, arg.UserID, arg.Folder)
 	var column_1 int32
 	err := row.Scan(&column_1)
 	return column_1, err
@@ -293,6 +395,40 @@ func (q *Queries) CreateChatSpaceSource(ctx context.Context, arg CreateChatSpace
 	return i, err
 }
 
+const createChatSpaceTask = `-- name: CreateChatSpaceTask :one
+INSERT INTO chat_space_tasks (space_id, title, notes, position)
+VALUES (
+  $1,
+  $2,
+  $3,
+  COALESCE((SELECT max(position) + 1 FROM chat_space_tasks WHERE space_id = $1), 0)
+)
+RETURNING id, space_id, title, notes, done, chat_id, position, created_at, updated_at
+`
+
+type CreateChatSpaceTaskParams struct {
+	SpaceID uuid.UUID
+	Title   string
+	Notes   string
+}
+
+func (q *Queries) CreateChatSpaceTask(ctx context.Context, arg CreateChatSpaceTaskParams) (ChatSpaceTask, error) {
+	row := q.db.QueryRow(ctx, createChatSpaceTask, arg.SpaceID, arg.Title, arg.Notes)
+	var i ChatSpaceTask
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Title,
+		&i.Notes,
+		&i.Done,
+		&i.ChatID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+	)
+	return i, err
+}
+
 const createResearchSpaceSource = `-- name: CreateResearchSpaceSource :one
 INSERT INTO chat_space_sources (space_id, kind, title, body, content_type, size_bytes, tokens, research_job_id, chat_id)
 VALUES ($1, 'research', $2, $3, 'text/markdown', $4, $5, $6, $7)
@@ -376,6 +512,52 @@ func (q *Queries) DeleteChatSpace(ctx context.Context, arg DeleteChatSpaceParams
 	return items, nil
 }
 
+const deleteChatSpaceKnowledgeLink = `-- name: DeleteChatSpaceKnowledgeLink :one
+DELETE FROM chat_space_knowledge_links WHERE id = $1 AND space_id = $2 RETURNING id, space_id, kind, path, is_default_target, pinned, created_at
+`
+
+type DeleteChatSpaceKnowledgeLinkParams struct {
+	ID      uuid.UUID
+	SpaceID uuid.UUID
+}
+
+func (q *Queries) DeleteChatSpaceKnowledgeLink(ctx context.Context, arg DeleteChatSpaceKnowledgeLinkParams) (ChatSpaceKnowledgeLink, error) {
+	row := q.db.QueryRow(ctx, deleteChatSpaceKnowledgeLink, arg.ID, arg.SpaceID)
+	var i ChatSpaceKnowledgeLink
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Kind,
+		&i.Path,
+		&i.IsDefaultTarget,
+		&i.Pinned,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const deleteChatSpaceRepository = `-- name: DeleteChatSpaceRepository :one
+DELETE FROM chat_space_repositories WHERE id = $1 AND space_id = $2 RETURNING id, space_id, repo_url, read_only, created_at
+`
+
+type DeleteChatSpaceRepositoryParams struct {
+	ID      uuid.UUID
+	SpaceID uuid.UUID
+}
+
+func (q *Queries) DeleteChatSpaceRepository(ctx context.Context, arg DeleteChatSpaceRepositoryParams) (ChatSpaceRepository, error) {
+	row := q.db.QueryRow(ctx, deleteChatSpaceRepository, arg.ID, arg.SpaceID)
+	var i ChatSpaceRepository
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.RepoUrl,
+		&i.ReadOnly,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const deleteChatSpaceSource = `-- name: DeleteChatSpaceSource :one
 DELETE FROM chat_space_sources WHERE id = $1 AND space_id = $2 RETURNING id, space_id, kind, title, url, body, filename, content_type, size_bytes, blob_key, tokens, created_at, research_job_id, chat_id
 `
@@ -403,6 +585,32 @@ func (q *Queries) DeleteChatSpaceSource(ctx context.Context, arg DeleteChatSpace
 		&i.CreatedAt,
 		&i.ResearchJobID,
 		&i.ChatID,
+	)
+	return i, err
+}
+
+const deleteChatSpaceTask = `-- name: DeleteChatSpaceTask :one
+DELETE FROM chat_space_tasks WHERE id = $1 AND space_id = $2 RETURNING id, space_id, title, notes, done, chat_id, position, created_at, updated_at
+`
+
+type DeleteChatSpaceTaskParams struct {
+	ID      uuid.UUID
+	SpaceID uuid.UUID
+}
+
+func (q *Queries) DeleteChatSpaceTask(ctx context.Context, arg DeleteChatSpaceTaskParams) (ChatSpaceTask, error) {
+	row := q.db.QueryRow(ctx, deleteChatSpaceTask, arg.ID, arg.SpaceID)
+	var i ChatSpaceTask
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Title,
+		&i.Notes,
+		&i.Done,
+		&i.ChatID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }
@@ -501,6 +709,49 @@ func (q *Queries) GetChatSpaceByID(ctx context.Context, id uuid.UUID) (ChatSpace
 	return i, err
 }
 
+const getChatSpaceTask = `-- name: GetChatSpaceTask :one
+SELECT t.id, t.space_id, t.title, t.notes, t.done, t.chat_id, t.position, t.created_at, t.updated_at, c.title AS chat_title
+FROM chat_space_tasks t
+LEFT JOIN chat_sessions c ON c.id = t.chat_id
+WHERE t.id = $1 AND t.space_id = $2
+`
+
+type GetChatSpaceTaskParams struct {
+	ID      uuid.UUID
+	SpaceID uuid.UUID
+}
+
+type GetChatSpaceTaskRow struct {
+	ID        uuid.UUID
+	SpaceID   uuid.UUID
+	Title     string
+	Notes     string
+	Done      bool
+	ChatID    *uuid.UUID
+	Position  int32
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ChatTitle *string
+}
+
+func (q *Queries) GetChatSpaceTask(ctx context.Context, arg GetChatSpaceTaskParams) (GetChatSpaceTaskRow, error) {
+	row := q.db.QueryRow(ctx, getChatSpaceTask, arg.ID, arg.SpaceID)
+	var i GetChatSpaceTaskRow
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Title,
+		&i.Notes,
+		&i.Done,
+		&i.ChatID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
+		&i.ChatTitle,
+	)
+	return i, err
+}
+
 const getMyCanvas = `-- name: GetMyCanvas :one
 SELECT cv.id, cv.kind, cv.title, cv.updated_at, cv.reviewed_seq, c.id AS chat_id, c.title AS chat_title
 FROM chat_canvases cv JOIN chat_sessions c ON c.id = cv.session_id
@@ -572,6 +823,263 @@ func (q *Queries) GetUserCanvas(ctx context.Context, arg GetUserCanvasParams) (G
 	return i, err
 }
 
+const linkChatSpaceTaskChat = `-- name: LinkChatSpaceTaskChat :exec
+UPDATE chat_space_tasks
+SET chat_id = $1, updated_at = now()
+WHERE id = $2 AND space_id = $3
+`
+
+type LinkChatSpaceTaskChatParams struct {
+	ChatID  *uuid.UUID
+	ID      uuid.UUID
+	SpaceID uuid.UUID
+}
+
+func (q *Queries) LinkChatSpaceTaskChat(ctx context.Context, arg LinkChatSpaceTaskChatParams) error {
+	_, err := q.db.Exec(ctx, linkChatSpaceTaskChat, arg.ChatID, arg.ID, arg.SpaceID)
+	return err
+}
+
+const listChatSpaceCodeReviews = `-- name: ListChatSpaceCodeReviews :many
+SELECT cr.chat_id, c.title AS chat_title, cr.repo_url, cr.branch, cr.dirty, cr.live, cr.updated_at
+FROM chat_code_reviews cr
+JOIN chat_sessions c ON c.id = cr.chat_id
+WHERE c.space_id = $1 AND c.workspace_id = $2 AND c.created_by = $3 AND NOT c.hidden
+  AND cr.branch IS NOT NULL AND cr.branch <> ''
+ORDER BY cr.updated_at DESC
+LIMIT 50
+`
+
+type ListChatSpaceCodeReviewsParams struct {
+	SpaceID     *uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type ListChatSpaceCodeReviewsRow struct {
+	ChatID    uuid.UUID
+	ChatTitle string
+	RepoUrl   string
+	Branch    *string
+	Dirty     bool
+	Live      bool
+	UpdatedAt time.Time
+}
+
+func (q *Queries) ListChatSpaceCodeReviews(ctx context.Context, arg ListChatSpaceCodeReviewsParams) ([]ListChatSpaceCodeReviewsRow, error) {
+	rows, err := q.db.Query(ctx, listChatSpaceCodeReviews, arg.SpaceID, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListChatSpaceCodeReviewsRow{}
+	for rows.Next() {
+		var i ListChatSpaceCodeReviewsRow
+		if err := rows.Scan(
+			&i.ChatID,
+			&i.ChatTitle,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.Dirty,
+			&i.Live,
+			&i.UpdatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpaceKnowledgeLinks = `-- name: ListChatSpaceKnowledgeLinks :many
+SELECT id, space_id, kind, path, is_default_target, pinned, created_at FROM chat_space_knowledge_links WHERE space_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) ListChatSpaceKnowledgeLinks(ctx context.Context, spaceID uuid.UUID) ([]ChatSpaceKnowledgeLink, error) {
+	rows, err := q.db.Query(ctx, listChatSpaceKnowledgeLinks, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatSpaceKnowledgeLink{}
+	for rows.Next() {
+		var i ChatSpaceKnowledgeLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Kind,
+			&i.Path,
+			&i.IsDefaultTarget,
+			&i.Pinned,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpaceKnowledgeLinksBySpaceIDs = `-- name: ListChatSpaceKnowledgeLinksBySpaceIDs :many
+SELECT id, space_id, kind, path, is_default_target, pinned, created_at FROM chat_space_knowledge_links WHERE space_id = ANY($1::uuid[]) ORDER BY space_id, created_at, id
+`
+
+func (q *Queries) ListChatSpaceKnowledgeLinksBySpaceIDs(ctx context.Context, spaceIds []uuid.UUID) ([]ChatSpaceKnowledgeLink, error) {
+	rows, err := q.db.Query(ctx, listChatSpaceKnowledgeLinksBySpaceIDs, spaceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatSpaceKnowledgeLink{}
+	for rows.Next() {
+		var i ChatSpaceKnowledgeLink
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Kind,
+			&i.Path,
+			&i.IsDefaultTarget,
+			&i.Pinned,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpacePushRequests = `-- name: ListChatSpacePushRequests :many
+SELECT pr.id, pr.chat_id, c.title AS chat_title, pr.repo_url, pr.branch, pr.title AS pr_title,
+       pr.state, pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
+FROM push_requests pr
+JOIN chat_sessions c ON c.id = pr.chat_id
+WHERE c.space_id = $1 AND c.workspace_id = $2 AND c.created_by = $3 AND NOT c.hidden
+ORDER BY pr.created_at DESC
+LIMIT 50
+`
+
+type ListChatSpacePushRequestsParams struct {
+	SpaceID     *uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+type ListChatSpacePushRequestsRow struct {
+	ID        uuid.UUID
+	ChatID    uuid.UUID
+	ChatTitle string
+	RepoUrl   string
+	Branch    string
+	PrTitle   string
+	State     string
+	PrUrl     *string
+	PrNumber  *int32
+	CreatedAt time.Time
+	DecidedAt *time.Time
+}
+
+func (q *Queries) ListChatSpacePushRequests(ctx context.Context, arg ListChatSpacePushRequestsParams) ([]ListChatSpacePushRequestsRow, error) {
+	rows, err := q.db.Query(ctx, listChatSpacePushRequests, arg.SpaceID, arg.WorkspaceID, arg.UserID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListChatSpacePushRequestsRow{}
+	for rows.Next() {
+		var i ListChatSpacePushRequestsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.ChatID,
+			&i.ChatTitle,
+			&i.RepoUrl,
+			&i.Branch,
+			&i.PrTitle,
+			&i.State,
+			&i.PrUrl,
+			&i.PrNumber,
+			&i.CreatedAt,
+			&i.DecidedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpaceRepositories = `-- name: ListChatSpaceRepositories :many
+SELECT id, space_id, repo_url, read_only, created_at FROM chat_space_repositories WHERE space_id = $1 ORDER BY created_at, id
+`
+
+func (q *Queries) ListChatSpaceRepositories(ctx context.Context, spaceID uuid.UUID) ([]ChatSpaceRepository, error) {
+	rows, err := q.db.Query(ctx, listChatSpaceRepositories, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatSpaceRepository{}
+	for rows.Next() {
+		var i ChatSpaceRepository
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RepoUrl,
+			&i.ReadOnly,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpaceRepositoriesBySpaceIDs = `-- name: ListChatSpaceRepositoriesBySpaceIDs :many
+SELECT id, space_id, repo_url, read_only, created_at FROM chat_space_repositories WHERE space_id = ANY($1::uuid[]) ORDER BY space_id, created_at, id
+`
+
+func (q *Queries) ListChatSpaceRepositoriesBySpaceIDs(ctx context.Context, spaceIds []uuid.UUID) ([]ChatSpaceRepository, error) {
+	rows, err := q.db.Query(ctx, listChatSpaceRepositoriesBySpaceIDs, spaceIds)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatSpaceRepository{}
+	for rows.Next() {
+		var i ChatSpaceRepository
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.RepoUrl,
+			&i.ReadOnly,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listChatSpaceSources = `-- name: ListChatSpaceSources :many
 SELECT id, space_id, kind, title, url, body, filename, content_type, size_bytes, blob_key, tokens, created_at, research_job_id, chat_id FROM chat_space_sources WHERE space_id = $1 ORDER BY created_at, id
 `
@@ -601,6 +1109,58 @@ func (q *Queries) ListChatSpaceSources(ctx context.Context, spaceID uuid.UUID) (
 			&i.CreatedAt,
 			&i.ResearchJobID,
 			&i.ChatID,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listChatSpaceTasks = `-- name: ListChatSpaceTasks :many
+SELECT t.id, t.space_id, t.title, t.notes, t.done, t.chat_id, t.position, t.created_at, t.updated_at, c.title AS chat_title
+FROM chat_space_tasks t
+LEFT JOIN chat_sessions c ON c.id = t.chat_id
+WHERE t.space_id = $1
+ORDER BY t.done ASC, t.position ASC, t.created_at ASC, t.id ASC
+`
+
+type ListChatSpaceTasksRow struct {
+	ID        uuid.UUID
+	SpaceID   uuid.UUID
+	Title     string
+	Notes     string
+	Done      bool
+	ChatID    *uuid.UUID
+	Position  int32
+	CreatedAt time.Time
+	UpdatedAt time.Time
+	ChatTitle *string
+}
+
+func (q *Queries) ListChatSpaceTasks(ctx context.Context, spaceID uuid.UUID) ([]ListChatSpaceTasksRow, error) {
+	rows, err := q.db.Query(ctx, listChatSpaceTasks, spaceID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListChatSpaceTasksRow{}
+	for rows.Next() {
+		var i ListChatSpaceTasksRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.SpaceID,
+			&i.Title,
+			&i.Notes,
+			&i.Done,
+			&i.ChatID,
+			&i.Position,
+			&i.CreatedAt,
+			&i.UpdatedAt,
+			&i.ChatTitle,
 		); err != nil {
 			return nil, err
 		}
@@ -738,6 +1298,64 @@ func (q *Queries) MarkMyCanvasReviewed(ctx context.Context, arg MarkMyCanvasRevi
 	return reviewed_seq, err
 }
 
+const renameSpaceKnowledgeLinksFolder = `-- name: RenameSpaceKnowledgeLinksFolder :exec
+UPDATE chat_space_knowledge_links l
+SET path = CASE
+  WHEN l.path = $1::text THEN $2::text
+  ELSE $2::text || substring(l.path FROM length($1::text) + 1)
+END
+FROM chat_spaces s
+WHERE l.space_id = s.id
+  AND s.workspace_id = $3
+  AND s.user_id = $4
+  AND (l.path = $1::text OR l.path LIKE $1::text || '/%')
+`
+
+type RenameSpaceKnowledgeLinksFolderParams struct {
+	FromPath    string
+	ToPath      string
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+}
+
+func (q *Queries) RenameSpaceKnowledgeLinksFolder(ctx context.Context, arg RenameSpaceKnowledgeLinksFolderParams) error {
+	_, err := q.db.Exec(ctx, renameSpaceKnowledgeLinksFolder,
+		arg.FromPath,
+		arg.ToPath,
+		arg.WorkspaceID,
+		arg.UserID,
+	)
+	return err
+}
+
+const renameSpaceKnowledgeLinksPage = `-- name: RenameSpaceKnowledgeLinksPage :exec
+UPDATE chat_space_knowledge_links l
+SET path = $1::text
+FROM chat_spaces s
+WHERE l.space_id = s.id
+  AND s.workspace_id = $2
+  AND s.user_id = $3
+  AND l.kind = 'page'
+  AND l.path = $4::text
+`
+
+type RenameSpaceKnowledgeLinksPageParams struct {
+	ToPath      string
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	FromPath    string
+}
+
+func (q *Queries) RenameSpaceKnowledgeLinksPage(ctx context.Context, arg RenameSpaceKnowledgeLinksPageParams) error {
+	_, err := q.db.Exec(ctx, renameSpaceKnowledgeLinksPage,
+		arg.ToPath,
+		arg.WorkspaceID,
+		arg.UserID,
+		arg.FromPath,
+	)
+	return err
+}
+
 const setChatSpace = `-- name: SetChatSpace :one
 UPDATE chat_sessions SET space_id = $1 WHERE id = $2 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq, compact_pending, compact_focus, auto_rollover_tokens, forked_from_chat_id, forked_from_message_id
 `
@@ -862,6 +1480,116 @@ func (q *Queries) UpdateChatSpace(ctx context.Context, arg UpdateChatSpaceParams
 		&i.CreatedAt,
 		&i.UpdatedAt,
 		&i.App,
+	)
+	return i, err
+}
+
+const updateChatSpaceKnowledgeLink = `-- name: UpdateChatSpaceKnowledgeLink :one
+UPDATE chat_space_knowledge_links
+SET is_default_target = coalesce($1, is_default_target),
+    pinned = coalesce($2, pinned)
+WHERE id = $3 AND space_id = $4
+RETURNING id, space_id, kind, path, is_default_target, pinned, created_at
+`
+
+type UpdateChatSpaceKnowledgeLinkParams struct {
+	IsDefaultTarget *bool
+	Pinned          *bool
+	ID              uuid.UUID
+	SpaceID         uuid.UUID
+}
+
+func (q *Queries) UpdateChatSpaceKnowledgeLink(ctx context.Context, arg UpdateChatSpaceKnowledgeLinkParams) (ChatSpaceKnowledgeLink, error) {
+	row := q.db.QueryRow(ctx, updateChatSpaceKnowledgeLink,
+		arg.IsDefaultTarget,
+		arg.Pinned,
+		arg.ID,
+		arg.SpaceID,
+	)
+	var i ChatSpaceKnowledgeLink
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Kind,
+		&i.Path,
+		&i.IsDefaultTarget,
+		&i.Pinned,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateChatSpaceRepository = `-- name: UpdateChatSpaceRepository :one
+UPDATE chat_space_repositories
+SET read_only = coalesce($1, read_only)
+WHERE id = $2 AND space_id = $3
+RETURNING id, space_id, repo_url, read_only, created_at
+`
+
+type UpdateChatSpaceRepositoryParams struct {
+	ReadOnly *bool
+	ID       uuid.UUID
+	SpaceID  uuid.UUID
+}
+
+func (q *Queries) UpdateChatSpaceRepository(ctx context.Context, arg UpdateChatSpaceRepositoryParams) (ChatSpaceRepository, error) {
+	row := q.db.QueryRow(ctx, updateChatSpaceRepository, arg.ReadOnly, arg.ID, arg.SpaceID)
+	var i ChatSpaceRepository
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.RepoUrl,
+		&i.ReadOnly,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
+const updateChatSpaceTask = `-- name: UpdateChatSpaceTask :one
+UPDATE chat_space_tasks
+SET title = coalesce($1, title),
+    notes = coalesce($2, notes),
+    done = coalesce($3, done),
+    chat_id = CASE WHEN $4::bool THEN NULL ELSE coalesce($5, chat_id) END,
+    position = coalesce($6, position),
+    updated_at = now()
+WHERE id = $7 AND space_id = $8
+RETURNING id, space_id, title, notes, done, chat_id, position, created_at, updated_at
+`
+
+type UpdateChatSpaceTaskParams struct {
+	Title     *string
+	Notes     *string
+	Done      *bool
+	ClearChat bool
+	ChatID    *uuid.UUID
+	Position  *int32
+	ID        uuid.UUID
+	SpaceID   uuid.UUID
+}
+
+func (q *Queries) UpdateChatSpaceTask(ctx context.Context, arg UpdateChatSpaceTaskParams) (ChatSpaceTask, error) {
+	row := q.db.QueryRow(ctx, updateChatSpaceTask,
+		arg.Title,
+		arg.Notes,
+		arg.Done,
+		arg.ClearChat,
+		arg.ChatID,
+		arg.Position,
+		arg.ID,
+		arg.SpaceID,
+	)
+	var i ChatSpaceTask
+	err := row.Scan(
+		&i.ID,
+		&i.SpaceID,
+		&i.Title,
+		&i.Notes,
+		&i.Done,
+		&i.ChatID,
+		&i.Position,
+		&i.CreatedAt,
+		&i.UpdatedAt,
 	)
 	return i, err
 }

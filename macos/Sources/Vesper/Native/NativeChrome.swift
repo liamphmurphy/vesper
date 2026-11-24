@@ -14,4 +14,6 @@ struct NativeChrome: Equatable {
     var toolbarItems: [ToolbarItem] = []
     var inspector: InspectorModel?
     var navigator: NavModel?
+    /// Optional AreaBar override (e.g., Space-scoped chats stay highlighted under `.spaces`).
+    var areaOverride: AreaId?
 }

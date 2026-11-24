@@ -169,6 +169,14 @@ func (s *Service) moveFolder(ctx context.Context, ws, userID uuid.UUID, from Fol
 			}
 			moved = append(moved, p.ID)
 		}
+		if err := q.RenameSpaceKnowledgeLinksFolder(ctx, store.RenameSpaceKnowledgeLinksFolderParams{
+			WorkspaceID: ws,
+			UserID:      userID,
+			FromPath:    src,
+			ToPath:      dst,
+		}); err != nil {
+			return err
+		}
 		return nil
 	})
 	return moved, err

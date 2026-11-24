@@ -195,7 +195,8 @@ struct ChatScreen: View {
                     emptyChatView(
                         personas: personas,
                         activePersona: activePersona,
-                        suggestions: suggestions
+                        suggestions: suggestions,
+                        spaces: spaces
                     )
                 }
             }
@@ -632,7 +633,8 @@ struct ChatScreen: View {
     private func emptyChatView(
         personas: [API.Persona],
         activePersona: API.Persona?,
-        suggestions: [API.ChatSuggestion]
+        suggestions: [API.ChatSuggestion],
+        spaces: [API.ChatSpace]
     ) -> some View {
         let p = theme.palette
         return ScrollView {
@@ -649,30 +651,6 @@ struct ChatScreen: View {
                                 Text("Chatting with \(persona.name)")
                                     .font(.system(size: theme.pointSize(.body)))
                                     .foregroundStyle(p.secondaryText)
-                            }
-                        }
-                    }
-                }
-
-                if personas.count > 1 {
-                    ScrollView(.horizontal, showsIndicators: false) {
-                        HStack(spacing: 8) {
-                            ForEach(personas, id: \.id) { persona in
-                                let selected = activePersona?.id == persona.id
-                                Button {
-                                    model.newChatPersonaId = persona.id
-                                } label: {
-                                    HStack(spacing: 6) {
-                                        WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 20)
-                                        Text(persona.name)
-                                            .font(.system(size: theme.pointSize(.small), weight: selected ? .semibold : .regular))
-                                    }
-                                    .padding(.horizontal, 10)
-                                    .padding(.vertical, 6)
-                                    .background(selected ? p.selected : p.surface, in: Capsule())
-                                    .overlay(Capsule().stroke(selected ? p.accent : p.border))
-                                }
-                                .buttonStyle(.plain)
                             }
                         }
                     }
@@ -702,6 +680,83 @@ struct ChatScreen: View {
                                 .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
                             }
                             .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Spaces")
+                            .font(.system(size: theme.pointSize(.small), weight: .semibold))
+                            .foregroundStyle(p.secondaryText)
+                        Spacer()
+                        Button {
+                            context.navigate("/spaces/new")
+                        } label: {
+                            Label("New Space", systemImage: "plus")
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(p.secondaryText)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                    if spaces.isEmpty {
+                        Button {
+                            context.navigate("/spaces/new")
+                        } label: {
+                            HStack(spacing: 8) {
+                                Image(systemName: "square.stack.3d.up")
+                                    .foregroundStyle(p.accent)
+                                Text("Create your first Space for focused work, repos, and Knowledge")
+                                    .font(.system(size: theme.pointSize(.small)))
+                                    .foregroundStyle(p.secondaryText)
+                                Spacer()
+                            }
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 10)
+                            .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
+                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                        }
+                        .buttonStyle(.plain)
+                    } else {
+                        ScrollView(.horizontal, showsIndicators: false) {
+                            HStack(spacing: 8) {
+                                ForEach(spaces, id: \.id) { space in
+                                    Button {
+                                        context.navigate("/spaces/\(space.id)")
+                                    } label: {
+                                        HStack(spacing: 8) {
+                                            Circle()
+                                                .fill(Color(cssHex: SpacesLogic.colorHex(for: space.color)) ?? .green)
+                                                .frame(width: 8, height: 8)
+                                            VStack(alignment: .leading, spacing: 1) {
+                                                Text(space.name)
+                                                    .font(.system(size: theme.pointSize(.small), weight: .semibold))
+                                                    .foregroundStyle(p.text)
+                                                    .lineLimit(1)
+                                                let rc = space.repoCount ?? 0
+                                                let kc = space.knowledgeCount ?? 0
+                                                let tc = space.openTaskCount ?? 0
+                                                let meta = [
+                                                    rc > 0 ? "\(rc) repo\(rc == 1 ? "" : "s")" : nil,
+                                                    kc > 0 ? "\(kc) Knowledge" : nil,
+                                                    tc > 0 ? "\(tc) task\(tc == 1 ? "" : "s")" : nil,
+                                                ].compactMap { $0 }.joined(separator: " · ")
+                                                if !meta.isEmpty {
+                                                    Text(meta)
+                                                        .font(.system(size: theme.pointSize(.micro)))
+                                                        .foregroundStyle(p.tertiaryText)
+                                                        .lineLimit(1)
+                                                }
+                                            }
+                                        }
+                                        .padding(.horizontal, 12)
+                                        .padding(.vertical, 8)
+                                        .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
+                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
                         }
                     }
                 }
@@ -781,10 +836,29 @@ struct ChatScreen: View {
             startingPlayground: model.startingPlayground
         ))
 
+        let navigator: NavModel
+        let areaOverride: AreaId?
+        if let spaceId = session?.space?.id {
+            let spaceChats = context.store.entry(API.listChats(space: spaceId)).data?.chats ?? []
+            navigator = SpacesLogic.navModel(
+                spaces: spaces,
+                activeSpaceId: spaceId,
+                chats: spaceChats,
+                viewedChatId: chatId,
+                personas: personas,
+                origin: context.baseURL()
+            )
+            areaOverride = .spaces
+        } else {
+            navigator = ChatNav.model(input)
+            areaOverride = nil
+        }
+
         return NativeChrome(
             title: session.map { ChatNav.chatTitle($0.title) } ?? "Chat",
             inspector: inspector,
-            navigator: ChatNav.model(input)
+            navigator: navigator,
+            areaOverride: areaOverride
         )
     }
 
@@ -940,6 +1014,19 @@ struct ChatScreen: View {
                 return
             default:
                 break
+            }
+            if let spaceAction = SpacesLogic.navAction(for: command) {
+                switch spaceAction {
+                case .newSpace:
+                    context.navigate("/spaces/new")
+                case .openSpace(let id, let newTab):
+                    let path = "/spaces/\(id)"
+                    if newTab { context.openInNewTab(path) } else { context.navigate(path) }
+                case .openChat(let id, let newTab):
+                    let path = "/chat/\(id)"
+                    if newTab { context.openInNewTab(path) } else { context.navigate(path) }
+                }
+                return
             }
             guard let action = ChatNav.action(for: command) else { return }
             switch action {
@@ -1242,7 +1329,8 @@ struct ChatScreen: View {
 
     private func watchKey(session: API.ChatSession?) -> String {
         let activeRunId = session?.state == .running ? (session?.currentRunId ?? "") : ""
-        return "\(chatId ?? "")|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)|\(activeRunId)"
+        let spaceId = session?.space?.id ?? ""
+        return "\(chatId ?? "")|\(spaceId)|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)|\(activeRunId)"
     }
 
     private func watch(session: API.ChatSession?) {
@@ -1264,6 +1352,9 @@ struct ChatScreen: View {
         track(Self.workflowsRequest)
         track(Self.repositoriesRequest)
         track(chatsRequest)
+        if let spaceId = session?.space?.id {
+            track(API.listChats(space: spaceId))
+        }
         if let sessionRequest { track(sessionRequest) }
         if let ticketRunsRequest { track(ticketRunsRequest) }
         if let codeReviewRequest { track(codeReviewRequest) }

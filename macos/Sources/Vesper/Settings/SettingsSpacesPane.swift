@@ -13,7 +13,7 @@ struct SettingsSpacesPane: View {
     var body: some View {
         let spacesEntry = store?.entry(API.listChatSpaces())
         let bootEntry = store?.entry(API.getBootstrap())
-        let spaces = (spacesEntry?.data?.spaces ?? []).filter { $0.work?.archived != true }
+        let spaces = spacesEntry?.data?.spaces ?? []
         let selectedSpace = spaces.first(where: { $0.id == navigation.spaceId }) ?? spaces.first
 
         ScrollViewReader { proxy in
@@ -59,11 +59,6 @@ struct SettingsSpacesPane: View {
                                          : "Space memory is off: chats here use your general memory.")
                                         .font(.callout)
                                         .foregroundStyle(.secondary)
-                                    if let work = space.work {
-                                        Text("Tracks work \(work.key) · \(work.repoUrl ?? "no repository")")
-                                            .font(.caption)
-                                            .foregroundStyle(.tertiary)
-                                    }
                                 }
                                 Spacer()
                                 Button("Open \(space.name)") {

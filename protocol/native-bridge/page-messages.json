@@ -2,13 +2,13 @@
   {
     "v": 1,
     "type": "ready",
-    "path": "/work"
+    "path": "/spaces"
   },
   {
     "v": 1,
     "type": "route",
-    "path": "/tickets/VES-412",
-    "area": "work"
+    "path": "/spaces/sp-1",
+    "area": "spaces"
   },
   {
     "v": 1,
@@ -34,10 +34,10 @@
           "href": "/chat"
         },
         {
-          "id": "work",
-          "label": "Work",
-          "icon": "tickets",
-          "href": "/work",
+          "id": "spaces",
+          "label": "Spaces",
+          "icon": "spaces",
+          "href": "/spaces",
           "badge": {
             "tone": "done"
           }
@@ -67,7 +67,7 @@
           "href": "/apps/budget"
         }
       ],
-      "currentArea": "work"
+      "currentArea": "spaces"
     }
   },
   {

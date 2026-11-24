@@ -557,13 +557,14 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(model.id, "chats")
         XCTAssertEqual(model.selectedId, "c-today")
         XCTAssertEqual(model.sections.map(\.id), [
-            "chats-pinned", "chats-today", "chats-yesterday", "chats-previous-7-days", "chats-older", "spaces",
+            "chats-pinned", "chats-today", "chats-yesterday", "chats-previous-7-days", "chats-older",
         ])
 
-        // Running wins over unread on pinned chat
+        // Running wins over unread on pinned chat; chat rows omit tiled photo avatars
         let pinnedItem = model.sections[0].items[0]
         XCTAssertEqual(pinnedItem.status, .done)
         XCTAssertNil(pinnedItem.badge)
+        XCTAssertNil(pinnedItem.avatar)
 
         // Open chat suppresses unread badge
         let openItem = model.sections[1].items[0]
@@ -573,9 +574,9 @@ final class ChatTranscriptLogicTests: XCTestCase {
         let unreadItem = model.sections[2].items[0]
         XCTAssertEqual(unreadItem.badge, NavBadge(text: "2", tone: .human))
 
-        // Filters & picker
-        XCTAssertEqual(model.filters?.map(\.id), ["chat-space", "chat-persona"])
-        XCTAssertEqual(model.picker?.id, "persona")
+        // Calmer sidebar: no stacked Space/Persona filter dropdowns or persona picker
+        XCTAssertNil(model.filters)
+        XCTAssertNil(model.picker)
 
         // Command mapping
         XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "new-chat")), .newChat(personaId: nil))
@@ -588,7 +589,7 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "open-new-tab", itemId: "hit:m1")), .selectSearchHit(messageId: "m1", newTab: true))
         XCTAssertEqual(ChatNav.action(for: .navAction(navigatorId: "chats", actionId: "open-new-tab", itemId: "space:s1")), .selectSpace(id: "s1", newTab: true))
 
-        // Context menus include "Open in New Tab" for active chats, archived chats, search hits, and spaces
+        // Context menus include "Open in New Tab" for active chats, archived chats, and search hits
         let activeMenu = ChatNav.chatMenu(archived: false, pinned: false)
         XCTAssertEqual(activeMenu.first?.id, ChatNav.MenuAction.openInNewTab)
         XCTAssertEqual(activeMenu.first?.label, "Open in New Tab")
@@ -600,9 +601,6 @@ final class ChatTranscriptLogicTests: XCTestCase {
 
         let hit = ChatNav.hitItem(ChatNav.SearchHit(messageId: "m1", chatId: "c-today", chatTitle: "Open today", role: "user", snippet: "hello"))
         XCTAssertEqual(hit.contextMenu?.map(\.id), [ChatNav.MenuAction.openInNewTab])
-
-        let spaceItem = model.sections.last?.items.first
-        XCTAssertEqual(spaceItem?.contextMenu?.map(\.id), [ChatNav.MenuAction.openInNewTab])
     }
 
     func testChatListPersonaQuerySendsAllForTheAllPick() {

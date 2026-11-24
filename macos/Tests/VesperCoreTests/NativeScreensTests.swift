@@ -41,16 +41,17 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(NativeRouteRegistry.standard(debug: false).resolve("/native-debug/embeds"))
     }
 
-    func testWorkBareRunsAndRunDetailAreNative() {
+    func testSpacesRoutesAreNative() {
         let standard = NativeRouteRegistry.standard(debug: false)
-        XCTAssertEqual(standard.resolve("/work?project=VES")?.screen, .work)
-        XCTAssertEqual(standard.resolve("/work?project=VES")?.query, ["project": "VES"])
-        XCTAssertEqual(standard.resolve("/runs")?.screen, .work)
-        let run = standard.resolve("/runs/r1?view=details")
-        XCTAssertEqual(run?.screen, .runDetail)
-        XCTAssertEqual(run?.params["id"], "r1")
-        XCTAssertEqual(run?.query["view"], "details")
-        XCTAssertNil(standard.resolve("/runs/r1/extra"))
+        XCTAssertEqual(standard.resolve("/spaces")?.screen, .spacesHome)
+        XCTAssertEqual(standard.resolve("/spaces/new")?.screen, .spaceNew)
+        let sp = standard.resolve("/spaces/sp-1")
+        XCTAssertEqual(sp?.screen, .spaceDetail)
+        XCTAssertEqual(sp?.params["id"], "sp-1")
+        XCTAssertNil(standard.resolve("/work"))
+        XCTAssertNil(standard.resolve("/tickets"))
+        XCTAssertNil(standard.resolve("/epics"))
+        XCTAssertNil(standard.resolve("/runs/r1"))
     }
 
     func testWorkflowRoutesAreNative() {
@@ -104,9 +105,7 @@ final class NativeRoutesTests: XCTestCase {
         let standard = NativeRouteRegistry.standard(debug: true)
         let expected: [String: AreaId?] = [
             "/chat": .chat, "/chat/c1": .chat,
-            "/spaces": .chat, "/spaces/new": .chat, "/spaces/sp-1": .chat,
-            "/work": .work, "/runs": .work, "/runs/r1": .work, "/tickets": .work, "/board": .work,
-            "/tickets/new": .work, "/tickets/PAY-1": .work, "/epics": .work, "/epics/e1": .work, "/agents/pike": .work, "/plans": .work,
+            "/spaces": .spaces, "/spaces/new": .spaces, "/spaces/sp-1": .spaces,
             "/knowledge": .knowledge, "/knowledge/graph": .knowledge, "/knowledge/p1": .knowledge, "/wiki/a/b": .knowledge,
             "/library": .library, "/artifacts/art-1": .library, "/artifacts/art-1/review": .library,
             "/workflows": .apps, "/workflows/wf-1": .apps, "/workflows/runs/wr-1": .apps, "/scheduled": .apps,
@@ -149,25 +148,8 @@ final class NativeRoutesTests: XCTestCase {
         XCTAssertNil(standard.resolve("/learn/c1/extra"))
     }
 
-    func testTicketRoutesAreNative() {
+    func testScheduledAndReportsRoutesAreNative() {
         let standard = NativeRouteRegistry.standard(debug: false)
-        XCTAssertEqual(standard.resolve("/tickets")?.screen, .tickets)
-        let boardLayout = standard.resolve("/tickets?layout=board")
-        XCTAssertEqual(boardLayout?.screen, .tickets)
-        XCTAssertEqual(boardLayout?.query["layout"], "board")
-        XCTAssertEqual(standard.resolve("/board")?.screen, .tickets)
-        XCTAssertEqual(standard.resolve("/tickets/new")?.screen, .ticketNew)
-        let detail = standard.resolve("/tickets/PAY-1")
-        XCTAssertEqual(detail?.screen, .ticketDetail)
-        XCTAssertEqual(detail?.params["key"], "PAY-1")
-        XCTAssertNil(standard.resolve("/tickets/PAY-1/extra"))
-    }
-
-    func testEpicsScheduledAndReportsRoutesAreNative() {
-        let standard = NativeRouteRegistry.standard(debug: false)
-        XCTAssertEqual(standard.resolve("/epics")?.screen, .epics)
-        XCTAssertEqual(standard.resolve("/epics/e1")?.screen, .epicDetail)
-        XCTAssertEqual(standard.resolve("/epics/e1")?.params["id"], "e1")
         XCTAssertEqual(standard.resolve("/scheduled")?.screen, .scheduled)
         XCTAssertEqual(standard.resolve("/reports")?.screen, .reports)
         XCTAssertEqual(standard.resolve("/costs")?.screen, .reports)

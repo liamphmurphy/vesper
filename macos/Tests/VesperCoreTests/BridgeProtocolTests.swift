@@ -34,12 +34,12 @@ final class BridgeProtocolTests: XCTestCase {
 
     func testPageMessageDetails() throws {
         let all = try entries("page-messages.json").map { try PageMessage.decode(fromJSONObject: $0) }
-        XCTAssertEqual(all[0], .ready(path: "/work"))
-        XCTAssertEqual(all[1], .route(path: "/tickets/VES-412", area: .work))
+        XCTAssertEqual(all[0], .ready(path: "/spaces"))
+        XCTAssertEqual(all[1], .route(path: "/spaces/sp-1", area: .spaces))
         XCTAssertEqual(all[2], .route(path: "/settings", area: nil))
         guard case .shell(let shell) = all[4] else { return XCTFail("shell") }
         XCTAssertEqual(shell.areas.count, 4)
-        XCTAssertEqual(shell.currentArea, .work)
+        XCTAssertEqual(shell.currentArea, .spaces)
         XCTAssertEqual(shell.areas[2].badge?.text, "3")
         guard case .navigator(let nav?) = all[5] else { return XCTFail("navigator") }
         XCTAssertEqual(nav.sections.count, 2)

@@ -537,7 +537,7 @@ func (s *Server) CreateChat(ctx context.Context, req api.CreateChatRequestObject
 		return nil, apperr.Invalid("body", "required")
 	}
 	b := req.Body
-	in := runs.ChatInput{Project: deref(b.Project), Title: deref(b.Title), Model: deref(b.Model), PersonaID: b.PersonaId, RepoURL: deref(b.RepoUrl), Hidden: deref(b.Hidden), Temporary: deref(b.Temporary), SpaceID: b.SpaceId, CommitEmail: deref(b.CommitEmail)}
+	in := runs.ChatInput{Project: deref(b.Project), Title: deref(b.Title), Model: deref(b.Model), PersonaID: b.PersonaId, RepoURL: deref(b.RepoUrl), RepoURLs: b.RepoUrls, NoRepo: deref(b.NoRepo), TaskID: b.TaskId, Hidden: deref(b.Hidden), Temporary: deref(b.Temporary), SpaceID: b.SpaceId, CommitEmail: deref(b.CommitEmail)}
 	if b.Harness != nil {
 		in.Harness = string(*b.Harness)
 	}

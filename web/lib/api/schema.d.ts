@@ -4118,6 +4118,148 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/chat-spaces/{spaceId}/repositories": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        /** Live Git repositories attached to a space */
+        get: operations["listChatSpaceRepositories"];
+        put?: never;
+        /** Attach a Git repository to a space as live context */
+        post: operations["addChatSpaceRepository"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/repositories/{repoId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Detach a Git repository from a space */
+        delete: operations["deleteChatSpaceRepository"];
+        options?: never;
+        head?: never;
+        /** Update a space repository attachment (e.g. read-only flag) */
+        patch: operations["updateChatSpaceRepository"];
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/knowledge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        /** Live Knowledge folders and pages linked to a space */
+        get: operations["listChatSpaceKnowledgeLinks"];
+        put?: never;
+        /** Link a live Knowledge folder or page to a space */
+        post: operations["addChatSpaceKnowledgeLink"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/knowledge/{linkId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                linkId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Unlink a Knowledge folder or page from a space */
+        delete: operations["deleteChatSpaceKnowledgeLink"];
+        options?: never;
+        head?: never;
+        /** Update a Knowledge link on a space (default note target or pinned) */
+        patch: operations["updateChatSpaceKnowledgeLink"];
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/tasks": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        /** Lightweight tasks in a space */
+        get: operations["listChatSpaceTasks"];
+        put?: never;
+        /** Add a lightweight task to a space */
+        post: operations["createChatSpaceTask"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/tasks/{taskId}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        post?: never;
+        /** Delete a task from a space */
+        delete: operations["deleteChatSpaceTask"];
+        options?: never;
+        head?: never;
+        /** Update a task in a space */
+        patch: operations["updateChatSpaceTask"];
+        trace?: never;
+    };
+    "/chat-spaces/{spaceId}/branches": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        /** Active branches and pull requests across a space's chats */
+        get: operations["listChatSpaceBranches"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/canvases": {
         parameters: {
             query?: never;
@@ -6094,6 +6236,99 @@ export interface components {
         MemoryType: string;
         /** @enum {string} */
         ChatSpaceColor: "green" | "amber" | "red" | "blue" | "violet" | "pink" | "teal" | "orange";
+        ChatSpacePersonaRef: {
+            /** Format: uuid */
+            id: string;
+            name: string;
+            color: string;
+            avatar_url?: string;
+        };
+        ChatSpaceRepository: {
+            /** Format: uuid */
+            id: string;
+            repo_url: string;
+            read_only: boolean;
+            /** Format: date-time */
+            created_at: string;
+        };
+        NewChatSpaceRepository: {
+            repo_url: string;
+            /** @default false */
+            read_only: boolean;
+        };
+        ChatSpaceRepositoryPatch: {
+            read_only?: boolean;
+        };
+        /** @enum {string} */
+        ChatSpaceKnowledgeLinkKind: "folder" | "page";
+        ChatSpaceKnowledgeLink: {
+            /** Format: uuid */
+            id: string;
+            kind: components["schemas"]["ChatSpaceKnowledgeLinkKind"];
+            path: string;
+            is_default_target: boolean;
+            pinned: boolean;
+            page_count: number;
+            /** Format: date-time */
+            created_at: string;
+        };
+        NewChatSpaceKnowledgeLink: {
+            kind: components["schemas"]["ChatSpaceKnowledgeLinkKind"];
+            path: string;
+            /** @default false */
+            is_default_target: boolean;
+            /** @default false */
+            pinned: boolean;
+        };
+        ChatSpaceKnowledgeLinkPatch: {
+            is_default_target?: boolean;
+            pinned?: boolean;
+        };
+        ChatSpaceTask: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            space_id: string;
+            title: string;
+            notes: string;
+            done: boolean;
+            /** Format: uuid */
+            chat_id?: string;
+            chat_title?: string;
+            position: number;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        NewChatSpaceTask: {
+            title: string;
+            notes?: string;
+        };
+        ChatSpaceTaskPatch: {
+            title?: string;
+            notes?: string;
+            done?: boolean;
+            /** Format: uuid */
+            chat_id?: string;
+            clear_chat?: boolean;
+            position?: number;
+        };
+        ChatSpaceBranch: {
+            /** Format: uuid */
+            chat_id: string;
+            chat_title: string;
+            repo_url: string;
+            branch: string;
+            dirty: boolean;
+            live: boolean;
+            pr_url?: string;
+            pr_number?: number;
+            pr_title?: string;
+            push_state?: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         ChatSpace: {
             /** Format: uuid */
             id: string;
@@ -6107,6 +6342,7 @@ export interface components {
              * @description Persona new chats start with; absent: the default persona
              */
             persona_id?: string;
+            persona?: components["schemas"]["ChatSpacePersonaRef"];
             /** @description Key new chats here file tickets under: the space's own work, or another space's when this one doesn't track work; absent: none */
             project?: string;
             work?: components["schemas"]["SpaceWork"];
@@ -6119,6 +6355,14 @@ export interface components {
             source_count: number;
             /** @description Live entries in the space's memory */
             memory_count: number;
+            /** @description Live Git repositories attached to this space */
+            repo_count?: number;
+            /** @description Live Knowledge folders and pages linked to this space */
+            knowledge_count?: number;
+            /** @description Open lightweight tasks in this space */
+            open_task_count?: number;
+            repositories?: components["schemas"]["ChatSpaceRepository"][];
+            knowledge_links?: components["schemas"]["ChatSpaceKnowledgeLink"][];
             /** @description Estimated tokens of the sources every turn may read */
             inline_tokens: number;
             /** Format: date-time */
@@ -8651,6 +8895,15 @@ export interface components {
             persona_id?: string;
             /** @description A GitHub URL, owner/repository or an unambiguous saved name for a coding persona. Saved repositories aid discovery and never restrict access. */
             repo_url?: string;
+            /** @description Explicit list of repositories to attach when starting a coding chat (e.g. toggled context chips in a space composer). Empty list attaches no repositories. */
+            repo_urls?: string[];
+            /** @description Start the chat without attaching any repository, even if the space or persona has defaults. */
+            no_repo?: boolean;
+            /**
+             * Format: uuid
+             * @description Optional space task id to link the new chat to.
+             */
+            task_id?: string;
             /** @description One of the caller's emails for the chat's commits. Only with a repository; 422 otherwise. */
             commit_email?: string;
             /** @description Leave the chat out of chat lists, search and the dock; it stays reachable by id. For a chat that lives behind another screen, like the workflow editor. Fixed for the chat's life. */
@@ -17694,6 +17947,356 @@ export interface operations {
                     [name: string]: unknown;
                 };
                 content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listChatSpaceRepositories: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Space repositories */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        repositories: components["schemas"]["ChatSpaceRepository"][];
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    addChatSpaceRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewChatSpaceRepository"];
+            };
+        };
+        responses: {
+            /** @description Attached repository */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSpaceRepository"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteChatSpaceRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateChatSpaceRepository: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                repoId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSpaceRepositoryPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated repository */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSpaceRepository"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listChatSpaceKnowledgeLinks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Space knowledge links */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        links: components["schemas"]["ChatSpaceKnowledgeLink"][];
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    addChatSpaceKnowledgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewChatSpaceKnowledgeLink"];
+            };
+        };
+        responses: {
+            /** @description Linked Knowledge folder or page */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSpaceKnowledgeLink"];
+                };
+            };
+            404: components["responses"]["Error"];
+            409: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteChatSpaceKnowledgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                linkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Removed */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateChatSpaceKnowledgeLink: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                linkId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSpaceKnowledgeLinkPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated Knowledge link */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSpaceKnowledgeLink"];
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listChatSpaceTasks: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Space tasks */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        tasks: components["schemas"]["ChatSpaceTask"][];
+                    };
+                };
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    createChatSpaceTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["NewChatSpaceTask"];
+            };
+        };
+        responses: {
+            /** @description Created task */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSpaceTask"];
+                };
+            };
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    deleteChatSpaceTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Deleted */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            404: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    updateChatSpaceTask: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+                taskId: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ChatSpaceTaskPatch"];
+            };
+        };
+        responses: {
+            /** @description Updated task */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ChatSpaceTask"];
+                };
+            };
+            404: components["responses"]["Error"];
+            422: components["responses"]["Error"];
+            default: components["responses"]["Error"];
+        };
+    };
+    listChatSpaceBranches: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                spaceId: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Space branches and PRs */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": {
+                        branches: components["schemas"]["ChatSpaceBranch"][];
+                    };
+                };
             };
             404: components["responses"]["Error"];
             default: components["responses"]["Error"];
