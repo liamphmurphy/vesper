@@ -340,3 +340,71 @@ func TestScheduledTaskUnlimitedAndConfiguredCaps(t *testing.T) {
 		t.Fatalf("expected time limit failure, got %+v", recent[0])
 	}
 }
+
+// A scheduled task attached to a project launches its hidden chat in that
+// project's space so the run inherits space repositories and context.
+func TestScheduledTaskLaunchesInProjectSpace(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	arts := &artifacts.Service{Pool: pool}
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: arts}); err != nil {
+		t.Fatal(err)
+	}
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+	tr := &tracker.Service{Pool: pool}
+	rs := &runs.Service{Pool: pool, Tracker: tr, Artifacts: arts}
+
+	pay, err := q.GetProjectByKey(ctx, store.GetProjectByKeyParams{WorkspaceID: ws, Key: "PAY"})
+	if err != nil || pay.SpaceID == nil {
+		t.Fatalf("seeded PAY project/space: %+v, %v", pay, err)
+	}
+	const spaceRepo = "https://github.com/acme/payments.git"
+	if _, err := q.AddChatSpaceRepository(ctx, store.AddChatSpaceRepositoryParams{SpaceID: *pay.SpaceID, RepoUrl: spaceRepo}); err != nil {
+		t.Fatal(err)
+	}
+	coder, err := q.CreatePersona(ctx, store.CreatePersonaParams{WorkspaceID: ws, UserID: me.ID, Name: "Coder", Tone: "neutral", Color: "#22aa66", CanCode: true, Repos: []string{}})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	sched := runs.Schedule{Frequency: "weekly", Weekdays: []int32{0}, MonthDay: 1, AtTime: "08:00", Timezone: "America/Los_Angeles"}
+	task, err := rs.CreateScheduledTask(ctx, ws, me.ID, runs.ScheduledTaskInput{
+		Name: "Space audit", Kind: "prompt", Instructions: "Check deps.", PersonaID: &coder.ID, Project: pay.Key, Enabled: true, Schedule: sched,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := rs.RunScheduledTaskNow(ctx, ws, me.ID, task.ID); err != nil {
+		t.Fatal(err)
+	}
+	recent, err := q.RecentScheduledRuns(ctx, store.RecentScheduledRunsParams{WorkspaceID: ws, UserID: me.ID})
+	if err != nil || len(recent) == 0 || recent[0].ChatID == nil {
+		t.Fatalf("recent scheduled runs: %+v, %v", recent, err)
+	}
+	chat, err := q.GetChatSession(ctx, store.GetChatSessionParams{ID: *recent[0].ChatID, WorkspaceID: ws})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if chat.ProjectID == nil || *chat.ProjectID != pay.ID {
+		t.Fatalf("chat.ProjectID = %v, want %v", chat.ProjectID, pay.ID)
+	}
+	if chat.SpaceID == nil || *chat.SpaceID != *pay.SpaceID {
+		t.Fatalf("chat.SpaceID = %v, want %v", chat.SpaceID, *pay.SpaceID)
+	}
+	repos, err := q.ChatRepositories(ctx, chat.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, r := range repos {
+		if r.RepoUrl == spaceRepo {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected space repo %s attached to scheduled chat, got %+v", spaceRepo, repos)
+	}
+}

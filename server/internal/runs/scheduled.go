@@ -216,18 +216,23 @@ func (s *Service) UpdateScheduledTask(ctx context.Context, ws, user, id uuid.UUI
 	return out, err
 }
 
-func (s *Service) projectKey(ctx context.Context, q *store.Queries, ws uuid.UUID, id *uuid.UUID) (string, error) {
-	p, err := OptionalProject(ctx, q, ws, id)
-	return p.Key, err
-}
-
 // launchScheduled opens the hidden chat a run lives in and starts its work.
 func (s *Service) launchScheduled(ctx context.Context, q *store.Queries, t store.ScheduledTask, run store.ScheduledTaskRun) error {
-	key, err := s.projectKey(ctx, q, t.WorkspaceID, t.ProjectID)
+	p, err := OptionalProject(ctx, q, t.WorkspaceID, t.ProjectID)
 	if err != nil {
 		return err
 	}
-	in := ChatInput{Project: key, Title: t.Name, PersonaID: t.PersonaID, Hidden: true}
+	var spaceID *uuid.UUID
+	if p.SpaceID != nil {
+		// Only attach the project's space when this user owns it; chatSpace rejects
+		// spaces belonging to another user.
+		if _, err := q.GetChatSpace(ctx, store.GetChatSpaceParams{ID: *p.SpaceID, WorkspaceID: t.WorkspaceID, UserID: t.UserID}); err == nil {
+			spaceID = p.SpaceID
+		} else if !errors.Is(err, pgx.ErrNoRows) {
+			return err
+		}
+	}
+	in := ChatInput{Project: p.Key, SpaceID: spaceID, Title: t.Name, PersonaID: t.PersonaID, Hidden: true}
 	if t.Kind == "prompt" {
 		in.ConnectorIDs = t.ConnectorIds
 		in.Message = &ChatMessageInput{Body: t.Instructions + scheduledPromptNote}
