@@ -24,8 +24,10 @@ import {
   useChatModels,
   useCreateChat,
   useDeleteChat,
+  useDelegatedRunLogs,
   useLinkPreviews,
   useQueueFollowup,
+  useRunLog,
   useSendChatMessage,
   useSetChatCommitEmail,
   useSetChatMessageBookmark,
@@ -33,7 +35,8 @@ import {
   useStartSecondOpinion,
   useSteerChat,
 } from "@/lib/api/hooks";
-import { DOC_DRAFT, designRequest, resolveCompareTarget, type CreateKind } from "@/lib/chat-commands";
+import { DOC_DRAFT, designRequest, resolveCompareTarget, resolveThinkingToggle, writeShowLiveThinking, type CreateKind } from "@/lib/chat-commands";
+import { toast } from "@/lib/toast";
 import { asidesInWindow, commandSendMode, cycleSendMode, SEND_MODE_ENTER, SEND_MODE_HINT, SEND_MODE_LABEL, sendModeAction, sendModePlaceholder, type SendMode } from "@/lib/send-mode";
 import { SEND_TONE, SendModeSwitch } from "./send-modes";
 import { FollowupTray } from "./followups";
@@ -52,7 +55,8 @@ import { StatusSlot, type StatusItem } from "./status-slot";
 import { ChatWorkflowTray, WorkflowStartCard } from "@/components/domain/workflow-cards";
 import { ChatRunsPill, ChatTicketRunTray } from "@/components/domain/dispatch-cards";
 import { ActivityScene } from "./activity-scene";
-import { Tabs } from "@/components/ui/controls";
+import { Segmented, Tabs } from "@/components/ui/controls";
+import { RunGraphView } from "./run-graph-view";
 import { focusActivityStep } from "./activity-focus";
 import { openThread, setDock } from "@/lib/chat-panels";
 import { isTyping } from "@/components/shell/shortcuts";
@@ -60,7 +64,7 @@ import { linkedItems, openItem, type LinkedItem } from "@/lib/chat-panels";
 import { LinkedRow, OpenLinkedItem } from "./item-panel";
 import { useRecordVisit } from "@/components/shell/use-record-visit";
 import { addChip, chipFromRef, chipFromTarget, parseAttach, toContextRefs, typedText, type Chip } from "@/lib/chat-context";
-import { chatTitle, endedTurns, needsSwitchConfirm, runningSince, turnWindows, type EndedTurn, type TurnWindow } from "@/lib/chat-ui";
+import { LONG_TURN_USAGE_REFRESH_INTERVAL_MS, chatTitle, endedTurns, longTurnUsageRefreshDelayMs, needsSwitchConfirm, runningSince, turnWindows, type EndedTurn, type TurnWindow } from "@/lib/chat-ui";
 import { cx } from "@/lib/cx";
 import { Button } from "@/components/ui/button";
 import { Icon, type IconName } from "@/components/ui/icon";
@@ -96,7 +100,7 @@ import { summaryUrlsForTurns } from "@/lib/chat-recommend";
 import { hostOf } from "@/lib/web-search";
 import { timelineTime } from "@/lib/format";
 import { ModelEffortPicker, effortLabel, modelEffortSummary, modelEfforts, modelLabel, sameSelection, type Effort, type Selection } from "./model-picker";
-import { ChatPresence, ChatStatus, InterimReply, OpenTurnStep, RunActivity, TurnSteps, TurnToolCalls } from "./activity";
+import { ChatPresence, ChatStatus, InterimReply, OpenTurnStep, PinnedPlanBar, RunActivity, TurnSteps, TurnToolCalls, useShowLiveThinking } from "./activity";
 import { MemoryNotices } from "./memory-notices";
 import { DropOverlay, ReplyAttachments, SentAttachments, useAttachments, useFileDrop } from "./attachments";
 import { useSnippets } from "./snippets";
@@ -573,24 +577,71 @@ function ActivityLog({ list, turns, groups, running, runId, since, focus }: { li
   );
 }
 
-/** Activity's cost, model line and log, for the compact tab and the desktop dock's tab. */
+const ACTIVITY_VIEWS = [
+  { value: "list", label: "List" },
+  { value: "graph", label: "Graph" },
+] as const;
+
+/** Run graph + waterfall for the chat's run, mounted only when the person switches to Graph. */
+function ChatActivityGraph({ runId, onOpenList }: { runId: string; onOpenList: () => void }) {
+  const { data: d, isPending, isError } = useRunLog(runId, true);
+  const childDetails = useDelegatedRunLogs(d?.child_runs ?? []);
+  if (isPending) {
+    return (
+      <div className="mx-auto flex max-w-[860px] flex-col gap-3">
+        <Skeleton className="h-8 w-64" />
+        <Skeleton className="h-60 w-full rounded-lg" />
+      </div>
+    );
+  }
+  if (isError || !d) {
+    return <EmptyState icon="msg" title="Graph unavailable">Could not load run details for this conversation.</EmptyState>;
+  }
+  return (
+    <div data-testid="activity-graph" className="mx-auto flex max-w-[860px] flex-col gap-2">
+      <RunGraphView d={d} childDetails={childDetails.map((q) => q.data)} embedded onOpenTurn={onOpenList} onOpenEvent={onOpenList} />
+    </div>
+  );
+}
+
+/** Activity's cost, model line and log (or run graph), for the compact tab and the desktop dock's tab. */
 const ActivityBody = memo(function ActivityBody({ chat: c, list, groups, focus }: { chat: NonNullable<ReturnType<typeof useChat>["data"]>; list: Message[] | undefined; groups: Groups; focus?: { key: string; at: number } }) {
   const current: Selection = { harness: c.harness, model: c.model, auto: !!c.auto_model };
   const running = c.state === "running";
   const lastUser = list?.findLast((m) => m.role === "user");
   const since = runningSince(list) ?? lastUser?.created_at;
   const turns = useMemo(() => turnWindows(list), [list]);
+  const graphRunId = c.current_run_id ?? list?.findLast((m) => m.run_id)?.run_id;
+  const [picked, setPicked] = useState<{ view: "list" | "graph"; focusAt?: number }>({ view: "list" });
+  // Clicking a step or subagent card in Chat bumps focus.at, returning Activity to List view.
+  const view = picked.focusAt === focus?.at ? picked.view : "list";
+  const setView = (next: "list" | "graph") => setPicked({ view: next, focusAt: focus?.at });
+  const activeView = graphRunId ? view : "list";
   return (
     <>
       <div className="mx-auto mb-4 flex max-w-[860px] flex-wrap items-center gap-2">
         <ChatCostChip chatId={c.id} project={c.project} />
-        <span className="truncate font-mono text-12 text-fg-tertiary">
+        <span className="min-w-0 flex-1 truncate font-mono text-12 text-fg-tertiary">
           {modelLabel(groups, current).harness} · {modelLabel(groups, current).model}
           {current.auto && " (auto)"}
           {c.effort && ` · ${effortLabel(c.effort)} effort`}
         </span>
+        {graphRunId && (
+          <div className="ml-auto flex flex-none items-center gap-2">
+            {activeView === "graph" && (
+              <Link href={`/runs/${graphRunId}?view=graph`} className="text-12 text-fg-tertiary hover:text-fg hover:underline">
+                Open run ↗
+              </Link>
+            )}
+            <Segmented small label="Activity view" options={ACTIVITY_VIEWS} value={activeView} onChange={setView} />
+          </div>
+        )}
       </div>
-      <ActivityLog list={list} turns={turns} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
+      {activeView === "graph" && graphRunId ? (
+        <ChatActivityGraph runId={graphRunId} onOpenList={() => setView("list")} />
+      ) : (
+        <ActivityLog list={list} turns={turns} groups={groups} running={running} runId={c.current_run_id} since={since} focus={focus} />
+      )}
     </>
   );
 });
@@ -671,6 +722,7 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   const bookmarkMessage = useSetChatMessageBookmark(id);
   const [outlineOpen, setOutlineOpen] = useState(false);
   const [findOpen, setFindOpen] = useState(false);
+  const showLiveThinking = useShowLiveThinking();
   const [forkTarget, setForkTarget] = useState<ForkTarget | null>(null);
   const boot = useBootstrap();
   const personas = usePersonas();
@@ -901,6 +953,26 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
   // The running turn starts after the newest message, which may be a reply, not
   // the person's: a persona handing on, or the image follow-up.
   const since = runningSince(list) ?? lastUser?.created_at;
+  // While a turn runs past 60s, periodically refresh harness usage/quota so popovers stay fresh
+  // mid-turn instead of waiting for completion. Cleared immediately on turn end or unmount.
+  useEffect(() => {
+    if (!running) return;
+    let intervalId: ReturnType<typeof setInterval> | undefined;
+    const refreshUsage = () => {
+      if (typeof document !== "undefined" && document.visibilityState === "hidden") return;
+      void qc.refetchQueries({ queryKey: ["dock"] });
+    };
+    const sinceMs = since ? Date.parse(since) : undefined;
+    const initialDelay = longTurnUsageRefreshDelayMs(sinceMs, Date.now(), LONG_TURN_USAGE_REFRESH_INTERVAL_MS);
+    const timeoutId = setTimeout(() => {
+      refreshUsage();
+      intervalId = setInterval(refreshUsage, LONG_TURN_USAGE_REFRESH_INTERVAL_MS);
+    }, initialDelay);
+    return () => {
+      clearTimeout(timeoutId);
+      if (intervalId !== undefined) clearInterval(intervalId);
+    };
+  }, [running, since, qc]);
   const drop = useFileDrop(files.add, !!c && !c.archived && !locked);
   // From the playground: Send to chat's report and screenshot, or an ask to map its API.
   const addFiles = useRef(files.add);
@@ -1403,6 +1475,23 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
         return (c.speaker ?? c.persona)?.capabilities?.code
           ? (savedRepos.data ?? []).map((r) => ({ name: r.name, run: () => selectRepo.mutate(r.url) }))
           : [];
+      case "thinking":
+        return [
+          {
+            name: "on",
+            run: () => {
+              writeShowLiveThinking(true);
+              toast({ title: "Live thinking enabled" });
+            },
+          },
+          {
+            name: "off",
+            run: () => {
+              writeShowLiveThinking(false);
+              toast({ title: "Live thinking hidden" });
+            },
+          },
+        ];
       default:
         return [];
     }
@@ -1507,6 +1596,20 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
           >
             <Icon name="list" size={14} />
             {(list?.some((m) => m.bookmarked) ?? false) && (
+              <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-accent" />
+            )}
+          </button>
+          <button
+            type="button"
+            aria-pressed={showLiveThinking}
+            aria-label="Live thinking"
+            title={showLiveThinking ? "Hide live thinking (/thinking off)" : "Stream live thinking inline (/thinking on)"}
+            data-testid="toggle-live-thinking"
+            onClick={() => writeShowLiveThinking(!showLiveThinking)}
+            className={cx("relative grid size-7 flex-none place-items-center rounded-md", showLiveThinking ? "bg-selected text-accent" : "text-fg-tertiary hover:bg-hover hover:text-fg")}
+          >
+            <Icon name="bulb" size={14} />
+            {showLiveThinking && (
               <span aria-hidden className="absolute right-1 top-1 size-1.5 rounded-full bg-accent" />
             )}
           </button>
@@ -1914,6 +2017,13 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
             </div>
           ) : (
             <>
+            {running && (
+              <PinnedPlanBar
+                key={`${c.current_run_id ?? ""}:${since ?? ""}`}
+                runId={c.current_run_id}
+                since={since}
+              />
+            )}
             {context?.composer}
             <DraftComposer
               draft={draft}
@@ -1969,6 +2079,12 @@ export function Conversation({ id, onNew, actions, activityInDock = false, docke
                   model: res.option.model,
                   body: res.question || undefined,
                 });
+              },
+              thinking: (arg: string) => {
+                const res = resolveThinkingToggle(arg, showLiveThinking);
+                if ("error" in res) return res.error;
+                writeShowLiveThinking(res.next);
+                toast({ title: res.next ? "Live thinking enabled" : "Live thinking hidden" });
               },
               repository: (arg) => { if (!(c.speaker ?? c.persona)?.capabilities?.code) return "This persona cannot write code."; if (arg) selectRepo.mutate(arg); else setRepoSignal((n) => n + 1); }, hasWorkflows: published.length > 0 }}
               personas={personas.data?.personas ?? []}

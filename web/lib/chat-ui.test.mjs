@@ -1,7 +1,7 @@
 import test from "node:test";
 import { readFileSync } from "node:fs";
 import assert from "node:assert/strict";
-import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, liveSubagentStatus, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
+import { connectorCall, activityOf, bareTool, chatStatus, chatCalls, chatStatusOf, chatSteps, liveSubagentStatus, stepDetail, chatTitle, foldSteps, formatSpan, NEXT_STEP_AFTER_MS, NEXT_STEP_KEY, QUIET_AFTER_MS, QUIET_RUNNING_MS, quietFor, subagentBranches, turnActivity, turnClock, turnPulse, interimLine, intentOf, linkLabel, needsSwitchConfirm, replyCost, runningSince, toolCalls, turnNotes, turnTrace, turnWindows, finishedTurn, finishedSummary, thinkingBlocks, planProgress, longTurnUsageRefreshDelayMs, endedTurns, groupByDay, catalogModelLabel, readableModelId, rowMark } from "./chat-ui.ts";
 
 test("rowMark shows an unread dot until the chat is read or opened, and running wins", () => {
   assert.equal(rowMark({ state: "idle", unread: 0 }), null);
@@ -1123,4 +1123,121 @@ test("liveSubagentStatus, chatStatus, and chatSteps reflect live subagent progre
   // Single subagent shows role and latest safe activity:
   const single = liveSubagentStatus([branches[1]]);
   assert.equal(single?.phrase, "running Run tests · running tests");
+});
+
+test("split phase timers reset across thinking/tool/writing_reply and accumulate pure thinkingDurationMs", () => {
+  const since = "2026-11-09T10:00:00Z";
+  const ts = (s) => `2026-11-09T10:${String(Math.floor(s / 60)).padStart(2, "0")}:${String(s % 60).padStart(2, "0")}Z`;
+  const evAt = (seq, s, type, payload) => ({ seq, type, at: ts(s), payload });
+
+  // 1. Continuous thinking across heartbeats does not reset phaseElapsed.
+  const thinkingOnly = [
+    evAt(1, 2, "lifecycle", { state: "activity", phase: "thinking", detail: "Checking architecture" }),
+    evAt(2, 10, "lifecycle", { state: "activity", phase: "thinking" }),
+  ];
+  const p1 = turnPulse(chatCalls(thinkingOnly, since), turnClock(thinkingOnly, since), Date.parse(ts(12)));
+  assert.equal(p1.phase, "thinking");
+  assert.equal(p1.elapsed, 12_000);
+  assert.equal(p1.phaseElapsed, 12_000);
+  assert.equal(p1.thinkingDurationMs, 12_000);
+
+  // 2. Active tool resets phaseElapsed and freezes thinkingDurationMs.
+  const duringTool = [
+    ...thinkingOnly,
+    evAt(3, 12, "message", { kind: "thinking", text: "**Running tests**\nNeed baseline output." }),
+    evAt(4, 12, "tool_call", { id: "c1", tool: "Bash", input: { command: "go test ./..." } }),
+  ];
+  const p2 = turnPulse(chatCalls(duringTool, since), turnClock(duringTool, since), Date.parse(ts(30)));
+  assert.equal(p2.phase, "tool");
+  assert.equal(p2.elapsed, 30_000);
+  assert.equal(p2.phaseElapsed, 18_000);
+  assert.equal(p2.thinkingDurationMs, 12_000);
+
+  // 3. Tool finishes -> returns to thinking, resetting phaseElapsed and resuming thinking accumulation.
+  const afterTool = [...duringTool, evAt(5, 30, "tool_result", { id: "c1", output: "ok" })];
+  const p3 = turnPulse(chatCalls(afterTool, since), turnClock(afterTool, since), Date.parse(ts(35)));
+  assert.equal(p3.phase, "thinking");
+  assert.equal(p3.elapsed, 35_000);
+  assert.equal(p3.phaseElapsed, 5_000);
+  assert.equal(p3.thinkingDurationMs, 17_000);
+
+  // 4. Parallel multi-tool turn + subagent child events + reply streaming excluded from thinking.
+  const fullTurn = [
+    ...afterTool,
+    evAt(6, 37, "tool_call", { id: "c2", tool: "Read", input: { file_path: "a.ts" } }),
+    evAt(7, 38, "tool_call", { id: "c3", tool: "Grep", input: { pattern: "foo" } }),
+    evAt(8, 39, "tool_call", { id: "sub1", tool: "Read", subagent: true }),
+    evAt(9, 40, "tool_result", { id: "sub1", subagent: true }),
+    evAt(10, 41, "tool_result", { id: "c2", output: "ok" }),
+    evAt(11, 44, "tool_result", { id: "c3", output: "ok" }),
+    evAt(12, 47, "message", { kind: "thinking", text: "## Summarizing\nAll good." }),
+    evAt(13, 48, "lifecycle", { state: "activity", phase: "writing_reply" }),
+    evAt(14, 52, "lifecycle", { state: "reply_block", kind: "chart" }),
+    evAt(15, 56, "message", { role: "assistant", text: "Here are the results." }),
+  ];
+
+  // Mid-parallel at 42s: c2 finished, c3 still open -> stays in tool phase from 37s.
+  const midParallel = turnPulse(chatCalls(fullTurn.slice(0, 10), since), turnClock(fullTurn.slice(0, 10), since), Date.parse(ts(42)));
+  assert.equal(midParallel.phase, "tool");
+  assert.equal(midParallel.phaseElapsed, 5_000);
+  assert.equal(midParallel.thinkingDurationMs, 19_000);
+
+  // During reply streaming: writing_reply timer resets and thinking freezes at 23s.
+  const duringReply = turnPulse(chatCalls(fullTurn.slice(0, 13), since), turnClock(fullTurn.slice(0, 13), since), Date.parse(ts(51)));
+  assert.equal(duringReply.phase, "writing_reply");
+  assert.equal(duringReply.phaseElapsed, 3_000);
+  assert.equal(duringReply.thinkingDurationMs, 23_000);
+
+  // Finished turn: 60s total, 23s pure thinking (12 + 7 + 4), 2 thinking blocks.
+  const done = finishedTurn(fullTurn, "done", since, ts(60), Date.parse(ts(60)));
+  assert.equal(done.duration, 60_000);
+  assert.equal(done.thinkingDurationMs, 23_000);
+  assert.deepEqual(done.thinkingBlocks.map((b) => [b.seq, b.heading]), [[3, "Running tests"], [12, "Summarizing"]]);
+  assert.equal(finishedSummary("done", done.steps.length, done.duration, done.thinkingDurationMs), "Worked for 1m 00s · Thought for 23s · 4 steps");
+  assert.equal(finishedSummary("done", 2, 12_000, 400), "Worked for 12s · 2 steps");
+
+  // Reasoning-only turn (no tool calls) keeps steps empty while recording thinkingDurationMs and thinkingBlocks.
+  const thoughtOnly = finishedTurn(
+    [
+      evAt(1, 1, "lifecycle", { state: "activity", phase: "thinking" }),
+      evAt(2, 9, "message", { kind: "thinking", text: "Just thinking." }),
+      evAt(3, 9, "lifecycle", { state: "activity", phase: "writing_reply" }),
+    ],
+    "done",
+    since,
+    ts(14),
+    Date.parse(ts(14)),
+  );
+  assert.deepEqual(thoughtOnly.steps, []);
+  assert.equal(thoughtOnly.duration, 14_000);
+  assert.equal(thoughtOnly.thinkingDurationMs, 9_000);
+  assert.deepEqual(thinkingBlocks([evAt(2, 9, "message", { kind: "thinking", text: "Just thinking." })]).map((b) => b.text), ["Just thinking."]);
+});
+
+test("planProgress counts completed and failed plan steps and longTurnUsageRefreshDelayMs schedules 60s refreshes", () => {
+  const todo = (...rows) => ({ tool: "TodoWrite", input: { todos: rows.map(([content, status]) => ({ content, status })) } });
+  const bash = (command, failed) => ({ tool: "Bash", input: { command }, ...(failed ? { failed: true } : {}) });
+  const calls = [
+    todo(["Inspect", "in_progress"], ["Test", "pending"], ["Ship", "pending"]),
+    { tool: "Read" },
+    todo(["Inspect", "completed"], ["Test", "in_progress"], ["Ship", "pending"]),
+    bash("npm test", true),
+    todo(["Inspect", "completed"], ["Test", "completed"], ["Ship", "in_progress"]),
+    { tool: "reply_block", input: { kind: "chart" } },
+  ].map((c, key) => ({ key, done: true, input: {}, ...c }));
+  const { steps, planned } = chatSteps(calls);
+  const progress = planProgress(steps, planned);
+  assert.ok(progress);
+  assert.equal(progress.completed, 1);
+  assert.equal(progress.failed, 1);
+  assert.equal(progress.total, 3);
+  assert.equal(progress.activeStep?.title, "Ship");
+  assert.equal(progress.label, "1/3 steps · 1 failed");
+  assert.equal(planProgress(steps, false), undefined);
+
+  assert.equal(longTurnUsageRefreshDelayMs(undefined, 100_000), 60_000);
+  assert.equal(longTurnUsageRefreshDelayMs(100_000, 100_000), 60_000);
+  assert.equal(longTurnUsageRefreshDelayMs(100_000, 145_000), 15_000);
+  assert.equal(longTurnUsageRefreshDelayMs(100_000, 160_000), 0);
+  assert.equal(longTurnUsageRefreshDelayMs(100_000, 195_000), 0);
 });

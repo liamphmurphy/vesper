@@ -526,6 +526,178 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(ChatTurnActivity.finishedSummary(outcome: .stopped, stepCount: 2, durationMs: 5_000), "Stopped after 5s · 2 steps")
     }
 
+    func testSplitPhaseTimersAndPureThinkingDurationMath() {
+        let t0 = "2026-11-22T07:00:00Z"
+        let ts: (Int) -> String = { sec in
+            let m = sec / 60
+            let s = sec % 60
+            return String(format: "2026-11-22T07:%02d:%02dZ", m, s)
+        }
+        let date: (Int) -> Date = { APIDate.parse(ts($0))! }
+
+        // 1. Initial thinking with heartbeats: phaseElapsed counts continuously from t0 (heartbeats don't reset it).
+        let thinkingOnly: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "lifecycle", at: ts(2), payload: ["state": .string("activity"), "phase": .string("thinking"), "detail": .string("Checking architecture")]),
+            ChatRunEvent(seq: 2, type: "lifecycle", at: ts(10), payload: ["state": .string("activity"), "phase": .string("thinking")]),
+        ]
+        let f1 = ChatTurnActivity.fold(events: thinkingOnly, since: t0, now: date(12))
+        XCTAssertEqual(f1.timingPhase, .thinking)
+        XCTAssertEqual(f1.elapsedMs, 12_000)
+        XCTAssertEqual(f1.phaseElapsedMs, 12_000)
+        XCTAssertEqual(f1.thinkingDurationMs, 12_000)
+        XCTAssertEqual(f1.activePhase, .thinking(detail: "Checking architecture"))
+
+        // 2. Transition into an active tool resets phaseElapsed and freezes thinkingDurationMs.
+        let duringTool = thinkingOnly + [
+            ChatRunEvent(seq: 3, type: "message", at: ts(12), payload: ["kind": .string("thinking"), "text": .string("**Running tests**\nNeed baseline output.")]),
+            ChatRunEvent(seq: 4, type: "tool_call", at: ts(12), payload: ["id": .string("c1"), "tool": .string("Bash"), "input": .object(["command": .string("swift test")])]),
+        ]
+        let f2 = ChatTurnActivity.fold(events: duringTool, since: t0, now: date(30))
+        XCTAssertEqual(f2.timingPhase, .tool)
+        XCTAssertEqual(f2.status.kind, .tests)
+        XCTAssertEqual(f2.elapsedMs, 30_000)
+        XCTAssertEqual(f2.phaseElapsedMs, 18_000)
+        XCTAssertEqual(f2.thinkingDurationMs, 12_000)
+        XCTAssertEqual(f2.thinkingBlocks.count, 1)
+        XCTAssertEqual(f2.thinkingBlocks[0].heading, "Running tests")
+
+        // 3. Tool finishes -> transitions back to thinking and resets phaseElapsed.
+        let backToThinking = duringTool + [
+            ChatRunEvent(seq: 5, type: "tool_result", at: ts(30), payload: ["id": .string("c1"), "output": .string("pass")]),
+        ]
+        let f3 = ChatTurnActivity.fold(events: backToThinking, since: t0, now: date(35))
+        XCTAssertEqual(f3.timingPhase, .thinking)
+        XCTAssertEqual(f3.elapsedMs, 35_000)
+        XCTAssertEqual(f3.phaseElapsedMs, 5_000)
+        XCTAssertEqual(f3.thinkingDurationMs, 17_000) // 12s + 5s, excluding 18s Bash
+
+        // 4. Parallel multi-tool burst + subagent child events + reply streaming excluded from thinking.
+        let fullTurn = backToThinking + [
+            ChatRunEvent(seq: 6, type: "tool_call", at: ts(37), payload: ["id": .string("c2"), "tool": .string("Read"), "input": .object(["file_path": .string("a.swift")])]),
+            ChatRunEvent(seq: 7, type: "tool_call", at: ts(38), payload: ["id": .string("c3"), "tool": .string("Grep"), "input": .object(["pattern": .string("foo")])]),
+            ChatRunEvent(seq: 8, type: "tool_call", at: ts(39), payload: ["id": .string("sub1"), "tool": .string("Read"), "subagent": .bool(true)]),
+            ChatRunEvent(seq: 9, type: "tool_result", at: ts(40), payload: ["id": .string("sub1"), "subagent": .bool(true)]),
+            ChatRunEvent(seq: 10, type: "tool_result", at: ts(41), payload: ["id": .string("c2"), "output": .string("ok")]),
+            // c3 still open until ts(44) -> stays in .tool phase!
+            ChatRunEvent(seq: 11, type: "tool_result", at: ts(44), payload: ["id": .string("c3"), "output": .string("ok")]),
+            ChatRunEvent(seq: 12, type: "message", at: ts(47), payload: ["kind": .string("thinking"), "text": .string("## Summarizing\nAll good.")]),
+            ChatRunEvent(seq: 13, type: "lifecycle", at: ts(48), payload: ["state": .string("activity"), "phase": .string("writing_reply")]),
+            ChatRunEvent(seq: 14, type: "lifecycle", at: ts(52), payload: ["state": .string("reply_block"), "kind": .string("chart")]),
+            ChatRunEvent(seq: 15, type: "message", at: ts(56), payload: ["role": .string("assistant"), "text": .string("Here are the results.")]),
+        ]
+        // Mid-parallel check at ts(42): c2 closed, c3 still open -> still .tool since ts(37).
+        let midParallel = ChatTurnActivity.fold(events: Array(fullTurn.prefix(10)), since: t0, now: date(42))
+        XCTAssertEqual(midParallel.timingPhase, .tool)
+        XCTAssertEqual(midParallel.phaseElapsedMs, 5_000)
+        XCTAssertEqual(midParallel.thinkingDurationMs, 19_000) // 12s + 7s
+
+        // Writing reply excludes streaming time from thinking.
+        let duringReply = ChatTurnActivity.fold(events: Array(fullTurn.prefix(13)), since: t0, now: date(51))
+        XCTAssertEqual(duringReply.timingPhase, .writingReply)
+        XCTAssertEqual(duringReply.phaseElapsedMs, 3_000)
+        XCTAssertEqual(duringReply.thinkingDurationMs, 23_000) // 12s + 7s + 4s
+
+        // Finished turn: total = 60s, pure thinking = 12 + 7 + 4 = 23s (excludes 18s Bash, 7s parallel tools, 12s reply streaming).
+        let finished = ChatTurnActivity.finishedTurn(
+            events: fullTurn,
+            outcome: .done,
+            since: t0,
+            until: ts(60),
+            end: APIDate.epoch(ts(60))
+        )
+        XCTAssertEqual(finished.durationMs, 60_000)
+        XCTAssertEqual(finished.thinkingDurationMs, 23_000)
+        XCTAssertEqual(finished.thinkingBlocks.count, 2)
+        XCTAssertEqual(finished.thinkingBlocks[1].heading, "Summarizing")
+        XCTAssertEqual(
+            ChatTurnActivity.finishedSummary(
+                outcome: .done,
+                stepCount: finished.steps.count,
+                durationMs: finished.durationMs,
+                thinkingDurationMs: finished.thinkingDurationMs
+            ),
+            "Worked for 1m 00s · Thought for 23s · 4 steps"
+        )
+
+        // Reasoning-only turn (no tool calls) keeps steps empty while recording thinkingDurationMs and thinkingBlocks.
+        let thoughtOnlyEvents: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "lifecycle", at: ts(1), payload: ["state": .string("activity"), "phase": .string("thinking")]),
+            ChatRunEvent(seq: 2, type: "message", at: ts(9), payload: ["kind": .string("thinking"), "text": .string("Just thinking.")]),
+            ChatRunEvent(seq: 3, type: "lifecycle", at: ts(9), payload: ["state": .string("activity"), "phase": .string("writing_reply")]),
+        ]
+        let thoughtOnly = ChatTurnActivity.finishedTurn(
+            events: thoughtOnlyEvents,
+            outcome: .done,
+            since: t0,
+            until: ts(14),
+            end: APIDate.epoch(ts(14))
+        )
+        XCTAssertTrue(thoughtOnly.steps.isEmpty)
+        XCTAssertEqual(thoughtOnly.durationMs, 14_000)
+        XCTAssertEqual(thoughtOnly.thinkingDurationMs, 9_000)
+        XCTAssertEqual(thoughtOnly.thinkingBlocks.map(\.text), ["Just thinking."])
+    }
+
+    func testPlanProgressWithFailedStepsAndLongTurnUsageDelay() {
+        let t0 = "2026-11-22T08:00:00Z"
+        let events: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "tool_call", at: "2026-11-22T08:00:01Z", payload: [
+                "id": .string("p1"),
+                "tool": .string("TodoWrite"),
+                "input": .object(["todos": .array([
+                    .object(["content": .string("Inspect code"), "status": .string("in_progress")]),
+                    .object(["content": .string("Run tests"), "status": .string("pending")]),
+                    .object(["content": .string("Ship fix"), "status": .string("pending")]),
+                ])]),
+            ]),
+            ChatRunEvent(seq: 2, type: "tool_result", at: "2026-11-22T08:00:02Z", payload: ["id": .string("p1")]),
+            ChatRunEvent(seq: 3, type: "tool_call", at: "2026-11-22T08:00:03Z", payload: ["id": .string("c1"), "tool": .string("Read")]),
+            ChatRunEvent(seq: 4, type: "tool_result", at: "2026-11-22T08:00:04Z", payload: ["id": .string("c1")]),
+            ChatRunEvent(seq: 5, type: "tool_call", at: "2026-11-22T08:00:05Z", payload: [
+                "id": .string("p2"),
+                "tool": .string("TodoWrite"),
+                "input": .object(["todos": .array([
+                    .object(["content": .string("Inspect code"), "status": .string("completed")]),
+                    .object(["content": .string("Run tests"), "status": .string("in_progress")]),
+                    .object(["content": .string("Ship fix"), "status": .string("pending")]),
+                ])]),
+            ]),
+            ChatRunEvent(seq: 6, type: "tool_result", at: "2026-11-22T08:00:06Z", payload: ["id": .string("p2")]),
+            ChatRunEvent(seq: 7, type: "tool_call", at: "2026-11-22T08:00:07Z", payload: ["id": .string("c2"), "tool": .string("Bash"), "input": .object(["command": .string("swift test")])]),
+            ChatRunEvent(seq: 8, type: "tool_result", at: "2026-11-22T08:00:10Z", payload: ["id": .string("c2"), "is_error": .bool(true)]),
+            ChatRunEvent(seq: 9, type: "tool_call", at: "2026-11-22T08:00:11Z", payload: [
+                "id": .string("p3"),
+                "tool": .string("TodoWrite"),
+                "input": .object(["todos": .array([
+                    .object(["content": .string("Inspect code"), "status": .string("completed")]),
+                    .object(["content": .string("Run tests"), "status": .string("completed")]),
+                    .object(["content": .string("Ship fix"), "status": .string("in_progress")]),
+                ])]),
+            ]),
+            ChatRunEvent(seq: 10, type: "tool_result", at: "2026-11-22T08:00:12Z", payload: ["id": .string("p3")]),
+        ]
+
+        let folded = ChatTurnActivity.fold(events: events, since: t0, now: APIDate.parse("2026-11-22T08:00:15Z")!)
+        XCTAssertTrue(folded.planned)
+        let progress = ChatTurnActivity.planProgress(steps: folded.steps, planned: folded.planned)
+        XCTAssertNotNil(progress)
+        XCTAssertEqual(progress?.completed, 1)
+        XCTAssertEqual(progress?.failed, 1)
+        XCTAssertEqual(progress?.total, 3)
+        XCTAssertEqual(progress?.activeStep?.title, "Ship fix")
+        XCTAssertEqual(progress?.progressLabel, "1/3 steps · 1 failed")
+
+        // Planless turn returns nil.
+        XCTAssertNil(ChatTurnActivity.planProgress(steps: folded.steps, planned: false))
+
+        // Long-turn usage refresh delay math.
+        XCTAssertEqual(ChatTurnActivity.longTurnUsageRefreshDelayMs(sinceEpochMs: nil, nowEpochMs: 100_000), 60_000)
+        XCTAssertEqual(ChatTurnActivity.longTurnUsageRefreshDelayMs(sinceEpochMs: 100_000, nowEpochMs: 100_000), 60_000)
+        XCTAssertEqual(ChatTurnActivity.longTurnUsageRefreshDelayMs(sinceEpochMs: 100_000, nowEpochMs: 145_000), 15_000)
+        XCTAssertEqual(ChatTurnActivity.longTurnUsageRefreshDelayMs(sinceEpochMs: 100_000, nowEpochMs: 160_000), 0)
+        XCTAssertEqual(ChatTurnActivity.longTurnUsageRefreshDelayMs(sinceEpochMs: 100_000, nowEpochMs: 195_000), 0)
+    }
+
     // MARK: - ChatNav
 
     func testChatNavGroupingIndicatorsFiltersAndActions() {

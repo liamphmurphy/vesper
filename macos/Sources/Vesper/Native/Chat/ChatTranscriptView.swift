@@ -953,10 +953,13 @@ private struct ChatMessageRowView: View {
 // MARK: - Finished Working Card in History
 
 /// What the live working card leaves behind in chat history once a turn finishes (or stops/fails):
-/// a compact one-line strip ("Worked for 2m 14s · 7 steps") that expands in place to show the
-/// turn's steps. Plain replies with no tool work render nothing.
+/// a compact one-line strip ("Worked for 2m 14s · Thought for 32s · 7 steps") that expands in place to show the
+/// turn's steps, plus an inline collapsible thinking disclosure block when `showLiveThinking` is enabled.
+/// Plain replies with no tool work render no working strip (though they still show finished thinking blocks
+/// when `showLiveThinking` is on).
 private struct ChatTurnStepsCardView: View {
     @Environment(NativeScreenContext.self) private var context
+    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
 
     let runId: String
     let outcome: ChatTurnOutcome
@@ -973,17 +976,29 @@ private struct ChatTurnStepsCardView: View {
             until: until,
             end: end
         )
-        if !turn.steps.isEmpty {
-            ChatFinishedTurnCardView(turn: turn, outcome: outcome)
+        let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
+        if showThinking || !turn.steps.isEmpty {
+            VStack(alignment: .leading, spacing: 6) {
+                if showThinking {
+                    ChatFinishedThinkingDisclosureView(
+                        blocks: turn.thinkingBlocks,
+                        thinkingDurationMs: turn.thinkingDurationMs
+                    )
+                }
+                if !turn.steps.isEmpty {
+                    ChatFinishedTurnCardView(turn: turn, outcome: outcome)
+                }
+            }
         }
     }
 }
 
 /// Renders a finished working card with persona identity for turns that ended without a reply
-/// (failed or stopped/interrupted). Renders nothing if the turn did no tool work.
+/// (failed or stopped/interrupted). Renders nothing if the turn did no tool work and has no visible thinking.
 private struct ChatEndedTurnSectionView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
 
     let runId: String
     let ended: ChatEndedTurn
@@ -999,8 +1014,9 @@ private struct ChatEndedTurnSectionView: View {
             until: ended.until,
             end: ended.end
         )
+        let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
 
-        if !turn.steps.isEmpty {
+        if showThinking || !turn.steps.isEmpty {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(spacing: 8) {
                     WorkPersonaAvatarView(
@@ -1014,10 +1030,199 @@ private struct ChatEndedTurnSectionView: View {
                         .font(.system(size: theme.pointSize(.body), weight: .semibold))
                         .foregroundStyle(theme.palette.text)
                 }
-                ChatFinishedTurnCardView(turn: turn, outcome: ended.outcome)
-                    .padding(.leading, 32)
+                VStack(alignment: .leading, spacing: 6) {
+                    if showThinking {
+                        ChatFinishedThinkingDisclosureView(
+                            blocks: turn.thinkingBlocks,
+                            thinkingDurationMs: turn.thinkingDurationMs
+                        )
+                    }
+                    if !turn.steps.isEmpty {
+                        ChatFinishedTurnCardView(turn: turn, outcome: ended.outcome)
+                    }
+                }
+                .padding(.leading, 32)
             }
         }
+    }
+}
+
+/// Clean collapsible disclosure block for a finished turn's reasoning blocks when `showLiveThinking` is on.
+private struct ChatFinishedThinkingDisclosureView: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let blocks: [ChatThinkingBlock]
+    let thinkingDurationMs: Int?
+
+    @State private var isExpanded = false
+
+    var body: some View {
+        let p = theme.palette
+        let title: String = {
+            if let ms = thinkingDurationMs, ms >= 1000 {
+                return "Thought for \(ChatTurnActivity.formatSpan(ms: ms))"
+            }
+            return "Thinking"
+        }()
+
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "brain.head.profile")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                    Text(title)
+                        .font(.system(size: theme.pointSize(.small), weight: .medium))
+                        .foregroundStyle(p.secondaryText)
+                        .lineLimit(1)
+                    if blocks.count > 1 {
+                        Text("· \(blocks.count) blocks")
+                            .font(.system(size: theme.pointSize(.micro)))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    Spacer(minLength: 12)
+                    HStack(spacing: 4) {
+                        Text(isExpanded ? "Hide" : "Show")
+                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                            .font(.system(size: 9, weight: .semibold))
+                    }
+                    .font(.system(size: theme.pointSize(.micro)))
+                    .foregroundStyle(p.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider()
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 10) {
+                        ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
+                            if idx > 0 {
+                                Divider()
+                            }
+                            Text(block.text)
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(p.secondaryText)
+                                .textSelection(.enabled)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .fixedSize(horizontal: false, vertical: true)
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 10)
+                }
+                .frame(maxHeight: 280)
+            }
+        }
+        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+    }
+}
+
+/// Live inline reasoning panel shown inside the running turn when `showLiveThinking` is enabled.
+private struct ChatLiveThinkingStreamView: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let blocks: [ChatThinkingBlock]
+    let activeDetail: String?
+    let isActivelyThinking: Bool
+    let thinkingDurationMs: Int
+
+    @State private var isExpanded = true
+
+    var body: some View {
+        let p = theme.palette
+        let headerTitle = isActivelyThinking ? "Thinking…" : "Thought"
+
+        VStack(alignment: .leading, spacing: 0) {
+            Button {
+                withAnimation(.easeInOut(duration: 0.15)) {
+                    isExpanded.toggle()
+                }
+            } label: {
+                HStack(spacing: 7) {
+                    Image(systemName: "brain.head.profile")
+                        .imageScale(.small)
+                        .foregroundStyle(isActivelyThinking ? p.accent : p.tertiaryText)
+                    Text(headerTitle)
+                        .font(.system(size: theme.pointSize(.small), weight: .semibold))
+                        .foregroundStyle(isActivelyThinking ? p.text : p.secondaryText)
+                    if thinkingDurationMs >= 1000 {
+                        Text(ChatTurnActivity.formatSpan(ms: thinkingDurationMs))
+                            .font(.system(size: theme.pointSize(.micro), design: .monospaced))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    if !isExpanded, let activeDetail, !activeDetail.isEmpty {
+                        Text("· \(activeDetail)")
+                            .font(.system(size: theme.pointSize(.micro)))
+                            .foregroundStyle(p.tertiaryText)
+                            .lineLimit(1)
+                    }
+                    Spacer(minLength: 8)
+                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
+                        .font(.system(size: 9, weight: .semibold))
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+
+            if isExpanded {
+                Divider()
+                ScrollViewReader { proxy in
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 8) {
+                            ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
+                                if idx > 0 {
+                                    Divider()
+                                }
+                                Text(block.text)
+                                    .font(.system(size: theme.pointSize(.small)))
+                                    .foregroundStyle(p.secondaryText)
+                                    .textSelection(.enabled)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .fixedSize(horizontal: false, vertical: true)
+                            }
+                            if isActivelyThinking {
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(p.accent)
+                                        .frame(width: 5, height: 5)
+                                    Text(activeDetail?.isEmpty == false ? activeDetail! : "Reasoning…")
+                                        .font(.system(size: theme.pointSize(.small)))
+                                        .italic()
+                                        .foregroundStyle(p.tertiaryText)
+                                        .lineLimit(2)
+                                }
+                                .id("live-thinking-tail")
+                            }
+                        }
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 8)
+                    }
+                    .frame(maxHeight: 220)
+                    .onChange(of: blocks.count) { _, _ in
+                        if let last = blocks.last {
+                            proxy.scrollTo(last.id, anchor: .bottom)
+                        }
+                    }
+                }
+            }
+        }
+        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface).opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .stroke(isActivelyThinking ? p.accent.opacity(0.35) : p.border)
+        )
     }
 }
 
@@ -1044,7 +1249,8 @@ private struct ChatFinishedTurnCardView: View {
         let summary = ChatTurnActivity.finishedSummary(
             outcome: outcome,
             stepCount: turn.steps.count,
-            durationMs: turn.durationMs
+            durationMs: turn.durationMs,
+            thinkingDurationMs: turn.thinkingDurationMs
         )
 
         VStack(alignment: .leading, spacing: 6) {
@@ -1186,6 +1392,7 @@ private struct ChatTurnStepRowView: View {
 private struct ChatLiveActivityCardView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
 
     let chatId: String
     let runId: String?
@@ -1213,65 +1420,102 @@ private struct ChatLiveActivityCardView: View {
         // Observed by `ChatTranscriptProposalsSlot`; the API lists only pending approvals.
         let awaiting = !(context.store.entry(API.listChatToolApprovals(id: chatId)).data?.approvals.isEmpty ?? true)
         let characterState = CharacterState.forActivity(activity.status.kind, awaiting: awaiting)
-
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(alignment: .center, spacing: 12) {
-                WorkPersonaAvatarView(
-                    id: speaker?.id,
-                    handle: nil,
-                    name: speakerName,
-                    size: 32,
-                    state: characterState,
-                    active: true,
-                    preferCharacter: true
-                )
-                ActivitySceneView(kind: activity.status.kind, width: 112, height: 54)
-                VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 6) {
-                        Text("\(speakerName) is \(activity.status.phrase)…")
-                            .font(.system(size: theme.pointSize(.body), weight: .semibold))
-                            .foregroundStyle(p.text)
-                        if let elapsed = activity.elapsedMs {
-                            Text(ChatTurnActivity.formatSpan(ms: elapsed))
-                                .font(.system(size: theme.pointSize(.small), design: .monospaced))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                    }
-                    if let opening = activity.openingLine, !opening.isEmpty {
-                        Text(opening)
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(p.secondaryText)
-                            .lineLimit(2)
-                    }
-                    if activity.quiet {
-                        Text("Still working — no new events for a bit.")
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(theme.swiftUIColor("state-human", fallback: .orange))
-                    }
-                }
-                Spacer(minLength: 8)
+        let liveTimerMs = activity.phaseElapsedMs ?? activity.elapsedMs
+        let secondaryTimingLine: String? = {
+            var parts: [String] = []
+            if let total = activity.elapsedMs, let phase = activity.phaseElapsedMs, total - phase >= 1000 {
+                parts.append("Total \(ChatTurnActivity.formatSpan(ms: total))")
             }
-
-            if !displaySteps.isEmpty {
-                VStack(alignment: .leading, spacing: 4) {
-                    if !showAllSteps && folded.earlier > 0 {
-                        Button("Show \(folded.earlier) earlier step\(folded.earlier == 1 ? "" : "s")") {
-                            showAllSteps = true
-                        }
-                        .buttonStyle(.plain)
-                        .font(.system(size: theme.pointSize(.micro)))
-                        .foregroundStyle(p.accent)
-                    }
-                    ForEach(displaySteps, id: \.key) { step in
-                        ChatTurnStepRowView(step: step)
-                    }
+            if activity.thinkingDurationMs >= 1000 {
+                let isSameAsLiveTimer = activity.timingPhase == .thinking
+                    && activity.phaseElapsedMs.map { abs(activity.thinkingDurationMs - $0) < 1000 } == true
+                if !isSameAsLiveTimer {
+                    parts.append("Thought for \(ChatTurnActivity.formatSpan(ms: activity.thinkingDurationMs))")
                 }
-                .padding(.leading, 4)
+            }
+            return parts.isEmpty ? nil : parts.joined(separator: " · ")
+        }()
+        let activeThinkingDetail: String? = {
+            if case .thinking(let detail) = activity.activePhase { return detail }
+            return nil
+        }()
+        let shouldShowLiveThinking = showLiveThinking && (!activity.thinkingBlocks.isEmpty || activity.timingPhase == .thinking)
+
+        VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(alignment: .center, spacing: 12) {
+                    WorkPersonaAvatarView(
+                        id: speaker?.id,
+                        handle: nil,
+                        name: speakerName,
+                        size: 32,
+                        state: characterState,
+                        active: true,
+                        preferCharacter: true
+                    )
+                    ActivitySceneView(kind: activity.status.kind, width: 112, height: 54)
+                    VStack(alignment: .leading, spacing: 3) {
+                        HStack(spacing: 6) {
+                            Text("\(speakerName) is \(activity.status.phrase)…")
+                                .font(.system(size: theme.pointSize(.body), weight: .semibold))
+                                .foregroundStyle(p.text)
+                            if let liveTimerMs {
+                                Text(ChatTurnActivity.formatSpan(ms: liveTimerMs))
+                                    .font(.system(size: theme.pointSize(.small), design: .monospaced))
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                        }
+                        if let secondaryTimingLine {
+                            Text(secondaryTimingLine)
+                                .font(.system(size: theme.pointSize(.micro), design: .monospaced))
+                                .foregroundStyle(p.tertiaryText)
+                                .lineLimit(1)
+                        }
+                        if let opening = activity.openingLine, !opening.isEmpty {
+                            Text(opening)
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(p.secondaryText)
+                                .lineLimit(2)
+                        }
+                        if activity.quiet {
+                            Text("Still working — no new events for a bit.")
+                                .font(.system(size: theme.pointSize(.micro)))
+                                .foregroundStyle(theme.swiftUIColor("state-human", fallback: .orange))
+                        }
+                    }
+                    Spacer(minLength: 8)
+                }
+
+                if !displaySteps.isEmpty {
+                    VStack(alignment: .leading, spacing: 4) {
+                        if !showAllSteps && folded.earlier > 0 {
+                            Button("Show \(folded.earlier) earlier step\(folded.earlier == 1 ? "" : "s")") {
+                                showAllSteps = true
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: theme.pointSize(.micro)))
+                            .foregroundStyle(p.accent)
+                        }
+                        ForEach(displaySteps, id: \.key) { step in
+                            ChatTurnStepRowView(step: step)
+                        }
+                    }
+                    .padding(.leading, 4)
+                }
+            }
+            .padding(12)
+            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+
+            if shouldShowLiveThinking {
+                ChatLiveThinkingStreamView(
+                    blocks: activity.thinkingBlocks,
+                    activeDetail: activeThinkingDetail,
+                    isActivelyThinking: activity.timingPhase == .thinking,
+                    thinkingDurationMs: activity.thinkingDurationMs
+                )
             }
         }
-        .padding(12)
-        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
         // The chat's persona companion acts out what this card shows, and idles once it's gone.
         .onChange(of: characterState, initial: true) { _, next in
             ChatCompanions.companion(for: chatId).work = next

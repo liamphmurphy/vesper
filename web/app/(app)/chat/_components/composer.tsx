@@ -25,6 +25,7 @@ export type CommandRun = () => string | void;
 export type ComposerCommands = {
   repository?: (arg: string) => string | void;
   compare?: (arg: string) => string | void;
+  thinking?: (arg: string) => string | void;
   /** The commands that take nothing after them: new, memory, stop. */
   plain: Record<string, CommandRun>;
   /** What a command that takes something offers, e.g. the models for /model. */
@@ -291,6 +292,7 @@ export function Composer({
     const command = CHAT_COMMANDS.find((x) => x.name === name);
     if (!command) return setCommandError(`Unknown command /${name}. Start with // to send it as a message.`);
     if (name === "repo" && commands.repository) return runCommand(() => commands.repository!(arg));
+    if (name === "thinking" && commands.thinking) return runCommand(() => commands.thinking!(arg));
     if (name === "compare") {
       if (!commands.compare) return setCommandError("/compare works once the conversation has started.");
       return runCommand(() => commands.compare!(arg));
