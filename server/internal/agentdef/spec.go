@@ -307,6 +307,26 @@ func SubagentGuide(spec Resolved) string {
 	return guide
 }
 
+// NativePlanHarnesses keep a turn's checklist with their own plan tool
+// (Claude Code's TodoWrite and tasks, Codex's update_plan), which Vesper reads
+// as it does set_plan.
+var NativePlanHarnesses = []string{HarnessClaudeCode, HarnessCodex}
+
+// PlanGuide tells a chat on a harness without a plan tool of its own to keep
+// its checklist with Vesper's set_plan. Empty where the harness has one, or
+// the turn has no tools or MCP.
+func PlanGuide(spec Resolved) string {
+	o := spec.HarnessOptions
+	if slices.Contains(NativePlanHarnesses, spec.Harness) || o[OptionNoTools] == "true" || o[OptionNoMCP] == "true" || o[OptionAside] == "true" {
+		return ""
+	}
+	name := "`set_plan`"
+	if spec.Harness == HarnessAntigravity {
+		name = "`set_plan` (declared as `mcp_lazyagents_set_plan`)"
+	}
+	return "When a turn's work takes several steps, keep its checklist with " + name + ": send the whole list when you start, then again as each step starts, finishes or fails. The person sees it above the message box while you work. Skip it for quick answers."
+}
+
 // SubagentTierRoutingOn reports whether tier routing instructions and tier
 // resolution are enabled for this run.
 func SubagentTierRoutingOn(spec Resolved) bool {
