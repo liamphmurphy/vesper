@@ -472,6 +472,105 @@ extension API {
         )
     }
 
+    /// Active branches and pull requests across a space's chats
+    ///
+    /// `GET /chat-spaces/{spaceId}/branches`
+    public static func listChatSpaceBranches(spaceId: Swift.String) -> APIRequest<ListChatSpaceBranchesResponse> {
+        return APIRequest(
+            method: "GET", template: "/chat-spaces/{spaceId}/branches",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/branches",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Live Knowledge folders and pages linked to a space
+    ///
+    /// `GET /chat-spaces/{spaceId}/knowledge`
+    public static func listChatSpaceKnowledgeLinks(spaceId: Swift.String) -> APIRequest<ListChatSpaceKnowledgeLinksResponse> {
+        return APIRequest(
+            method: "GET", template: "/chat-spaces/{spaceId}/knowledge",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/knowledge",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Link a live Knowledge folder or page to a space
+    ///
+    /// `POST /chat-spaces/{spaceId}/knowledge`
+    public static func addChatSpaceKnowledgeLink(spaceId: Swift.String, body: NewChatSpaceKnowledgeLink) -> APIRequest<ChatSpaceKnowledgeLink> {
+        return APIRequest(
+            method: "POST", template: "/chat-spaces/{spaceId}/knowledge",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/knowledge",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Update a Knowledge link on a space (default note target or pinned)
+    ///
+    /// `PATCH /chat-spaces/{spaceId}/knowledge/{linkId}`
+    public static func updateChatSpaceKnowledgeLink(spaceId: Swift.String, linkId: Swift.String, body: ChatSpaceKnowledgeLinkPatch) -> APIRequest<ChatSpaceKnowledgeLink> {
+        return APIRequest(
+            method: "PATCH", template: "/chat-spaces/{spaceId}/knowledge/{linkId}",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/knowledge/\(APIPath.escape(linkId))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Unlink a Knowledge folder or page from a space
+    ///
+    /// `DELETE /chat-spaces/{spaceId}/knowledge/{linkId}`
+    public static func deleteChatSpaceKnowledgeLink(spaceId: Swift.String, linkId: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/chat-spaces/{spaceId}/knowledge/{linkId}",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/knowledge/\(APIPath.escape(linkId))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
+    /// Live Git repositories attached to a space
+    ///
+    /// `GET /chat-spaces/{spaceId}/repositories`
+    public static func listChatSpaceRepositories(spaceId: Swift.String) -> APIRequest<ListChatSpaceRepositoriesResponse> {
+        return APIRequest(
+            method: "GET", template: "/chat-spaces/{spaceId}/repositories",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/repositories",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Attach a Git repository to a space as live context
+    ///
+    /// `POST /chat-spaces/{spaceId}/repositories`
+    public static func addChatSpaceRepository(spaceId: Swift.String, body: NewChatSpaceRepository) -> APIRequest<ChatSpaceRepository> {
+        return APIRequest(
+            method: "POST", template: "/chat-spaces/{spaceId}/repositories",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/repositories",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Update a space repository attachment (e.g. read-only flag)
+    ///
+    /// `PATCH /chat-spaces/{spaceId}/repositories/{repoId}`
+    public static func updateChatSpaceRepository(spaceId: Swift.String, repoId: Swift.String, body: ChatSpaceRepositoryPatch) -> APIRequest<ChatSpaceRepository> {
+        return APIRequest(
+            method: "PATCH", template: "/chat-spaces/{spaceId}/repositories/{repoId}",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/repositories/\(APIPath.escape(repoId))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Detach a Git repository from a space
+    ///
+    /// `DELETE /chat-spaces/{spaceId}/repositories/{repoId}`
+    public static func deleteChatSpaceRepository(spaceId: Swift.String, repoId: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/chat-spaces/{spaceId}/repositories/{repoId}",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/repositories/\(APIPath.escape(repoId))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
     /// A space's sources, in the order they were added
     ///
     /// `GET /chat-spaces/{spaceId}/sources`
@@ -519,6 +618,50 @@ extension API {
         return APIRequest(
             method: "DELETE", template: "/chat-spaces/{spaceId}/sources/{sourceId}",
             path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/sources/\(APIPath.escape(sourceId))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
+    /// Lightweight tasks in a space
+    ///
+    /// `GET /chat-spaces/{spaceId}/tasks`
+    public static func listChatSpaceTasks(spaceId: Swift.String) -> APIRequest<ListChatSpaceTasksResponse> {
+        return APIRequest(
+            method: "GET", template: "/chat-spaces/{spaceId}/tasks",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/tasks",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Add a lightweight task to a space
+    ///
+    /// `POST /chat-spaces/{spaceId}/tasks`
+    public static func createChatSpaceTask(spaceId: Swift.String, body: NewChatSpaceTask) -> APIRequest<ChatSpaceTask> {
+        return APIRequest(
+            method: "POST", template: "/chat-spaces/{spaceId}/tasks",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/tasks",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Update a task in a space
+    ///
+    /// `PATCH /chat-spaces/{spaceId}/tasks/{taskId}`
+    public static func updateChatSpaceTask(spaceId: Swift.String, taskId: Swift.String, body: ChatSpaceTaskPatch) -> APIRequest<ChatSpaceTask> {
+        return APIRequest(
+            method: "PATCH", template: "/chat-spaces/{spaceId}/tasks/{taskId}",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/tasks/\(APIPath.escape(taskId))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Delete a task from a space
+    ///
+    /// `DELETE /chat-spaces/{spaceId}/tasks/{taskId}`
+    public static func deleteChatSpaceTask(spaceId: Swift.String, taskId: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/chat-spaces/{spaceId}/tasks/{taskId}",
+            path: "/api/v1/chat-spaces/\(APIPath.escape(spaceId))/tasks/\(APIPath.escape(taskId))",
             query: [], headers: [:], body: nil, decode: .empty
         )
     }

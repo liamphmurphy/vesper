@@ -388,9 +388,31 @@ func fenced(text string) string {
 	return fence + "text\n" + text + "\n" + fence + "\n"
 }
 
+// SpaceKnowledgeManifestEntry describes a live Knowledge folder or page linked to a space.
+type SpaceKnowledgeManifestEntry struct {
+	Kind            string
+	Path            string
+	PageCount       int
+	IsDefaultTarget bool
+	Pinned          bool
+	PinnedBody      string
+}
+
+// SpaceLiveContext carries live (non-snapshot) space links injected into chat prompts.
+type SpaceLiveContext struct {
+	Repos          []store.ChatSpaceRepository
+	KnowledgeLinks []SpaceKnowledgeManifestEntry
+}
+
 // SpaceSection is the "## Space" part of a chat turn's instructions: the
 // space's name, instructions, sources and memory. Empty outside a space.
 func SpaceSection(sp *store.ChatSpace, files []SpaceFile) string {
+	return SpaceSectionWithContext(sp, files, SpaceLiveContext{})
+}
+
+// SpaceSectionWithContext renders the "## Space" section including live linked
+// repositories and Knowledge folders/pages.
+func SpaceSectionWithContext(sp *store.ChatSpace, files []SpaceFile, live SpaceLiveContext) string {
 	if sp == nil {
 		return ""
 	}
@@ -405,6 +427,48 @@ func SpaceSection(sp *store.ChatSpace, files []SpaceFile) string {
 	if text := strings.TrimSpace(sp.Instructions); text != "" {
 		b.WriteString("### Space instructions\n\n")
 		b.WriteString(fenced(text) + "\n")
+	}
+	if len(live.Repos) > 0 {
+		b.WriteString("### Space repositories\n\n")
+		for _, r := range live.Repos {
+			if r.ReadOnly {
+				fmt.Fprintf(&b, "- `%s` (read-only reference: do not create branches or request pushes here)\n", r.RepoUrl)
+			} else {
+				fmt.Fprintf(&b, "- `%s`\n", r.RepoUrl)
+			}
+		}
+		b.WriteString("\n")
+	}
+	if len(live.KnowledgeLinks) > 0 {
+		b.WriteString("### Space Knowledge\n\nLive Knowledge linked to this space (read on demand with list_pages, search_knowledge, or read_page):\n")
+		var defaultFolder string
+		var pinned []SpaceKnowledgeManifestEntry
+		for _, k := range live.KnowledgeLinks {
+			if k.Kind == "folder" {
+				label := fmt.Sprintf("`%s/` (%d pages)", k.Path, k.PageCount)
+				if k.IsDefaultTarget {
+					defaultFolder = k.Path
+					label += " — default folder for new notes and promoted canvases"
+				}
+				fmt.Fprintf(&b, "- Folder %s\n", label)
+			} else {
+				label := fmt.Sprintf("`%s`", k.Path)
+				if k.Pinned {
+					label += " (pinned inline below)"
+					pinned = append(pinned, k)
+				}
+				fmt.Fprintf(&b, "- Page %s\n", label)
+			}
+		}
+		if defaultFolder != "" {
+			fmt.Fprintf(&b, "\nWhen creating new notes or filing captures for this space, place them under `%s/` unless the person specifies another folder.\n", defaultFolder)
+		}
+		for _, p := range pinned {
+			if body := strings.TrimSpace(p.PinnedBody); body != "" {
+				fmt.Fprintf(&b, "\n#### Pinned page: %s\n\n%s\n", p.Path, fenced(body))
+			}
+		}
+		b.WriteString("\n")
 	}
 	var inline, searched []SpaceFile
 	for _, f := range files {

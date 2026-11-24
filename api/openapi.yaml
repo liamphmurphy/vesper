@@ -4936,6 +4936,233 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chat-spaces/{spaceId}/repositories:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listChatSpaceRepositories
+      summary: Live Git repositories attached to a space
+      tags: [spaces]
+      responses:
+        "200":
+          description: Space repositories
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [repositories]
+                properties:
+                  repositories: { type: array, items: { $ref: "#/components/schemas/ChatSpaceRepository" } }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: addChatSpaceRepository
+      summary: Attach a Git repository to a space as live context
+      tags: [spaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewChatSpaceRepository" }
+      responses:
+        "201":
+          description: Attached repository
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSpaceRepository" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/repositories/{repoId}:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: repoId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: updateChatSpaceRepository
+      summary: Update a space repository attachment (e.g. read-only flag)
+      tags: [spaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatSpaceRepositoryPatch" }
+      responses:
+        "200":
+          description: Updated repository
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSpaceRepository" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteChatSpaceRepository
+      summary: Detach a Git repository from a space
+      tags: [spaces]
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/knowledge:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listChatSpaceKnowledgeLinks
+      summary: Live Knowledge folders and pages linked to a space
+      tags: [spaces]
+      responses:
+        "200":
+          description: Space knowledge links
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [links]
+                properties:
+                  links: { type: array, items: { $ref: "#/components/schemas/ChatSpaceKnowledgeLink" } }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: addChatSpaceKnowledgeLink
+      summary: Link a live Knowledge folder or page to a space
+      tags: [spaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewChatSpaceKnowledgeLink" }
+      responses:
+        "201":
+          description: Linked Knowledge folder or page
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSpaceKnowledgeLink" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/knowledge/{linkId}:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: linkId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: updateChatSpaceKnowledgeLink
+      summary: Update a Knowledge link on a space (default note target or pinned)
+      tags: [spaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatSpaceKnowledgeLinkPatch" }
+      responses:
+        "200":
+          description: Updated Knowledge link
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSpaceKnowledgeLink" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteChatSpaceKnowledgeLink
+      summary: Unlink a Knowledge folder or page from a space
+      tags: [spaces]
+      responses:
+        "204": { description: Removed }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/tasks:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listChatSpaceTasks
+      summary: Lightweight tasks in a space
+      tags: [spaces]
+      responses:
+        "200":
+          description: Space tasks
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [tasks]
+                properties:
+                  tasks: { type: array, items: { $ref: "#/components/schemas/ChatSpaceTask" } }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createChatSpaceTask
+      summary: Add a lightweight task to a space
+      tags: [spaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewChatSpaceTask" }
+      responses:
+        "201":
+          description: Created task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSpaceTask" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/tasks/{taskId}:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+      - { name: taskId, in: path, required: true, schema: { type: string, format: uuid } }
+    patch:
+      operationId: updateChatSpaceTask
+      summary: Update a task in a space
+      tags: [spaces]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatSpaceTaskPatch" }
+      responses:
+        "200":
+          description: Updated task
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSpaceTask" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteChatSpaceTask
+      summary: Delete a task from a space
+      tags: [spaces]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chat-spaces/{spaceId}/branches:
+    parameters:
+      - { name: spaceId, in: path, required: true, schema: { type: string, format: uuid } }
+    get:
+      operationId: listChatSpaceBranches
+      summary: Active branches and pull requests across a space's chats
+      tags: [spaces]
+      responses:
+        "200":
+          description: Space branches and PRs
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [branches]
+                properties:
+                  branches: { type: array, items: { $ref: "#/components/schemas/ChatSpaceBranch" } }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /canvases:
     get:
       operationId: listMyCanvases
@@ -7359,6 +7586,104 @@ components:
       type: string
       enum: [green, amber, red, blue, violet, pink, teal, orange]
       x-enum-varnames: [SpaceGreen, SpaceAmber, SpaceRed, SpaceBlue, SpaceViolet, SpacePink, SpaceTeal, SpaceOrange]
+    ChatSpacePersonaRef:
+      type: object
+      required: [id, name, color]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        color: { type: string }
+        avatar_url: { type: string }
+    ChatSpaceRepository:
+      type: object
+      required: [id, repo_url, read_only, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        repo_url: { type: string }
+        read_only: { type: boolean }
+        created_at: { type: string, format: date-time }
+    NewChatSpaceRepository:
+      type: object
+      required: [repo_url]
+      properties:
+        repo_url: { type: string, minLength: 1 }
+        read_only: { type: boolean, default: false }
+    ChatSpaceRepositoryPatch:
+      type: object
+      properties:
+        read_only: { type: boolean }
+    ChatSpaceKnowledgeLinkKind:
+      type: string
+      enum: [folder, page]
+      x-enum-varnames: [SpaceKnowledgeFolder, SpaceKnowledgePage]
+    ChatSpaceKnowledgeLink:
+      type: object
+      required: [id, kind, path, is_default_target, pinned, page_count, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        kind: { $ref: "#/components/schemas/ChatSpaceKnowledgeLinkKind" }
+        path: { type: string }
+        is_default_target: { type: boolean }
+        pinned: { type: boolean }
+        page_count: { type: integer }
+        created_at: { type: string, format: date-time }
+    NewChatSpaceKnowledgeLink:
+      type: object
+      required: [kind, path]
+      properties:
+        kind: { $ref: "#/components/schemas/ChatSpaceKnowledgeLinkKind" }
+        path: { type: string, minLength: 1, maxLength: 500 }
+        is_default_target: { type: boolean, default: false }
+        pinned: { type: boolean, default: false }
+    ChatSpaceKnowledgeLinkPatch:
+      type: object
+      properties:
+        is_default_target: { type: boolean }
+        pinned: { type: boolean }
+    ChatSpaceTask:
+      type: object
+      required: [id, space_id, title, notes, done, position, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        space_id: { type: string, format: uuid }
+        title: { type: string }
+        notes: { type: string }
+        done: { type: boolean }
+        chat_id: { type: string, format: uuid }
+        chat_title: { type: string }
+        position: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    NewChatSpaceTask:
+      type: object
+      required: [title]
+      properties:
+        title: { type: string, minLength: 1, maxLength: 300 }
+        notes: { type: string, maxLength: 4000 }
+    ChatSpaceTaskPatch:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 300 }
+        notes: { type: string, maxLength: 4000 }
+        done: { type: boolean }
+        chat_id: { type: string, format: uuid }
+        clear_chat: { type: boolean }
+        position: { type: integer }
+    ChatSpaceBranch:
+      type: object
+      required: [chat_id, chat_title, repo_url, branch, dirty, live, updated_at]
+      properties:
+        chat_id: { type: string, format: uuid }
+        chat_title: { type: string }
+        repo_url: { type: string }
+        branch: { type: string }
+        dirty: { type: boolean }
+        live: { type: boolean }
+        pr_url: { type: string }
+        pr_number: { type: integer }
+        pr_title: { type: string }
+        push_state: { type: string }
+        updated_at: { type: string, format: date-time }
     ChatSpace:
       type: object
       required: [id, name, description, color, instructions, connector_ids, space_memory, chat_count, source_count, memory_count, inline_tokens, created_at, updated_at]
@@ -7369,6 +7694,7 @@ components:
         color: { $ref: "#/components/schemas/ChatSpaceColor" }
         instructions: { type: string, description: "Added to every chat in the space, below the persona" }
         persona_id: { type: string, format: uuid, description: "Persona new chats start with; absent: the default persona" }
+        persona: { $ref: "#/components/schemas/ChatSpacePersonaRef" }
         project: { type: string, description: "Key new chats here file tickets under: the space's own work, or another space's when this one doesn't track work; absent: none" }
         work: { $ref: "#/components/schemas/SpaceWork" }
         connector_ids: { type: array, items: { type: string, format: uuid }, description: "Connectors chats here may use; empty is none" }
@@ -7376,6 +7702,11 @@ components:
         chat_count: { type: integer, description: Active chats }
         source_count: { type: integer }
         memory_count: { type: integer, description: "Live entries in the space's memory" }
+        repo_count: { type: integer, description: "Live Git repositories attached to this space" }
+        knowledge_count: { type: integer, description: "Live Knowledge folders and pages linked to this space" }
+        open_task_count: { type: integer, description: "Open lightweight tasks in this space" }
+        repositories: { type: array, items: { $ref: "#/components/schemas/ChatSpaceRepository" } }
+        knowledge_links: { type: array, items: { $ref: "#/components/schemas/ChatSpaceKnowledgeLink" } }
         inline_tokens: { type: integer, description: "Estimated tokens of the sources every turn may read" }
         created_at: { type: string, format: date-time }
         updated_at: { type: string, format: date-time }
@@ -9687,6 +10018,9 @@ components:
         effort: { $ref: "#/components/schemas/ChatEffort" }
         persona_id: { type: string, format: uuid, description: "One of the caller's personas; defaults to their default persona (none when they have no default). Fixed for the chat's life." }
         repo_url: { type: string, description: "A GitHub URL, owner/repository or an unambiguous saved name for a coding persona. Saved repositories aid discovery and never restrict access." }
+        repo_urls: { type: array, items: { type: string }, description: "Explicit list of repositories to attach when starting a coding chat (e.g. toggled context chips in a space composer). Empty list attaches no repositories." }
+        no_repo: { type: boolean, description: "Start the chat without attaching any repository, even if the space or persona has defaults." }
+        task_id: { type: string, format: uuid, description: "Optional space task id to link the new chat to." }
         commit_email: { type: string, description: "One of the caller's emails for the chat's commits. Only with a repository; 422 otherwise." }
         hidden: { type: boolean, description: "Leave the chat out of chat lists, search and the dock; it stays reachable by id. For a chat that lives behind another screen, like the workflow editor. Fixed for the chat's life." }
         temporary: { type: boolean, description: "Start a temporary chat: its persona neither reads nor writes the caller's memory and can't search their past chats; the chat stays out of search and suggestions and is deleted after a day without messages. Fixed for the chat's life." }

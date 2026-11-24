@@ -474,6 +474,24 @@ type ChatSpace struct {
 	App          *string
 }
 
+type ChatSpaceKnowledgeLink struct {
+	ID              uuid.UUID
+	SpaceID         uuid.UUID
+	Kind            string
+	Path            string
+	IsDefaultTarget bool
+	Pinned          bool
+	CreatedAt       time.Time
+}
+
+type ChatSpaceRepository struct {
+	ID        uuid.UUID
+	SpaceID   uuid.UUID
+	RepoUrl   string
+	ReadOnly  bool
+	CreatedAt time.Time
+}
+
 type ChatSpaceSource struct {
 	ID            uuid.UUID
 	SpaceID       uuid.UUID
@@ -489,6 +507,18 @@ type ChatSpaceSource struct {
 	CreatedAt     time.Time
 	ResearchJobID *uuid.UUID
 	ChatID        *uuid.UUID
+}
+
+type ChatSpaceTask struct {
+	ID        uuid.UUID
+	SpaceID   uuid.UUID
+	Title     string
+	Notes     string
+	Done      bool
+	ChatID    *uuid.UUID
+	Position  int32
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 type ChatSteer struct {

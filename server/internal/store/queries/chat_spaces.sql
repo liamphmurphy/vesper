@@ -57,12 +57,151 @@ WITH d AS (
 SELECT s.blob_key::text FROM chat_space_sources s JOIN d ON d.id = s.space_id WHERE s.blob_key IS NOT NULL;
 
 -- name: ChatSpaceStats :many
--- Per space: active chats, sources and live memories.
+-- Per space: active chats, sources, live memories, repos, knowledge links and open tasks.
 SELECT s.id,
   (SELECT count(*) FROM chat_sessions c WHERE c.space_id = s.id AND NOT c.archived AND NOT c.hidden)::int AS chat_count,
   (SELECT count(*) FROM chat_space_sources x WHERE x.space_id = s.id)::int AS source_count,
-  (SELECT count(*) FROM memories m WHERE m.space_id = s.id AND m.superseded_by IS NULL)::int AS memory_count
+  (SELECT count(*) FROM memories m WHERE m.space_id = s.id AND m.superseded_by IS NULL)::int AS memory_count,
+  (SELECT count(*) FROM chat_space_repositories r WHERE r.space_id = s.id)::int AS repo_count,
+  (SELECT count(*) FROM chat_space_knowledge_links k WHERE k.space_id = s.id)::int AS knowledge_count,
+  (SELECT count(*) FROM chat_space_tasks t WHERE t.space_id = s.id AND NOT t.done)::int AS open_task_count
 FROM chat_spaces s WHERE s.id = ANY(@ids::uuid[]);
+
+-- name: ListChatSpaceRepositories :many
+SELECT * FROM chat_space_repositories WHERE space_id = @space_id ORDER BY created_at, id;
+
+-- name: ListChatSpaceRepositoriesBySpaceIDs :many
+SELECT * FROM chat_space_repositories WHERE space_id = ANY(@space_ids::uuid[]) ORDER BY space_id, created_at, id;
+
+-- name: AddChatSpaceRepository :one
+INSERT INTO chat_space_repositories (space_id, repo_url, read_only)
+VALUES (@space_id, @repo_url, @read_only)
+RETURNING *;
+
+-- name: UpdateChatSpaceRepository :one
+UPDATE chat_space_repositories
+SET read_only = coalesce(sqlc.narg(read_only), read_only)
+WHERE id = @id AND space_id = @space_id
+RETURNING *;
+
+-- name: DeleteChatSpaceRepository :one
+DELETE FROM chat_space_repositories WHERE id = @id AND space_id = @space_id RETURNING *;
+
+-- name: ListChatSpaceKnowledgeLinks :many
+SELECT * FROM chat_space_knowledge_links WHERE space_id = @space_id ORDER BY created_at, id;
+
+-- name: ListChatSpaceKnowledgeLinksBySpaceIDs :many
+SELECT * FROM chat_space_knowledge_links WHERE space_id = ANY(@space_ids::uuid[]) ORDER BY space_id, created_at, id;
+
+-- name: AddChatSpaceKnowledgeLink :one
+INSERT INTO chat_space_knowledge_links (space_id, kind, path, is_default_target, pinned)
+VALUES (@space_id, @kind, @path, @is_default_target, @pinned)
+RETURNING *;
+
+-- name: ClearSpaceDefaultKnowledgeTarget :exec
+UPDATE chat_space_knowledge_links
+SET is_default_target = false
+WHERE space_id = @space_id AND is_default_target = true;
+
+-- name: UpdateChatSpaceKnowledgeLink :one
+UPDATE chat_space_knowledge_links
+SET is_default_target = coalesce(sqlc.narg(is_default_target), is_default_target),
+    pinned = coalesce(sqlc.narg(pinned), pinned)
+WHERE id = @id AND space_id = @space_id
+RETURNING *;
+
+-- name: DeleteChatSpaceKnowledgeLink :one
+DELETE FROM chat_space_knowledge_links WHERE id = @id AND space_id = @space_id RETURNING *;
+
+-- name: RenameSpaceKnowledgeLinksFolder :exec
+UPDATE chat_space_knowledge_links l
+SET path = CASE
+  WHEN l.path = @from_path::text THEN @to_path::text
+  ELSE @to_path::text || substring(l.path FROM length(@from_path::text) + 1)
+END
+FROM chat_spaces s
+WHERE l.space_id = s.id
+  AND s.workspace_id = @workspace_id
+  AND s.user_id = @user_id
+  AND (l.path = @from_path::text OR l.path LIKE @from_path::text || '/%');
+
+-- name: RenameSpaceKnowledgeLinksPage :exec
+UPDATE chat_space_knowledge_links l
+SET path = @to_path::text
+FROM chat_spaces s
+WHERE l.space_id = s.id
+  AND s.workspace_id = @workspace_id
+  AND s.user_id = @user_id
+  AND l.kind = 'page'
+  AND l.path = @from_path::text;
+
+-- name: CountNotesInFolderPrefix :one
+SELECT count(*)::int FROM artifacts a
+WHERE a.workspace_id = @workspace_id
+  AND a.type = 'note'
+  AND a.path IS NOT NULL
+  AND (a.owner_user_id IS NULL OR a.owner_user_id = @user_id)
+  AND (a.path = @folder::text OR a.path LIKE @folder::text || '/%');
+
+-- name: ListChatSpaceTasks :many
+SELECT t.*, c.title AS chat_title
+FROM chat_space_tasks t
+LEFT JOIN chat_sessions c ON c.id = t.chat_id
+WHERE t.space_id = @space_id
+ORDER BY t.done ASC, t.position ASC, t.created_at ASC, t.id ASC;
+
+-- name: GetChatSpaceTask :one
+SELECT t.*, c.title AS chat_title
+FROM chat_space_tasks t
+LEFT JOIN chat_sessions c ON c.id = t.chat_id
+WHERE t.id = @id AND t.space_id = @space_id;
+
+-- name: CreateChatSpaceTask :one
+INSERT INTO chat_space_tasks (space_id, title, notes, position)
+VALUES (
+  @space_id,
+  @title,
+  @notes,
+  COALESCE((SELECT max(position) + 1 FROM chat_space_tasks WHERE space_id = @space_id), 0)
+)
+RETURNING *;
+
+-- name: UpdateChatSpaceTask :one
+UPDATE chat_space_tasks
+SET title = coalesce(sqlc.narg(title), title),
+    notes = coalesce(sqlc.narg(notes), notes),
+    done = coalesce(sqlc.narg(done), done),
+    chat_id = CASE WHEN @clear_chat::bool THEN NULL ELSE coalesce(sqlc.narg(chat_id), chat_id) END,
+    position = coalesce(sqlc.narg(position), position),
+    updated_at = now()
+WHERE id = @id AND space_id = @space_id
+RETURNING *;
+
+-- name: LinkChatSpaceTaskChat :exec
+UPDATE chat_space_tasks
+SET chat_id = @chat_id, updated_at = now()
+WHERE id = @id AND space_id = @space_id;
+
+-- name: DeleteChatSpaceTask :one
+DELETE FROM chat_space_tasks WHERE id = @id AND space_id = @space_id RETURNING *;
+
+-- name: ListChatSpacePushRequests :many
+SELECT pr.id, pr.chat_id, c.title AS chat_title, pr.repo_url, pr.branch, pr.title AS pr_title,
+       pr.state, pr.pr_url, pr.pr_number, pr.created_at, pr.decided_at
+FROM push_requests pr
+JOIN chat_sessions c ON c.id = pr.chat_id
+WHERE c.space_id = @space_id AND c.workspace_id = @workspace_id AND c.created_by = @user_id AND NOT c.hidden
+ORDER BY pr.created_at DESC
+LIMIT 50;
+
+-- name: ListChatSpaceCodeReviews :many
+SELECT cr.chat_id, c.title AS chat_title, cr.repo_url, cr.branch, cr.dirty, cr.live, cr.updated_at
+FROM chat_code_reviews cr
+JOIN chat_sessions c ON c.id = cr.chat_id
+WHERE c.space_id = @space_id AND c.workspace_id = @workspace_id AND c.created_by = @user_id AND NOT c.hidden
+  AND cr.branch IS NOT NULL AND cr.branch <> ''
+ORDER BY cr.updated_at DESC
+LIMIT 50;
 
 -- name: CreateChatSpaceSource :one
 INSERT INTO chat_space_sources (space_id, kind, title, url, body, filename, content_type, size_bytes, blob_key, tokens)

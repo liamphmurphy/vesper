@@ -828,7 +828,7 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 		if err != nil {
 			return nil, nil, "Could not load the conversation.", fmt.Errorf("chat session: %w", err)
 		}
-		space, spaceFiles, err := chatSpaceFiles(ctx, q, chat)
+		space, spaceFiles, spaceLive, err := chatSpaceContext(ctx, q, chat)
 		if err != nil {
 			return nil, nil, "Could not load the conversation's space.", fmt.Errorf("chat space: %w", err)
 		}
@@ -864,7 +864,7 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 		}
 		spec.Instructions += tutor
 		skills := agents.AssistantSkills(spec.Mode("repo:write") == agentdef.Allowed, buildWorkflows, svg)
-		return harness.ChatAgentsMDInSpace(spec, paths, c.project.Key, idx, persona, group, runs.SpaceSection(space, spaceFiles), chat.Temporary), skills, "", nil
+		return harness.ChatAgentsMDInSpace(spec, paths, c.project.Key, idx, persona, group, runs.SpaceSectionWithContext(space, spaceFiles, spaceLive), chat.Temporary), skills, "", nil
 	case runs.PurposeResearch, runs.PurposeWorkflow, runs.PurposeLearning:
 		return []byte(baseSpec.Instructions), nil, "", nil
 	case "planning":
@@ -929,6 +929,56 @@ func chatPersona(ctx context.Context, q *store.Queries, run store.Run) (*harness
 	}
 	return &harness.Persona{Name: p.Name, Tone: p.Tone, Instructions: p.CustomInstructions,
 		Memory: memory.PersonaMarkdown(entries, total)}, nil
+}
+
+// chatSpaceContext loads a chat's space, static sources, and live repo/Knowledge links.
+func chatSpaceContext(ctx context.Context, q *store.Queries, chat store.ChatSession) (*store.ChatSpace, []runs.SpaceFile, runs.SpaceLiveContext, error) {
+	sp, files, err := chatSpaceFiles(ctx, q, chat)
+	if err != nil || sp == nil {
+		return sp, files, runs.SpaceLiveContext{}, err
+	}
+	repos, err := q.ListChatSpaceRepositories(ctx, sp.ID)
+	if err != nil {
+		return nil, nil, runs.SpaceLiveContext{}, err
+	}
+	links, err := q.ListChatSpaceKnowledgeLinks(ctx, sp.ID)
+	if err != nil {
+		return nil, nil, runs.SpaceLiveContext{}, err
+	}
+	const maxPinnedChars = 12_000
+	entries := make([]runs.SpaceKnowledgeManifestEntry, 0, len(links))
+	viewer := chat.CreatedBy
+	for _, l := range links {
+		entry := runs.SpaceKnowledgeManifestEntry{
+			Kind:            l.Kind,
+			Path:            l.Path,
+			IsDefaultTarget: l.IsDefaultTarget,
+			Pinned:          l.Pinned,
+		}
+		if l.Kind == "folder" {
+			n, err := q.CountNotesInFolderPrefix(ctx, store.CountNotesInFolderPrefixParams{
+				WorkspaceID: chat.WorkspaceID,
+				UserID:      &viewer,
+				Folder:      l.Path,
+			})
+			if err != nil {
+				return nil, nil, runs.SpaceLiveContext{}, err
+			}
+			entry.PageCount = int(n)
+		} else if l.Pinned {
+			if a, err := q.GetNoteByPath(ctx, store.GetNoteByPathParams{WorkspaceID: chat.WorkspaceID, Viewer: &viewer, Path: l.Path}); err == nil && a.CurrentVersionID != nil {
+				if v, err := q.GetArtifactVersion(ctx, store.GetArtifactVersionParams{ID: *a.CurrentVersionID, ArtifactID: a.ID, WorkspaceID: chat.WorkspaceID, Viewer: &viewer}); err == nil && v.BodyMd != nil {
+					body := strings.TrimSpace(*v.BodyMd)
+					if len(body) > maxPinnedChars {
+						body = body[:maxPinnedChars] + "\n…(truncated; use read_page for the rest)"
+					}
+					entry.PinnedBody = body
+				}
+			}
+		}
+		entries = append(entries, entry)
+	}
+	return sp, files, runs.SpaceLiveContext{Repos: repos, KnowledgeLinks: entries}, nil
 }
 
 // chatSpaceFiles is the chat's space (nil outside one) and its sources laid

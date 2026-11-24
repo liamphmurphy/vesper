@@ -585,6 +585,16 @@ func renameNote(ctx context.Context, q *store.Queries, ws, id uuid.UUID, newPath
 	if err != nil {
 		return a, err
 	}
+	if viewer := pageview.From(ctx).UserID; viewer != nil && cur.Path != nil {
+		if err := q.RenameSpaceKnowledgeLinksPage(ctx, store.RenameSpaceKnowledgeLinksPageParams{
+			WorkspaceID: ws,
+			UserID:      *viewer,
+			FromPath:    *cur.Path,
+			ToPath:      p,
+		}); err != nil {
+			return a, err
+		}
+	}
 	return a, links.ResolvePending(ctx, q, ws)
 }
 

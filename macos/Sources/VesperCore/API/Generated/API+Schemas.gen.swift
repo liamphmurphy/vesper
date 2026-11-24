@@ -5333,13 +5333,22 @@ extension API {
         public var inlineTokens: Swift.Int
         /// Added to every chat in the space, below the persona
         public var instructions: Swift.String
+        /// Live Knowledge folders and pages linked to this space
+        public var knowledgeCount: Swift.Int?
+        public var knowledgeLinks: [ChatSpaceKnowledgeLink]?
         /// Live entries in the space's memory
         public var memoryCount: Swift.Int
         public var name: Swift.String
+        /// Open lightweight tasks in this space
+        public var openTaskCount: Swift.Int?
+        public var persona: ChatSpacePersonaRef?
         /// Persona new chats start with; absent: the default persona
         public var personaId: Swift.String?
         /// Key new chats here file tickets under: the space's own work, or another space's when this one doesn't track work; absent: none
         public var project: Swift.String?
+        /// Live Git repositories attached to this space
+        public var repoCount: Swift.Int?
+        public var repositories: [ChatSpaceRepository]?
         public var sourceCount: Swift.Int
         /// What the assistant saves about the person in this space stays here
         public var spaceMemory: Swift.Bool
@@ -5356,10 +5365,16 @@ extension API {
             id: Swift.String,
             inlineTokens: Swift.Int,
             instructions: Swift.String,
+            knowledgeCount: Swift.Int? = nil,
+            knowledgeLinks: [ChatSpaceKnowledgeLink]? = nil,
             memoryCount: Swift.Int,
             name: Swift.String,
+            openTaskCount: Swift.Int? = nil,
+            persona: ChatSpacePersonaRef? = nil,
             personaId: Swift.String? = nil,
             project: Swift.String? = nil,
+            repoCount: Swift.Int? = nil,
+            repositories: [ChatSpaceRepository]? = nil,
             sourceCount: Swift.Int,
             spaceMemory: Swift.Bool,
             updatedAt: Swift.String,
@@ -5373,10 +5388,16 @@ extension API {
             self.id = id
             self.inlineTokens = inlineTokens
             self.instructions = instructions
+            self.knowledgeCount = knowledgeCount
+            self.knowledgeLinks = knowledgeLinks
             self.memoryCount = memoryCount
             self.name = name
+            self.openTaskCount = openTaskCount
+            self.persona = persona
             self.personaId = personaId
             self.project = project
+            self.repoCount = repoCount
+            self.repositories = repositories
             self.sourceCount = sourceCount
             self.spaceMemory = spaceMemory
             self.updatedAt = updatedAt
@@ -5392,10 +5413,16 @@ extension API {
             case id
             case inlineTokens = "inline_tokens"
             case instructions
+            case knowledgeCount = "knowledge_count"
+            case knowledgeLinks = "knowledge_links"
             case memoryCount = "memory_count"
             case name
+            case openTaskCount = "open_task_count"
+            case persona
             case personaId = "persona_id"
             case project
+            case repoCount = "repo_count"
+            case repositories
             case sourceCount = "source_count"
             case spaceMemory = "space_memory"
             case updatedAt = "updated_at"
@@ -5412,10 +5439,16 @@ extension API {
             self.id = try c.decode(Swift.String.self, forKey: .id)
             self.inlineTokens = try c.decode(Swift.Int.self, forKey: .inlineTokens)
             self.instructions = try c.decode(Swift.String.self, forKey: .instructions)
+            self.knowledgeCount = try c.decodeIfPresent(Swift.Int.self, forKey: .knowledgeCount)
+            self.knowledgeLinks = try c.decodeIfPresent([ChatSpaceKnowledgeLink].self, forKey: .knowledgeLinks)
             self.memoryCount = try c.decode(Swift.Int.self, forKey: .memoryCount)
             self.name = try c.decode(Swift.String.self, forKey: .name)
+            self.openTaskCount = try c.decodeIfPresent(Swift.Int.self, forKey: .openTaskCount)
+            self.persona = try c.decodeIfPresent(ChatSpacePersonaRef.self, forKey: .persona)
             self.personaId = try c.decodeIfPresent(Swift.String.self, forKey: .personaId)
             self.project = try c.decodeIfPresent(Swift.String.self, forKey: .project)
+            self.repoCount = try c.decodeIfPresent(Swift.Int.self, forKey: .repoCount)
+            self.repositories = try c.decodeIfPresent([ChatSpaceRepository].self, forKey: .repositories)
             self.sourceCount = try c.decode(Swift.Int.self, forKey: .sourceCount)
             self.spaceMemory = try c.decode(Swift.Bool.self, forKey: .spaceMemory)
             self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
@@ -5432,14 +5465,104 @@ extension API {
             try c.encode(id, forKey: .id)
             try c.encode(inlineTokens, forKey: .inlineTokens)
             try c.encode(instructions, forKey: .instructions)
+            try c.encodeIfPresent(knowledgeCount, forKey: .knowledgeCount)
+            try c.encodeIfPresent(knowledgeLinks, forKey: .knowledgeLinks)
             try c.encode(memoryCount, forKey: .memoryCount)
             try c.encode(name, forKey: .name)
+            try c.encodeIfPresent(openTaskCount, forKey: .openTaskCount)
+            try c.encodeIfPresent(persona, forKey: .persona)
             try c.encodeIfPresent(personaId, forKey: .personaId)
             try c.encodeIfPresent(project, forKey: .project)
+            try c.encodeIfPresent(repoCount, forKey: .repoCount)
+            try c.encodeIfPresent(repositories, forKey: .repositories)
             try c.encode(sourceCount, forKey: .sourceCount)
             try c.encode(spaceMemory, forKey: .spaceMemory)
             try c.encode(updatedAt, forKey: .updatedAt)
             try c.encodeIfPresent(work, forKey: .work)
+        }
+    }
+
+    public struct ChatSpaceBranch: Codable, Sendable, Equatable {
+        public var branch: Swift.String
+        public var chatId: Swift.String
+        public var chatTitle: Swift.String
+        public var dirty: Swift.Bool
+        public var live: Swift.Bool
+        public var prNumber: Swift.Int?
+        public var prTitle: Swift.String?
+        public var prUrl: Swift.String?
+        public var pushState: Swift.String?
+        public var repoUrl: Swift.String
+        public var updatedAt: Swift.String
+
+        public init(
+            branch: Swift.String,
+            chatId: Swift.String,
+            chatTitle: Swift.String,
+            dirty: Swift.Bool,
+            live: Swift.Bool,
+            prNumber: Swift.Int? = nil,
+            prTitle: Swift.String? = nil,
+            prUrl: Swift.String? = nil,
+            pushState: Swift.String? = nil,
+            repoUrl: Swift.String,
+            updatedAt: Swift.String
+        ) {
+            self.branch = branch
+            self.chatId = chatId
+            self.chatTitle = chatTitle
+            self.dirty = dirty
+            self.live = live
+            self.prNumber = prNumber
+            self.prTitle = prTitle
+            self.prUrl = prUrl
+            self.pushState = pushState
+            self.repoUrl = repoUrl
+            self.updatedAt = updatedAt
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case branch
+            case chatId = "chat_id"
+            case chatTitle = "chat_title"
+            case dirty
+            case live
+            case prNumber = "pr_number"
+            case prTitle = "pr_title"
+            case prUrl = "pr_url"
+            case pushState = "push_state"
+            case repoUrl = "repo_url"
+            case updatedAt = "updated_at"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.branch = try c.decode(Swift.String.self, forKey: .branch)
+            self.chatId = try c.decode(Swift.String.self, forKey: .chatId)
+            self.chatTitle = try c.decode(Swift.String.self, forKey: .chatTitle)
+            self.dirty = try c.decode(Swift.Bool.self, forKey: .dirty)
+            self.live = try c.decode(Swift.Bool.self, forKey: .live)
+            self.prNumber = try c.decodeIfPresent(Swift.Int.self, forKey: .prNumber)
+            self.prTitle = try c.decodeIfPresent(Swift.String.self, forKey: .prTitle)
+            self.prUrl = try c.decodeIfPresent(Swift.String.self, forKey: .prUrl)
+            self.pushState = try c.decodeIfPresent(Swift.String.self, forKey: .pushState)
+            self.repoUrl = try c.decode(Swift.String.self, forKey: .repoUrl)
+            self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(branch, forKey: .branch)
+            try c.encode(chatId, forKey: .chatId)
+            try c.encode(chatTitle, forKey: .chatTitle)
+            try c.encode(dirty, forKey: .dirty)
+            try c.encode(live, forKey: .live)
+            try c.encodeIfPresent(prNumber, forKey: .prNumber)
+            try c.encodeIfPresent(prTitle, forKey: .prTitle)
+            try c.encodeIfPresent(prUrl, forKey: .prUrl)
+            try c.encodeIfPresent(pushState, forKey: .pushState)
+            try c.encode(repoUrl, forKey: .repoUrl)
+            try c.encode(updatedAt, forKey: .updatedAt)
         }
     }
 
@@ -5455,6 +5578,104 @@ extension API {
         public static let teal = ChatSpaceColor(rawValue: "teal")
         public static let orange = ChatSpaceColor(rawValue: "orange")
         public static let allKnown: [ChatSpaceColor] = [green, amber, red, blue, violet, pink, teal, orange]
+    }
+
+    public struct ChatSpaceKnowledgeLink: Codable, Sendable, Equatable {
+        public var createdAt: Swift.String
+        public var id: Swift.String
+        public var isDefaultTarget: Swift.Bool
+        public var kind: ChatSpaceKnowledgeLinkKind
+        public var pageCount: Swift.Int
+        public var path: Swift.String
+        public var pinned: Swift.Bool
+
+        public init(
+            createdAt: Swift.String,
+            id: Swift.String,
+            isDefaultTarget: Swift.Bool,
+            kind: ChatSpaceKnowledgeLinkKind,
+            pageCount: Swift.Int,
+            path: Swift.String,
+            pinned: Swift.Bool
+        ) {
+            self.createdAt = createdAt
+            self.id = id
+            self.isDefaultTarget = isDefaultTarget
+            self.kind = kind
+            self.pageCount = pageCount
+            self.path = path
+            self.pinned = pinned
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case createdAt = "created_at"
+            case id
+            case isDefaultTarget = "is_default_target"
+            case kind
+            case pageCount = "page_count"
+            case path
+            case pinned
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.isDefaultTarget = try c.decode(Swift.Bool.self, forKey: .isDefaultTarget)
+            self.kind = try c.decode(ChatSpaceKnowledgeLinkKind.self, forKey: .kind)
+            self.pageCount = try c.decode(Swift.Int.self, forKey: .pageCount)
+            self.path = try c.decode(Swift.String.self, forKey: .path)
+            self.pinned = try c.decode(Swift.Bool.self, forKey: .pinned)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(id, forKey: .id)
+            try c.encode(isDefaultTarget, forKey: .isDefaultTarget)
+            try c.encode(kind, forKey: .kind)
+            try c.encode(pageCount, forKey: .pageCount)
+            try c.encode(path, forKey: .path)
+            try c.encode(pinned, forKey: .pinned)
+        }
+    }
+
+    public struct ChatSpaceKnowledgeLinkKind: APIStringEnum {
+        public let rawValue: Swift.String
+        public init(rawValue: Swift.String) { self.rawValue = rawValue }
+        public static let folder = ChatSpaceKnowledgeLinkKind(rawValue: "folder")
+        public static let page = ChatSpaceKnowledgeLinkKind(rawValue: "page")
+        public static let allKnown: [ChatSpaceKnowledgeLinkKind] = [folder, page]
+    }
+
+    public struct ChatSpaceKnowledgeLinkPatch: Codable, Sendable, Equatable {
+        public var isDefaultTarget: Swift.Bool?
+        public var pinned: Swift.Bool?
+
+        public init(
+            isDefaultTarget: Swift.Bool? = nil,
+            pinned: Swift.Bool? = nil
+        ) {
+            self.isDefaultTarget = isDefaultTarget
+            self.pinned = pinned
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case isDefaultTarget = "is_default_target"
+            case pinned
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.isDefaultTarget = try c.decodeIfPresent(Swift.Bool.self, forKey: .isDefaultTarget)
+            self.pinned = try c.decodeIfPresent(Swift.Bool.self, forKey: .pinned)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(isDefaultTarget, forKey: .isDefaultTarget)
+            try c.encodeIfPresent(pinned, forKey: .pinned)
+        }
     }
 
     public struct ChatSpacePatch: Codable, Sendable, Equatable {
@@ -5525,6 +5746,48 @@ extension API {
         }
     }
 
+    public struct ChatSpacePersonaRef: Codable, Sendable, Equatable {
+        public var avatarUrl: Swift.String?
+        public var color: Swift.String
+        public var id: Swift.String
+        public var name: Swift.String
+
+        public init(
+            avatarUrl: Swift.String? = nil,
+            color: Swift.String,
+            id: Swift.String,
+            name: Swift.String
+        ) {
+            self.avatarUrl = avatarUrl
+            self.color = color
+            self.id = id
+            self.name = name
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case avatarUrl = "avatar_url"
+            case color
+            case id
+            case name
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.avatarUrl = try c.decodeIfPresent(Swift.String.self, forKey: .avatarUrl)
+            self.color = try c.decode(Swift.String.self, forKey: .color)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.name = try c.decode(Swift.String.self, forKey: .name)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(avatarUrl, forKey: .avatarUrl)
+            try c.encode(color, forKey: .color)
+            try c.encode(id, forKey: .id)
+            try c.encode(name, forKey: .name)
+        }
+    }
+
     /// The space a chat is in, as the chat shows it
     public struct ChatSpaceRef: Codable, Sendable, Equatable {
         public var color: ChatSpaceColor
@@ -5577,6 +5840,72 @@ extension API {
             try c.encode(name, forKey: .name)
             try c.encode(sourceCount, forKey: .sourceCount)
             try c.encode(spaceMemory, forKey: .spaceMemory)
+        }
+    }
+
+    public struct ChatSpaceRepository: Codable, Sendable, Equatable {
+        public var createdAt: Swift.String
+        public var id: Swift.String
+        public var readOnly: Swift.Bool
+        public var repoUrl: Swift.String
+
+        public init(
+            createdAt: Swift.String,
+            id: Swift.String,
+            readOnly: Swift.Bool,
+            repoUrl: Swift.String
+        ) {
+            self.createdAt = createdAt
+            self.id = id
+            self.readOnly = readOnly
+            self.repoUrl = repoUrl
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case createdAt = "created_at"
+            case id
+            case readOnly = "read_only"
+            case repoUrl = "repo_url"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.readOnly = try c.decode(Swift.Bool.self, forKey: .readOnly)
+            self.repoUrl = try c.decode(Swift.String.self, forKey: .repoUrl)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(id, forKey: .id)
+            try c.encode(readOnly, forKey: .readOnly)
+            try c.encode(repoUrl, forKey: .repoUrl)
+        }
+    }
+
+    public struct ChatSpaceRepositoryPatch: Codable, Sendable, Equatable {
+        public var readOnly: Swift.Bool?
+
+        public init(
+            readOnly: Swift.Bool? = nil
+        ) {
+            self.readOnly = readOnly
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case readOnly = "read_only"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.readOnly = try c.decodeIfPresent(Swift.Bool.self, forKey: .readOnly)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(readOnly, forKey: .readOnly)
         }
     }
 
@@ -5725,6 +6054,138 @@ extension API {
             try c.encode(inlineBudget, forKey: .inlineBudget)
             try c.encode(inlineTokens, forKey: .inlineTokens)
             try c.encode(sources, forKey: .sources)
+        }
+    }
+
+    public struct ChatSpaceTask: Codable, Sendable, Equatable {
+        public var chatId: Swift.String?
+        public var chatTitle: Swift.String?
+        public var createdAt: Swift.String
+        public var done: Swift.Bool
+        public var id: Swift.String
+        public var notes: Swift.String
+        public var position: Swift.Int
+        public var spaceId: Swift.String
+        public var title: Swift.String
+        public var updatedAt: Swift.String
+
+        public init(
+            chatId: Swift.String? = nil,
+            chatTitle: Swift.String? = nil,
+            createdAt: Swift.String,
+            done: Swift.Bool,
+            id: Swift.String,
+            notes: Swift.String,
+            position: Swift.Int,
+            spaceId: Swift.String,
+            title: Swift.String,
+            updatedAt: Swift.String
+        ) {
+            self.chatId = chatId
+            self.chatTitle = chatTitle
+            self.createdAt = createdAt
+            self.done = done
+            self.id = id
+            self.notes = notes
+            self.position = position
+            self.spaceId = spaceId
+            self.title = title
+            self.updatedAt = updatedAt
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case chatId = "chat_id"
+            case chatTitle = "chat_title"
+            case createdAt = "created_at"
+            case done
+            case id
+            case notes
+            case position
+            case spaceId = "space_id"
+            case title
+            case updatedAt = "updated_at"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.chatId = try c.decodeIfPresent(Swift.String.self, forKey: .chatId)
+            self.chatTitle = try c.decodeIfPresent(Swift.String.self, forKey: .chatTitle)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.done = try c.decode(Swift.Bool.self, forKey: .done)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.notes = try c.decode(Swift.String.self, forKey: .notes)
+            self.position = try c.decode(Swift.Int.self, forKey: .position)
+            self.spaceId = try c.decode(Swift.String.self, forKey: .spaceId)
+            self.title = try c.decode(Swift.String.self, forKey: .title)
+            self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(chatId, forKey: .chatId)
+            try c.encodeIfPresent(chatTitle, forKey: .chatTitle)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(done, forKey: .done)
+            try c.encode(id, forKey: .id)
+            try c.encode(notes, forKey: .notes)
+            try c.encode(position, forKey: .position)
+            try c.encode(spaceId, forKey: .spaceId)
+            try c.encode(title, forKey: .title)
+            try c.encode(updatedAt, forKey: .updatedAt)
+        }
+    }
+
+    public struct ChatSpaceTaskPatch: Codable, Sendable, Equatable {
+        public var chatId: Swift.String?
+        public var clearChat: Swift.Bool?
+        public var done: Swift.Bool?
+        public var notes: Swift.String?
+        public var position: Swift.Int?
+        public var title: Swift.String?
+
+        public init(
+            chatId: Swift.String? = nil,
+            clearChat: Swift.Bool? = nil,
+            done: Swift.Bool? = nil,
+            notes: Swift.String? = nil,
+            position: Swift.Int? = nil,
+            title: Swift.String? = nil
+        ) {
+            self.chatId = chatId
+            self.clearChat = clearChat
+            self.done = done
+            self.notes = notes
+            self.position = position
+            self.title = title
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case chatId = "chat_id"
+            case clearChat = "clear_chat"
+            case done
+            case notes
+            case position
+            case title
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.chatId = try c.decodeIfPresent(Swift.String.self, forKey: .chatId)
+            self.clearChat = try c.decodeIfPresent(Swift.Bool.self, forKey: .clearChat)
+            self.done = try c.decodeIfPresent(Swift.Bool.self, forKey: .done)
+            self.notes = try c.decodeIfPresent(Swift.String.self, forKey: .notes)
+            self.position = try c.decodeIfPresent(Swift.Int.self, forKey: .position)
+            self.title = try c.decodeIfPresent(Swift.String.self, forKey: .title)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(chatId, forKey: .chatId)
+            try c.encodeIfPresent(clearChat, forKey: .clearChat)
+            try c.encodeIfPresent(done, forKey: .done)
+            try c.encodeIfPresent(notes, forKey: .notes)
+            try c.encodeIfPresent(position, forKey: .position)
+            try c.encodeIfPresent(title, forKey: .title)
         }
     }
 
@@ -15063,14 +15524,20 @@ extension API {
         public var message: NewChatMessage?
         /// Defaults to the harness's default model in GET /chat-models; auto routes the model per turn (see ChatSession.auto_model)
         public var model: Swift.String?
+        /// Start the chat without attaching any repository, even if the space or persona has defaults.
+        public var noRepo: Swift.Bool?
         /// One of the caller's personas; defaults to their default persona (none when they have no default). Fixed for the chat's life.
         public var personaId: Swift.String?
         /// Project to attach from the start; omit for a chat with no project
         public var project: Swift.String?
         /// A GitHub URL, owner/repository or an unambiguous saved name for a coding persona. Saved repositories aid discovery and never restrict access.
         public var repoUrl: Swift.String?
+        /// Explicit list of repositories to attach when starting a coding chat (e.g. toggled context chips in a space composer). Empty list attaches no repositories.
+        public var repoUrls: [Swift.String]?
         /// Start the chat in one of the caller's spaces. Its default persona, project and connectors apply unless persona_id or project is given. 422 for an unknown space.
         public var spaceId: Swift.String?
+        /// Optional space task id to link the new chat to.
+        public var taskId: Swift.String?
         /// Start a temporary chat: its persona neither reads nor writes the caller's memory and can't search their past chats; the chat stays out of search and suggestions and is deleted after a day without messages. Fixed for the chat's life.
         public var temporary: Swift.Bool?
         public var title: Swift.String?
@@ -15082,10 +15549,13 @@ extension API {
             hidden: Swift.Bool? = nil,
             message: NewChatMessage? = nil,
             model: Swift.String? = nil,
+            noRepo: Swift.Bool? = nil,
             personaId: Swift.String? = nil,
             project: Swift.String? = nil,
             repoUrl: Swift.String? = nil,
+            repoUrls: [Swift.String]? = nil,
             spaceId: Swift.String? = nil,
+            taskId: Swift.String? = nil,
             temporary: Swift.Bool? = nil,
             title: Swift.String? = nil
         ) {
@@ -15095,10 +15565,13 @@ extension API {
             self.hidden = hidden
             self.message = message
             self.model = model
+            self.noRepo = noRepo
             self.personaId = personaId
             self.project = project
             self.repoUrl = repoUrl
+            self.repoUrls = repoUrls
             self.spaceId = spaceId
+            self.taskId = taskId
             self.temporary = temporary
             self.title = title
         }
@@ -15110,10 +15583,13 @@ extension API {
             case hidden
             case message
             case model
+            case noRepo = "no_repo"
             case personaId = "persona_id"
             case project
             case repoUrl = "repo_url"
+            case repoUrls = "repo_urls"
             case spaceId = "space_id"
+            case taskId = "task_id"
             case temporary
             case title
         }
@@ -15126,10 +15602,13 @@ extension API {
             self.hidden = try c.decodeIfPresent(Swift.Bool.self, forKey: .hidden)
             self.message = try c.decodeIfPresent(NewChatMessage.self, forKey: .message)
             self.model = try c.decodeIfPresent(Swift.String.self, forKey: .model)
+            self.noRepo = try c.decodeIfPresent(Swift.Bool.self, forKey: .noRepo)
             self.personaId = try c.decodeIfPresent(Swift.String.self, forKey: .personaId)
             self.project = try c.decodeIfPresent(Swift.String.self, forKey: .project)
             self.repoUrl = try c.decodeIfPresent(Swift.String.self, forKey: .repoUrl)
+            self.repoUrls = try c.decodeIfPresent([Swift.String].self, forKey: .repoUrls)
             self.spaceId = try c.decodeIfPresent(Swift.String.self, forKey: .spaceId)
+            self.taskId = try c.decodeIfPresent(Swift.String.self, forKey: .taskId)
             self.temporary = try c.decodeIfPresent(Swift.Bool.self, forKey: .temporary)
             self.title = try c.decodeIfPresent(Swift.String.self, forKey: .title)
         }
@@ -15142,10 +15621,13 @@ extension API {
             try c.encodeIfPresent(hidden, forKey: .hidden)
             try c.encodeIfPresent(message, forKey: .message)
             try c.encodeIfPresent(model, forKey: .model)
+            try c.encodeIfPresent(noRepo, forKey: .noRepo)
             try c.encodeIfPresent(personaId, forKey: .personaId)
             try c.encodeIfPresent(project, forKey: .project)
             try c.encodeIfPresent(repoUrl, forKey: .repoUrl)
+            try c.encodeIfPresent(repoUrls, forKey: .repoUrls)
             try c.encodeIfPresent(spaceId, forKey: .spaceId)
+            try c.encodeIfPresent(taskId, forKey: .taskId)
             try c.encodeIfPresent(temporary, forKey: .temporary)
             try c.encodeIfPresent(title, forKey: .title)
         }
@@ -15376,6 +15858,78 @@ extension API {
         }
     }
 
+    public struct NewChatSpaceKnowledgeLink: Codable, Sendable, Equatable {
+        public var isDefaultTarget: Swift.Bool?
+        public var kind: ChatSpaceKnowledgeLinkKind
+        public var path: Swift.String
+        public var pinned: Swift.Bool?
+
+        public init(
+            isDefaultTarget: Swift.Bool? = nil,
+            kind: ChatSpaceKnowledgeLinkKind,
+            path: Swift.String,
+            pinned: Swift.Bool? = nil
+        ) {
+            self.isDefaultTarget = isDefaultTarget
+            self.kind = kind
+            self.path = path
+            self.pinned = pinned
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case isDefaultTarget = "is_default_target"
+            case kind
+            case path
+            case pinned
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.isDefaultTarget = try c.decodeIfPresent(Swift.Bool.self, forKey: .isDefaultTarget)
+            self.kind = try c.decode(ChatSpaceKnowledgeLinkKind.self, forKey: .kind)
+            self.path = try c.decode(Swift.String.self, forKey: .path)
+            self.pinned = try c.decodeIfPresent(Swift.Bool.self, forKey: .pinned)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(isDefaultTarget, forKey: .isDefaultTarget)
+            try c.encode(kind, forKey: .kind)
+            try c.encode(path, forKey: .path)
+            try c.encodeIfPresent(pinned, forKey: .pinned)
+        }
+    }
+
+    public struct NewChatSpaceRepository: Codable, Sendable, Equatable {
+        public var readOnly: Swift.Bool?
+        public var repoUrl: Swift.String
+
+        public init(
+            readOnly: Swift.Bool? = nil,
+            repoUrl: Swift.String
+        ) {
+            self.readOnly = readOnly
+            self.repoUrl = repoUrl
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case readOnly = "read_only"
+            case repoUrl = "repo_url"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.readOnly = try c.decodeIfPresent(Swift.Bool.self, forKey: .readOnly)
+            self.repoUrl = try c.decode(Swift.String.self, forKey: .repoUrl)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(readOnly, forKey: .readOnly)
+            try c.encode(repoUrl, forKey: .repoUrl)
+        }
+    }
+
     /// text needs text (and a title); website needs url; library needs
     /// item_id (an image, diagram or saved link); link needs item_id (a saved
     /// link); canvas needs canvas_id. title, when given, names the source.
@@ -15441,6 +15995,36 @@ extension API {
             try c.encodeIfPresent(text, forKey: .text)
             try c.encodeIfPresent(title, forKey: .title)
             try c.encodeIfPresent(url, forKey: .url)
+        }
+    }
+
+    public struct NewChatSpaceTask: Codable, Sendable, Equatable {
+        public var notes: Swift.String?
+        public var title: Swift.String
+
+        public init(
+            notes: Swift.String? = nil,
+            title: Swift.String
+        ) {
+            self.notes = notes
+            self.title = title
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case notes
+            case title
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.notes = try c.decodeIfPresent(Swift.String.self, forKey: .notes)
+            self.title = try c.decode(Swift.String.self, forKey: .title)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(notes, forKey: .notes)
+            try c.encode(title, forKey: .title)
         }
     }
 
@@ -25983,6 +26567,102 @@ extension API {
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(spaces, forKey: .spaces)
+        }
+    }
+
+    public struct ListChatSpaceBranchesResponse: Codable, Sendable, Equatable {
+        public var branches: [ChatSpaceBranch]
+
+        public init(
+            branches: [ChatSpaceBranch]
+        ) {
+            self.branches = branches
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case branches
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.branches = try c.decodeIfPresent([ChatSpaceBranch].self, forKey: .branches) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(branches, forKey: .branches)
+        }
+    }
+
+    public struct ListChatSpaceKnowledgeLinksResponse: Codable, Sendable, Equatable {
+        public var links: [ChatSpaceKnowledgeLink]
+
+        public init(
+            links: [ChatSpaceKnowledgeLink]
+        ) {
+            self.links = links
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case links
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.links = try c.decodeIfPresent([ChatSpaceKnowledgeLink].self, forKey: .links) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(links, forKey: .links)
+        }
+    }
+
+    public struct ListChatSpaceRepositoriesResponse: Codable, Sendable, Equatable {
+        public var repositories: [ChatSpaceRepository]
+
+        public init(
+            repositories: [ChatSpaceRepository]
+        ) {
+            self.repositories = repositories
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case repositories
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.repositories = try c.decodeIfPresent([ChatSpaceRepository].self, forKey: .repositories) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(repositories, forKey: .repositories)
+        }
+    }
+
+    public struct ListChatSpaceTasksResponse: Codable, Sendable, Equatable {
+        public var tasks: [ChatSpaceTask]
+
+        public init(
+            tasks: [ChatSpaceTask]
+        ) {
+            self.tasks = tasks
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case tasks
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.tasks = try c.decodeIfPresent([ChatSpaceTask].self, forKey: .tasks) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(tasks, forKey: .tasks)
         }
     }
 
