@@ -1,7 +1,7 @@
 "use client";
 
 import { useMemo } from "react";
-import { useMutation, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
+import { useMutation, useQueries, useQuery, useQueryClient, keepPreviousData } from "@tanstack/react-query";
 import {
   api,
   ApiError,
@@ -399,6 +399,38 @@ export function useUpdateRunnerSettings() {
     mutationFn: (body: Schemas["RunnerSettings"]) => unwrap(api.PUT("/runner/settings", { body })),
     onSuccess: (status) => qc.setQueryData(["runner"], status),
   });
+}
+
+const RUN_DONE = ["completed", "failed", "cancelled"];
+
+/**
+ * A run with its turns and events. SSE invalidates this query; polling is a
+ * fallback. Events are fetched incrementally with ?after=seq.
+ */
+function runLogOptions(qc: ReturnType<typeof useQueryClient>, id: string, enabled = true) {
+  return {
+    enabled: enabled && !!id,
+    queryKey: ["runs", id] as const,
+    queryFn: async () => {
+      const prev = qc.getQueryData<Schemas["RunDetail"]>(["runs", id]);
+      const after = prev?.events.at(-1)?.seq ?? 0;
+      const d = await unwrap(api.GET("/runs/{id}", { params: { path: { id }, query: { after } } }));
+      return prev ? { ...d, events: [...prev.events, ...d.events] } : d;
+    },
+    refetchInterval: (q: { state: { data?: Schemas["RunDetail"] } }) =>
+      q.state.data && RUN_DONE.includes(q.state.data.run.state) ? false as const : 2_000,
+  };
+}
+
+export function useRunLog(id: string, enabled = true) {
+  const qc = useQueryClient();
+  return useQuery(runLogOptions(qc, id, enabled));
+}
+
+/** Each delegated run has its own event cursor and live query. */
+export function useDelegatedRunLogs(runs: Schemas["Run"][]) {
+  const qc = useQueryClient();
+  return useQueries({ queries: runs.map((run) => runLogOptions(qc, run.id)) });
 }
 
 export function useControlRunById(id: string) {
