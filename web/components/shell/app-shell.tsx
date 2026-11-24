@@ -39,20 +39,6 @@ function useShortcuts() {
         window.dispatchEvent(new Event("la:shortcuts"));
         return;
       }
-      if (
-        (e.key === "c" || e.key === "C") &&
-        currentArea(window.location.pathname) === "work" &&
-        window.location.pathname !== "/tickets/new"
-      ) {
-        e.preventDefault();
-        // Keep the project in view as the composer's default.
-        const project = new URLSearchParams(window.location.search).get(
-          "project",
-        );
-        router.push(
-          `/tickets/new${project ? `?project=${encodeURIComponent(project)}` : ""}`,
-        );
-      }
     }
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);

@@ -131,7 +131,7 @@ export interface NavModel {
   selectedId?: string | null;
 }
 
-export type AreaId = "chat" | "work" | "knowledge" | "library" | "apps";
+export type AreaId = "chat" | "spaces" | "knowledge" | "library" | "apps";
 
 export interface ShellArea {
   id: AreaId;

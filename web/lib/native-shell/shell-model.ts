@@ -5,7 +5,7 @@ import type { Area } from "../navigator.ts";
 import type { AreaId, ShellApp, ShellArea, ShellModel, Tone } from "./protocol.ts";
 
 export interface AreaDef {
-  area: Exclude<Area, "apps" | "runs" | "tickets">;
+  area: Exclude<Area, "apps">;
   href: string;
   label: string;
   icon: string;
@@ -22,9 +22,8 @@ export interface ShellModelInput {
   tools: readonly { href: string; label: string; icon: string }[];
 }
 
-/** The protocol has one "work" area where the web has runs and tickets too. */
 export function protocolArea(area: Area | null): AreaId | null {
-  return area === "runs" || area === "tickets" ? "work" : area;
+  return area;
 }
 
 /** A dot, in the colour the web's icon row uses: runs working is green, anything else the accent. */
