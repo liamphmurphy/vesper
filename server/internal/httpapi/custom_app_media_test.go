@@ -194,3 +194,42 @@ func TestCustomAppMediaContentServesRanges(t *testing.T) {
 		}
 	}
 }
+
+func TestCustomAppMediaRelayServesLANRangesAndStops(t *testing.T) {
+	e := newMediaTestEnv(t)
+	e.allowMedia("allowed")
+	_, out := e.call("grab", map[string]any{"url": e.site.URL + "/clip.mp4"})
+	id := out["result"].(map[string]any)["id"].(string)
+	e.waitDone(id)
+
+	// Start the ephemeral LAN relay for this downloaded media file.
+	relayed := e.want("POST", "/custom-apps/feed/media/"+id+"/relay", nil, http.StatusOK)
+	relayID := relayed["id"].(string)
+	loopbackURL := relayed["loopback_url"].(string)
+	lanURL := relayed["lan_url"].(string)
+	if !strings.HasSuffix(loopbackURL, "/video.mp4") || !strings.HasSuffix(lanURL, "/video.mp4") {
+		t.Fatalf("unexpected relay URLs: lan=%q loopback=%q", lanURL, loopbackURL)
+	}
+
+	// Unauthenticated client (like an AirPlay receiver on the LAN) fetches a byte range directly.
+	req, _ := http.NewRequest(http.MethodGet, loopbackURL, nil)
+	req.Header.Set("Range", "bytes=10-19")
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET relayed range: %v", err)
+	}
+	body, _ := io.ReadAll(res.Body)
+	res.Body.Close()
+	if res.StatusCode != http.StatusPartialContent || !bytes.Equal(body, e.clip[10:20]) {
+		t.Fatalf("relayed range = %d %q, want 206 %q", res.StatusCode, body, e.clip[10:20])
+	}
+
+	// Another app cannot start a relay for this media or stop this relay.
+	e.want("POST", "/custom-apps", map[string]any{"slug": "other", "name": "Other", "template": "blank"}, http.StatusCreated)
+	e.want("POST", "/custom-apps/other/media/"+id+"/relay", nil, http.StatusNotFound)
+	e.want("DELETE", "/custom-apps/other/media-relays/"+relayID, nil, http.StatusNotFound)
+
+	// Stopping the relay removes it and returns 204; a second stop returns 404.
+	e.want("DELETE", "/custom-apps/feed/media-relays/"+relayID, nil, http.StatusNoContent)
+	e.want("DELETE", "/custom-apps/feed/media-relays/"+relayID, nil, http.StatusNotFound)
+}

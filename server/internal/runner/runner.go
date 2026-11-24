@@ -2417,14 +2417,14 @@ func (r *Runner) runSession(ctx context.Context, c runCtx, sh harness.SessionHar
 			OnRaw: func(line []byte) {
 				appendRaw("", line)
 			},
-			OnEvent: func(e harness.Event) {
+			OnEvent: harness.TrackPlans(func(e harness.Event) {
 				payload, b := redactPayload(e.Payload, env)
 				opening.see(e.Type, payload)
 				select {
 				case ch <- pendingRunEvent{typ: e.Type, payload: b}:
 				case <-readCtx.Done():
 				}
-			},
+			}),
 			OnTextDelta: func(delta string) {
 				if onTextDelta != nil {
 					onTextDelta(delta)

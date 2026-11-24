@@ -182,6 +182,67 @@ function HlsNativeVideo({
   );
 }
 
+function LocalNativeVideo({
+  video,
+  onAirPlayState,
+  onRegisterPicker,
+}: {
+  video: StageVideo;
+  onAirPlayState: (state: { available: boolean; wireless: boolean }) => void;
+  onRegisterPicker: (picker: (() => void) | null) => void;
+}) {
+  const videoRef = useRef<WebKitVideoElement>(null);
+
+  useEffect(() => {
+    const el = videoRef.current;
+    if (!el) return;
+
+    el.setAttribute("x-webkit-airplay", "allow");
+    el.disableRemotePlayback = false;
+
+    let available = false;
+    let wireless = Boolean(el.webkitCurrentPlaybackTargetIsWireless);
+    const emit = () => onAirPlayState({ available, wireless });
+    emit();
+    onRegisterPicker(() => {
+      videoRef.current?.webkitShowPlaybackTargetPicker?.();
+    });
+
+    const onAvailability = (e: Event) => {
+      const ev = e as WebKitPlaybackTargetAvailabilityEvent;
+      available = ev.availability === "available";
+      emit();
+    };
+    const onWireless = () => {
+      wireless = Boolean(el.webkitCurrentPlaybackTargetIsWireless);
+      emit();
+    };
+
+    el.addEventListener("webkitplaybacktargetavailabilitychanged", onAvailability);
+    el.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", onWireless);
+
+    return () => {
+      el.removeEventListener("webkitplaybacktargetavailabilitychanged", onAvailability);
+      el.removeEventListener("webkitcurrentplaybacktargetiswirelesschanged", onWireless);
+      onAirPlayState({ available: false, wireless: false });
+      onRegisterPicker(null);
+    };
+  }, [video.embedUrl, onAirPlayState, onRegisterPicker]);
+
+  return (
+    <video
+      ref={videoRef}
+      src={video.embedUrl}
+      title={video.title}
+      controls
+      autoPlay
+      playsInline
+      data-testid="custom-app-local-video"
+      className="absolute inset-0 size-full"
+    />
+  );
+}
+
 /**
  * The player a custom app opens with playVideo, docked above the app like a watch page rather than
  * in a popup. The host renders it, not the app's sandboxed frame: embeds inside that frame would
@@ -263,15 +324,11 @@ export function CustomAppPlayerStage({
             style={{ maxWidth: `calc(${maxHeight} * 16 / 9)` }}
           >
             {video.provider === "local" ? (
-              <video
+              <LocalNativeVideo
                 key={video.embedUrl}
-                src={video.embedUrl}
-                title={video.title}
-                controls
-                autoPlay
-                playsInline
-                data-testid="custom-app-local-video"
-                className="absolute inset-0 size-full"
+                video={video}
+                onAirPlayState={setAirPlay}
+                onRegisterPicker={registerPicker}
               />
             ) : video.provider === "hls" ? (
               <HlsNativeVideo
@@ -295,7 +352,7 @@ export function CustomAppPlayerStage({
         </div>
         <div className={cx("flex items-center gap-2 py-2", theater ? "bg-bg px-4" : "")}>
           <h2 className="min-w-0 flex-1 truncate text-14 font-semibold text-fg">{video.title}</h2>
-          {video.provider === "hls" && airPlay.available && (
+          {(video.provider === "hls" || video.provider === "local") && airPlay.available && (
             <button
               type="button"
               aria-pressed={airPlay.wireless}

@@ -850,6 +850,14 @@ func (s *codexSessionState) handleNotification(method string, paramsRaw json.Raw
 		if json.Unmarshal(paramsRaw, &p) == nil && p.Item.Type != "" {
 			s.handleItem(method == "item/completed", p.Item)
 		}
+	case "turn/plan/updated":
+		// Codex's own plan (its update_plan tool), sent whole on every change.
+		var p struct {
+			Plan []codexPlanItem `json:"plan"`
+		}
+		if json.Unmarshal(paramsRaw, &p) == nil {
+			s.emit(planEvent("codex", codexPlan(p.Plan)))
+		}
 	case "thread/tokenUsage/updated":
 		var p struct {
 			TokenUsage struct {

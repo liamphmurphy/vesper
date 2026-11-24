@@ -638,6 +638,66 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(thoughtOnly.thinkingBlocks.map(\.text), ["Just thinking."])
     }
 
+    private func planEvent(_ seq: Int, _ rows: [(String, String)], subagent: Bool = false) -> ChatRunEvent {
+        var payload: [String: JSONValue] = [
+            "state": .string("plan"),
+            "source": .string("codex"),
+            "steps": .array(rows.enumerated().map { i, row in
+                .object(["id": .string(String(i + 1)), "title": .string(row.0), "status": .string(row.1)])
+            }),
+        ]
+        if subagent { payload["subagent"] = .bool(true) }
+        return ChatRunEvent(seq: seq, type: "lifecycle", at: String(format: "2026-11-22T08:00:%02dZ", seq), payload: payload)
+    }
+
+    /// Codex and Antigravity have no TodoWrite calls: their plan reaches the client only as the server's plan events
+    /// (mirrors "a server plan event drives the steps…" in web/lib/chat-ui.test.mjs).
+    func testServerPlanEventsDriveStepsWithoutPlanToolCalls() {
+        let events: [ChatRunEvent] = [
+            planEvent(1, [("Find it", "in_progress"), ("Fix it", "pending")]),
+            ChatRunEvent(seq: 2, type: "tool_call", at: "2026-11-22T08:00:02Z", payload: ["id": .string("c2"), "tool": .string("shell"), "input": .object(["command": .string("rg retry")])]),
+            ChatRunEvent(seq: 3, type: "tool_result", at: "2026-11-22T08:00:03Z", payload: ["id": .string("c2")]),
+            planEvent(4, [("Find it", "completed"), ("Fix it", "in_progress")]),
+            ChatRunEvent(seq: 5, type: "tool_call", at: "2026-11-22T08:00:05Z", payload: ["id": .string("c5"), "tool": .string("apply_patch"), "input": .object(["files": .array([.string("update poller.go")])])]),
+        ]
+        let folded = ChatTurnActivity.fold(events: events, since: "2026-11-22T08:00:00Z", now: APIDate.parse("2026-11-22T08:00:06Z")!)
+        XCTAssertTrue(folded.planned)
+        XCTAssertEqual(folded.steps.map(\.title), ["Find it", "Fix it"])
+        XCTAssertEqual(folded.steps.map(\.state), [.done, .active])
+        XCTAssertEqual(ChatTurnActivity.planProgress(steps: folded.steps, planned: folded.planned)?.progressLabel, "1/2 steps")
+
+        // A sub agent's plan isn't the turn's, and an empty plan clears it.
+        let other = ChatTurnActivity.fold(
+            events: [planEvent(1, [("Theirs", "pending")], subagent: true), events[1], events[2]],
+            since: "2026-11-22T08:00:00Z", now: APIDate.parse("2026-11-22T08:00:06Z")!
+        )
+        XCTAssertFalse(other.planned)
+        let cleared = ChatTurnActivity.fold(
+            events: events + [planEvent(6, [])],
+            since: "2026-11-22T08:00:00Z", now: APIDate.parse("2026-11-22T08:00:07Z")!
+        )
+        XCTAssertFalse(cleared.planned)
+    }
+
+    func testServerPlanEventsWinOverRawTodoWriteAndFinishedTurnReadsThem() {
+        let events: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "tool_call", at: "2026-11-22T08:00:01Z", payload: [
+                "id": .string("p1"), "tool": .string("TodoWrite"),
+                "input": .object(["todos": .array([.object(["content": .string("Raw title"), "status": .string("in_progress")])])]),
+            ]),
+            ChatRunEvent(seq: 2, type: "tool_result", at: "2026-11-22T08:00:02Z", payload: ["id": .string("p1")]),
+            planEvent(3, [("Server title", "in_progress")]),
+            ChatRunEvent(seq: 4, type: "tool_call", at: "2026-11-22T08:00:04Z", payload: ["id": .string("c4"), "tool": .string("set_plan"), "input": .object([:])]),
+            ChatRunEvent(seq: 5, type: "tool_result", at: "2026-11-22T08:00:05Z", payload: ["id": .string("c4")]),
+            ChatRunEvent(seq: 6, type: "tool_call", at: "2026-11-22T08:00:06Z", payload: ["id": .string("c6"), "tool": .string("Read"), "input": .object(["file_path": .string("/r/a.go")])]),
+            ChatRunEvent(seq: 7, type: "tool_result", at: "2026-11-22T08:00:07Z", payload: ["id": .string("c6")]),
+            planEvent(8, [("Server title", "failed")]),
+        ]
+        let finished = ChatTurnActivity.finishedTurn(events: events, outcome: .done)
+        XCTAssertEqual(finished.steps.map(\.title), ["Server title"])
+        XCTAssertEqual(finished.steps.map(\.state), [.failed])
+    }
+
     func testPlanProgressWithFailedStepsAndLongTurnUsageDelay() {
         let t0 = "2026-11-22T08:00:00Z"
         let events: [ChatRunEvent] = [

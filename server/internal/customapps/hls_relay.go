@@ -93,13 +93,15 @@ type HLSRelay struct {
 	MasterCacheTTL time.Duration
 	MediaCacheTTL  time.Duration
 
-	mu        sync.Mutex
-	streams   map[uuid.UUID]*relayStream
-	byToken   map[string]*relayStream
-	srv       *http.Server
-	port      int
-	sweepStop chan struct{}
-	closed    bool
+	mu           sync.Mutex
+	streams      map[uuid.UUID]*relayStream
+	byToken      map[string]*relayStream
+	media        map[uuid.UUID]*relayMedia
+	mediaByToken map[string]*relayMedia
+	srv          *http.Server
+	port         int
+	sweepStop    chan struct{}
+	closed       bool
 }
 
 type relayStream struct {
@@ -257,7 +259,7 @@ func (r *HLSRelay) Stop(appID, id uuid.UUID) error {
 	return nil
 }
 
-// Close terminates all active streams and closes the LAN listener.
+// Close terminates all active streams and local media relays and closes the LAN listener.
 func (r *HLSRelay) Close() {
 	if r == nil {
 		return
@@ -266,6 +268,8 @@ func (r *HLSRelay) Close() {
 	r.closed = true
 	r.streams = nil
 	r.byToken = nil
+	r.media = nil
+	r.mediaByToken = nil
 	oldSrv := r.srv
 	oldStop := r.sweepStop
 	r.srv = nil
@@ -276,7 +280,7 @@ func (r *HLSRelay) Close() {
 	shutdownRelayListener(oldSrv, oldStop)
 }
 
-func (r *HLSRelay) snapshot(st *relayStream, port int) HLSStream {
+func (r *HLSRelay) lanIP() string {
 	var lanIP string
 	if r.LANIPFunc != nil {
 		lanIP = strings.TrimSpace(r.LANIPFunc())
@@ -288,6 +292,11 @@ func (r *HLSRelay) snapshot(st *relayStream, port int) HLSStream {
 	if lanIP == "" {
 		lanIP = "127.0.0.1"
 	}
+	return lanIP
+}
+
+func (r *HLSRelay) snapshot(st *relayStream, port int) HLSStream {
+	lanIP := r.lanIP()
 	st.statusMu.RLock()
 	inAd := st.inAdBreak
 	skipped := st.adsSkipped
@@ -359,6 +368,7 @@ func (r *HLSRelay) ensureListenerLocked() error {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/hls/", r.serveHTTP)
+	mux.HandleFunc("/media/", r.serveMediaHTTP)
 	srv := &http.Server{
 		Handler:           mux,
 		ReadHeaderTimeout: 10 * time.Second,
@@ -377,7 +387,7 @@ func (r *HLSRelay) ensureListenerLocked() error {
 }
 
 func (r *HLSRelay) detachIdleListenerLocked() (*http.Server, chan struct{}) {
-	if len(r.streams) > 0 {
+	if len(r.streams) > 0 || len(r.media) > 0 {
 		return nil, nil
 	}
 	oldSrv := r.srv
@@ -414,12 +424,20 @@ func (r *HLSRelay) sweepLoop(stopCh chan struct{}) {
 		case <-stopCh:
 			return
 		case <-ticker.C:
-			cutoff := time.Now().Add(-r.ttl()).UnixNano()
+			now := time.Now()
+			cutoff := now.Add(-r.ttl()).UnixNano()
+			mediaCutoff := now.Add(-r.mediaRelayTTL()).UnixNano()
 			r.mu.Lock()
 			for id, st := range r.streams {
 				if st.lastAccess.Load() < cutoff {
 					delete(r.streams, id)
 					delete(r.byToken, st.token)
+				}
+			}
+			for id, m := range r.media {
+				if m.lastAccess.Load() < mediaCutoff {
+					delete(r.media, id)
+					delete(r.mediaByToken, m.token)
 				}
 			}
 			oldSrv, oldStop := r.detachIdleListenerLocked()
