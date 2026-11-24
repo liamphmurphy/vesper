@@ -222,6 +222,6 @@ test("pdfjs-dist/legacy renders non-white PDF content and serializes cancelled r
     await firstTask.promise.catch(() => {});
     await page2.render({ canvas, viewport: vp2, transform: [dpr, 0, 0, dpr, 0, 0], background: "#ffffff" }).promise;
   } finally {
-    await doc.destroy();
+    await doc.loadingTask.destroy();
   }
 });

@@ -77,7 +77,7 @@ async function rasterPdf(pdf: Uint8Array): Promise<PNG[]> {
     await page.render({ canvas: canvas as unknown as HTMLCanvasElement, canvasContext: canvas.getContext("2d") as unknown as CanvasRenderingContext2D, viewport: vp }).promise;
     out.push(PNG.sync.read(canvas.toBuffer("image/png")));
   }
-  await doc.destroy();
+  await doc.loadingTask.destroy();
   return out;
 }
 

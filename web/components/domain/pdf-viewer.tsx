@@ -149,7 +149,7 @@ export function PdfViewer({
         loadingTask = task;
         activeDoc = await task.promise;
         if (ac.signal.aborted) {
-          await activeDoc.destroy();
+          await task.destroy();
           return;
         }
         let pageSize = { width: 612, height: 792 };
@@ -161,7 +161,7 @@ export function PdfViewer({
           // keep Letter aspect ratio fallback
         }
         if (ac.signal.aborted) {
-          await activeDoc.destroy();
+          await task.destroy();
           return;
         }
         setRenderError(null);
@@ -180,8 +180,7 @@ export function PdfViewer({
 
     return () => {
       ac.abort();
-      if (activeDoc) void activeDoc.destroy();
-      else void loadingTask?.destroy().catch(() => {});
+      void (activeDoc?.loadingTask ?? loadingTask)?.destroy().catch(() => {});
     };
   }, [url]);
 

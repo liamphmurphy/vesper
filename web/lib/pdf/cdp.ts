@@ -589,7 +589,7 @@ async function rasterizePreviewPages(
         const dataUrl = canvas.toDataURL("image/png");
         previews.push({ page: n, width: canvas.width, height: canvas.height, png_base64: dataUrl.slice("data:image/png;base64,".length) });
       }
-      await doc.destroy();
+      await doc.loadingTask.destroy();
       return { pages: total, previews };
     })()`;
 
