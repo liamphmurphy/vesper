@@ -38,6 +38,9 @@ const (
 	maxPageBytes             = 1 << 20
 	maxImageBytes            = 3 << 20
 	maxRedirects             = 5
+	maxImageCandidates       = 4
+	maxJSONLDScripts         = 16
+	maxJSONLDBytes           = 256 << 10
 	maxTitle                 = 200
 	maxDesc                  = 300
 	userAgent                = "VesperBot/1.0 (link preview)"
@@ -345,14 +348,40 @@ func (f *Fetcher) site(ctx context.Context, raw string) Preview {
 	if mt, _, _ := mime.ParseMediaType(ct); mt != "text/html" && mt != "application/xhtml+xml" {
 		return p
 	}
-	m := parseMeta(body)
-	p.Title = clean(first(m["og:title"], m["twitter:title"], m["title"]), maxTitle)
-	p.Description = clean(first(m["og:description"], m["twitter:description"], m["description"]), maxDesc)
+	pm := parsePage(body)
+	m := pm.meta
+	p.Title = clean(first(m["og:title"], m["twitter:title"], m["title"], pm.ldTitle), maxTitle)
+	p.Description = clean(first(m["og:description"], m["twitter:description"], m["description"], pm.ldDescription), maxDesc)
 	p.Site = clean(m["og:site_name"], maxTitle)
-	if ref := first(m["og:image:secure_url"], m["og:image"], m["twitter:image"]); ref != "" && p.Title != "" {
-		if base, err := url.Parse(raw); err == nil {
-			if u, err := base.Parse(strings.TrimSpace(ref)); err == nil {
-				p.Image, p.ImageType = f.image(ctx, u.String(), raw)
+	if base, err := url.Parse(raw); err == nil {
+		var rawRefs []string
+		rawRefs = append(rawRefs, pm.productImages...)
+		rawRefs = append(rawRefs, m["og:image:secure_url"], m["og:image"], m["twitter:image"], m["twitter:image:src"])
+		rawRefs = append(rawRefs, pm.otherLDImages...)
+		rawRefs = append(rawRefs, pm.linkImages...)
+		seen := map[string]bool{}
+		tried := 0
+		for _, ref := range rawRefs {
+			ref = strings.TrimSpace(ref)
+			if ref == "" {
+				continue
+			}
+			u, err := base.Parse(ref)
+			if err != nil {
+				continue
+			}
+			target := u.String()
+			if seen[target] || !Valid(target) {
+				continue
+			}
+			seen[target] = true
+			if img, imgType := f.image(ctx, target, raw); img != nil {
+				p.Image, p.ImageType = img, imgType
+				break
+			}
+			tried++
+			if tried >= maxImageCandidates {
+				break
 			}
 		}
 	}
@@ -483,29 +512,63 @@ func (f *Fetcher) doGet(ctx context.Context, raw string, limit int64, opts getOp
 	return bytes.Clone(body), res.Header.Get("Content-Type"), res.StatusCode, nil
 }
 
-// parseMeta reads <title> and the <meta> name/property tags, stopping at <body>.
-func parseMeta(page []byte) map[string]string {
-	out := map[string]string{}
+type pageMeta struct {
+	meta          map[string]string
+	productImages []string
+	otherLDImages []string
+	linkImages    []string
+	ldTitle       string
+	ldDescription string
+}
+
+// parsePage reads <title>, <meta>, and image <link> tags from <head>, plus
+// application/ld+json <script> blocks anywhere in the bounded HTML document.
+func parsePage(page []byte) pageMeta {
+	out := pageMeta{meta: map[string]string{}}
 	z := html.NewTokenizer(bytes.NewReader(page))
+	inBody := false
 	inTitle := false
+	inJSONLD := false
+	scripts := 0
+	var ldBuf bytes.Buffer
 	for {
-		switch z.Next() {
+		tokType := z.Next()
+		switch tokType {
 		case html.ErrorToken:
 			return out
 		case html.TextToken:
-			if inTitle && out["title"] == "" {
-				out["title"] = string(z.Text())
+			if inTitle && !inBody && out.meta["title"] == "" {
+				out.meta["title"] = string(z.Text())
+			} else if inJSONLD && ldBuf.Len() <= maxJSONLDBytes {
+				ldBuf.Write(z.Text())
 			}
 		case html.EndTagToken:
-			inTitle = false
+			t := z.Token()
+			switch t.DataAtom {
+			case atom.Title:
+				inTitle = false
+			case atom.Script:
+				if inJSONLD {
+					inJSONLD = false
+					if ldBuf.Len() > 0 && ldBuf.Len() <= maxJSONLDBytes {
+						parseJSONLD(ldBuf.Bytes(), &out)
+					}
+					ldBuf.Reset()
+				}
+			}
 		case html.StartTagToken, html.SelfClosingTagToken:
 			t := z.Token()
 			switch t.DataAtom {
 			case atom.Body:
-				return out
+				inBody = true
 			case atom.Title:
-				inTitle = true
+				if !inBody && tokType == html.StartTagToken {
+					inTitle = true
+				}
 			case atom.Meta:
+				if inBody {
+					continue
+				}
 				var name, content string
 				for _, a := range t.Attr {
 					switch strings.ToLower(a.Key) {
@@ -519,12 +582,150 @@ func parseMeta(page []byte) map[string]string {
 						content = a.Val
 					}
 				}
-				if name = strings.ToLower(strings.TrimSpace(name)); name != "" && out[name] == "" {
-					out[name] = content
+				if name = strings.ToLower(strings.TrimSpace(name)); name != "" && out.meta[name] == "" {
+					out.meta[name] = content
+				}
+			case atom.Link:
+				if inBody {
+					continue
+				}
+				var rel, as, href string
+				for _, a := range t.Attr {
+					switch strings.ToLower(a.Key) {
+					case "rel":
+						rel = strings.ToLower(strings.TrimSpace(a.Val))
+					case "as":
+						as = strings.ToLower(strings.TrimSpace(a.Val))
+					case "href":
+						href = strings.TrimSpace(a.Val)
+					}
+				}
+				if href != "" && (hasRelToken(rel, "image_src") || (hasRelToken(rel, "preload") && as == "image")) {
+					out.linkImages = append(out.linkImages, href)
+				}
+			case atom.Script:
+				if tokType != html.StartTagToken || scripts >= maxJSONLDScripts {
+					continue
+				}
+				for _, a := range t.Attr {
+					if strings.ToLower(a.Key) == "type" {
+						if mt, _, _ := mime.ParseMediaType(a.Val); strings.EqualFold(mt, "application/ld+json") {
+							inJSONLD = true
+							scripts++
+							ldBuf.Reset()
+						}
+						break
+					}
 				}
 			}
 		}
 	}
+}
+
+func hasRelToken(rel, want string) bool {
+	for _, tok := range strings.Fields(rel) {
+		if tok == want {
+			return true
+		}
+	}
+	return false
+}
+
+func parseJSONLD(raw []byte, out *pageMeta) {
+	var doc any
+	if json.Unmarshal(raw, &doc) != nil {
+		return
+	}
+	walkJSONLD(doc, out, 0)
+}
+
+func walkJSONLD(node any, out *pageMeta, depth int) {
+	if depth > 6 {
+		return
+	}
+	switch v := node.(type) {
+	case []any:
+		for _, item := range v {
+			walkJSONLD(item, out, depth+1)
+		}
+	case map[string]any:
+		if graph, ok := v["@graph"]; ok {
+			walkJSONLD(graph, out, depth+1)
+		}
+		if hasLDType(v["@type"], "product", "productgroup", "individualproduct") {
+			out.productImages = append(out.productImages, extractLDImages(v["image"], 0)...)
+			if out.ldTitle == "" {
+				if name, ok := v["name"].(string); ok && strings.TrimSpace(name) != "" {
+					out.ldTitle = name
+				}
+			}
+			if out.ldDescription == "" {
+				if desc, ok := v["description"].(string); ok && strings.TrimSpace(desc) != "" {
+					out.ldDescription = desc
+				}
+			}
+			if variants, ok := v["hasVariant"]; ok {
+				walkJSONLD(variants, out, depth+1)
+			}
+			return
+		}
+		if hasLDType(v["@type"], "article", "newsarticle", "blogposting", "review", "recipe", "webpage", "itempage", "videoobject", "offer") {
+			out.otherLDImages = append(out.otherLDImages, extractLDImages(v["image"], 0)...)
+			out.otherLDImages = append(out.otherLDImages, extractLDImages(v["thumbnailUrl"], 0)...)
+		}
+	}
+}
+
+func hasLDType(raw any, want ...string) bool {
+	match := func(s string) bool {
+		s = strings.ToLower(strings.TrimSpace(s))
+		s = strings.TrimPrefix(s, "https://schema.org/")
+		s = strings.TrimPrefix(s, "http://schema.org/")
+		for _, w := range want {
+			if s == w {
+				return true
+			}
+		}
+		return false
+	}
+	switch v := raw.(type) {
+	case string:
+		return match(v)
+	case []any:
+		for _, item := range v {
+			if s, ok := item.(string); ok && match(s) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func extractLDImages(raw any, depth int) []string {
+	if raw == nil || depth > 4 {
+		return nil
+	}
+	switch v := raw.(type) {
+	case string:
+		if s := strings.TrimSpace(v); s != "" && !strings.HasPrefix(s, "#") {
+			return []string{s}
+		}
+	case []any:
+		var out []string
+		for _, item := range v {
+			out = append(out, extractLDImages(item, depth+1)...)
+		}
+		return out
+	case map[string]any:
+		for _, k := range []string{"url", "contentUrl", "@id"} {
+			if s, ok := v[k].(string); ok {
+				if s = strings.TrimSpace(s); s != "" && !strings.HasPrefix(s, "#") {
+					return []string{s}
+				}
+			}
+		}
+	}
+	return nil
 }
 
 func first(vals ...string) string {

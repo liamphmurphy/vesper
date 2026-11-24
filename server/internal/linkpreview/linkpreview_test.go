@@ -242,6 +242,50 @@ func TestFetchDirectAVIFImageAndRejectMP4(t *testing.T) {
 	}
 }
 
+func TestSiteExtractsJSONLDProductImageInBody(t *testing.T) {
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/prod.png":
+			w.Write(png)
+		case "/logo.svg":
+			w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head><meta property="og:image" content="/logo.svg"></head><body>` +
+				`<script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"Organization","name":"Shop"},{"@type":"Product","name":"Mechanical Keyboard","description":"Tactile switches","image":[{"@type":"ImageObject","url":"/prod.png"}]}]}</script>` +
+				`</body></html>`))
+		}
+	})
+	p := f.Fetch(context.Background(), base+"/item")
+	if p.Title != "Mechanical Keyboard" || p.Description != "Tactile switches" || p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected JSON-LD product metadata and image, got %+v", p)
+	}
+}
+
+func TestSiteFallsBackAcrossImageCandidatesAndWithoutTitle(t *testing.T) {
+	f, base := fetcher(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/missing.png":
+			w.WriteHeader(http.StatusNotFound)
+		case "/logo.svg":
+			w.Write([]byte(`<svg xmlns="http://www.w3.org/2000/svg"></svg>`))
+		case "/real.png":
+			w.Write(png)
+		default:
+			w.Header().Set("Content-Type", "text/html")
+			w.Write([]byte(`<html><head>` +
+				`<meta property="og:image" content="/missing.png">` +
+				`<meta name="twitter:image:src" content="/logo.svg">` +
+				`<link rel="image_src" href="/real.png">` +
+				`</head></html>`))
+		}
+	})
+	p := f.Fetch(context.Background(), base+"/no-title")
+	if p.ImageType != "image/png" || len(p.Image) == 0 {
+		t.Fatalf("expected fallback to link[rel=image_src] even without title, got %+v", p)
+	}
+}
+
 func TestPreviewableExtractsGalleryProductAndSourcesWithCap(t *testing.T) {
 	md := strings.Join([]string{
 		"Check these out:",
