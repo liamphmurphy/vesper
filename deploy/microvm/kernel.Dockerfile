@@ -2,7 +2,7 @@
 # Builds the minimal Linux 6.12 LTS arm64 kernel Image for Vesper microVMs.
 FROM debian:bookworm-slim AS builder
 
-ARG KERNEL_VERSION=6.12.117
+ARG KERNEL_VERSION=6.12.119
 RUN apt-get update && apt-get install -y --no-install-recommends \
       ca-certificates curl xz-utils build-essential bc bison flex \
       libssl-dev libelf-dev python3 kmod \
