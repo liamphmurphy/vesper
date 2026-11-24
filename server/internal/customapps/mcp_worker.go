@@ -79,6 +79,18 @@ type MCPCallContext struct {
 	RelayToolCaller func(ctx context.Context, tool string, args map[string]any) (any, error)
 	// Nix serves nix.start/run/status/cancel/delete/readFile; nil reports them unavailable.
 	Nix *Nix
+	// VM, when non-nil, executes the server.ts Node worker inside the app's
+	// isolated Linux microVM instead of a host Node subprocess.
+	VM VMBackend
+}
+
+func vmSpecForApp(appID uuid.UUID, slug string, mounts Mounts, caps Capabilities) VMAppSpec {
+	return VMAppSpec{
+		AppID:       appID,
+		Slug:        slug,
+		Mounts:      mounts,
+		AllowPublic: ModeFor(caps, "app.http:outbound") == agentdef.Allowed,
+	}
 }
 
 type workerInitMsg struct {
@@ -175,14 +187,22 @@ func CallMCPTool(ctx context.Context, mc MCPCallContext, tool string, args map[s
 		tctx, cancel = context.WithTimeout(ctx, mcpCallTimeout)
 		defer cancel()
 	}
-	raw, err := runMCPWorker(tctx, mc.NodeBinary, mc.BundleJS, workerInitMsg{
+	initMsg := workerInitMsg{
 		Type:      "init",
 		Op:        "call_tool",
 		Tool:      tool,
 		Arguments: args,
-	}, func(rpcCtx context.Context, method string, params json.RawMessage) (any, error) {
+	}
+	onRPC := func(rpcCtx context.Context, method string, params json.RawMessage) (any, error) {
 		return handleWorkerRPC(rpcCtx, &mc, method, params)
-	})
+	}
+	var raw json.RawMessage
+	var err error
+	if mc.VM != nil && mc.AppID != uuid.Nil {
+		raw, err = runMCPWorkerInVM(tctx, mc.VM, vmSpecForApp(mc.AppID, mc.Slug, mc.Mounts, mc.Capabilities), mc.BundleJS, initMsg, onRPC)
+	} else {
+		raw, err = runMCPWorker(tctx, mc.NodeBinary, mc.BundleJS, initMsg, onRPC)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +268,107 @@ func runMCPWorker(
 	if err := cmd.Start(); err != nil {
 		return nil, fmt.Errorf("start MCP worker: %w", err)
 	}
+	return runMCPWorkerStream(
+		ctx,
+		stdin,
+		stdout,
+		&stderr,
+		func() {
+			if cmd.Process != nil {
+				_ = cmd.Process.Kill()
+			}
+		},
+		cmd.Wait,
+		initMsg,
+		onRPC,
+	)
+}
 
+func runMCPWorkerInVM(
+	ctx context.Context,
+	vm VMBackend,
+	spec VMAppSpec,
+	bundleJS string,
+	initMsg workerInitMsg,
+	onRPC func(context.Context, string, json.RawMessage) (any, error),
+) (json.RawMessage, error) {
+	callDir := "/tmp/vesper-app-mcp-" + uuid.NewString()
+	bundlePath := callDir + "/server.cjs"
+
+	proc, err := vm.StartAppVMProcess(ctx, VMExecRequest{
+		App:  spec,
+		Argv: []string{"node", "--permission", "--preserve-symlinks-main", "--allow-fs-read=" + callDir, bundlePath},
+		Dir:  callDir,
+		Env: map[string]string{
+			"NODE_NO_WARNINGS": "1",
+			"TZ":               "UTC",
+		},
+		Files: []VMFileWrite{{
+			Path: bundlePath,
+			Data: []byte(bundleJS),
+			Mode: 0o400,
+		}},
+	})
+	if err != nil {
+		return nil, fmt.Errorf("start MCP worker in VM: %w", err)
+	}
+	defer func() {
+		_ = proc.Close()
+		_ = vm.UnlinkAppVMPaths(context.Background(), spec, []string{callDir}, true)
+	}()
+
+	var stderr limitedBuffer
+	stderr.limit = maxWorkerStderr
+	stderrDone := make(chan struct{})
+	go func() {
+		defer close(stderrDone)
+		buf := make([]byte, 4096)
+		for {
+			n, rerr := proc.Stderr().Read(buf)
+			if n > 0 {
+				_, _ = stderr.Write(buf[:n])
+			}
+			if rerr != nil {
+				return
+			}
+		}
+	}()
+
+	return runMCPWorkerStream(
+		ctx,
+		proc.Stdin(),
+		proc.Stdout(),
+		&stderr,
+		func() { _ = proc.Kill(2 * time.Second) },
+		func() error {
+			code, werr := proc.Wait()
+			<-stderrDone
+			if werr != nil {
+				return werr
+			}
+			if code != 0 {
+				return fmt.Errorf("exit status %d", code)
+			}
+			return nil
+		},
+		initMsg,
+		onRPC,
+	)
+}
+
+func runMCPWorkerStream(
+	ctx context.Context,
+	stdin interface {
+		Write([]byte) (int, error)
+		Close() error
+	},
+	stdout interface{ Read([]byte) (int, error) },
+	stderr *limitedBuffer,
+	killFn func(),
+	waitFn func() error,
+	initMsg workerInitMsg,
+	onRPC func(context.Context, string, json.RawMessage) (any, error),
+) (json.RawMessage, error) {
 	writeLine := func(v any) error {
 		b, err := json.Marshal(v)
 		if err != nil {
@@ -260,7 +380,7 @@ func runMCPWorker(
 
 	if err := writeLine(initMsg); err != nil {
 		_ = stdin.Close()
-		_ = cmd.Wait()
+		_ = waitFn()
 		return nil, fmt.Errorf("send worker init: %w", err)
 	}
 
@@ -324,10 +444,10 @@ func runMCPWorker(
 	}
 	// Once we stop reading, a worker still writing would block on the full pipe until the call's
 	// timeout; end it now so the error comes back straight away.
-	if workerErr != nil && cmd.Process != nil {
-		_ = cmd.Process.Kill()
+	if workerErr != nil && killFn != nil {
+		killFn()
 	}
-	waitErr := cmd.Wait()
+	waitErr := waitFn()
 	if workerErr != nil {
 		return nil, workerErr
 	}
