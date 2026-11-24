@@ -45,9 +45,19 @@ func TestExtraCAFileMustBeAbsolute(t *testing.T) {
 	if _, err := Load(); err == nil {
 		t.Fatal("relative RUNNER_EXTRA_CA_FILE accepted")
 	}
+	t.Setenv("RUNNER_EXTRA_CA_FILE", "/Users/me/zscaler-root.pem:relative.cer")
+	if _, err := Load(); err == nil {
+		t.Fatal("relative entry in RUNNER_EXTRA_CA_FILE list accepted")
+	}
 	t.Setenv("RUNNER_EXTRA_CA_FILE", "/Users/me/zscaler-root.pem")
-	if c, err := Load(); err != nil || c.Runner.ExtraCAFile != "/Users/me/zscaler-root.pem" {
-		t.Fatalf("absolute path: %q %v", c.Runner.ExtraCAFile, err)
+	c, err := Load()
+	if err != nil || len(c.Runner.ExtraCAFiles) != 1 || c.Runner.ExtraCAFiles[0] != "/Users/me/zscaler-root.pem" {
+		t.Fatalf("single absolute path: %q %v", c.Runner.ExtraCAFiles, err)
+	}
+	t.Setenv("RUNNER_EXTRA_CA_FILE", "/Users/me/zscaler-root.pem:/Users/me/zscaler-int.cer:/Users/me/zscaler-root.pem:")
+	c, err = Load()
+	if err != nil || len(c.Runner.ExtraCAFiles) != 2 || c.Runner.ExtraCAFiles[0] != "/Users/me/zscaler-root.pem" || c.Runner.ExtraCAFiles[1] != "/Users/me/zscaler-int.cer" {
+		t.Fatalf("multiple absolute paths: %q %v", c.Runner.ExtraCAFiles, err)
 	}
 }
 

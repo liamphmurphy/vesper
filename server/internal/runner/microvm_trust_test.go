@@ -162,27 +162,43 @@ func TestMicroVMWithoutExtraCACertsLeavesTrustAlone(t *testing.T) {
 }
 
 func TestLoadExtraCACerts(t *testing.T) {
-	root := testCertPEM(t, "Zscaler Root CA")
-	intermediate := testCertPEM(t, "Zscaler Intermediate")
+	rootDER := testCertDER(t, "Zscaler Root CA")
+	intermediateDER := testCertDER(t, "Zscaler Intermediate")
+	root := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
+	intermediate := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: intermediateDER})
 	keyPEM := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte("not really a key")})
 	badCert := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte("garbage")})
+	privKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	keyDER, err := x509.MarshalPKCS8PrivateKey(privKey)
+	if err != nil {
+		t.Fatal(err)
+	}
 
 	for _, tc := range []struct {
 		name    string
+		ext     string
 		file    []byte
 		want    []byte
 		wantErr string
 	}{
 		// `security find-certificate -p` and hand-made bundles carry text
 		// between blocks; only the certificates are kept.
-		{name: "bundle with comments", file: append(append([]byte("# exported from Keychain\n"), root...), append([]byte("\nsubject= Zscaler Intermediate\n"), intermediate...)...),
+		{name: "bundle with comments", ext: ".pem", file: append(append([]byte("# exported from Keychain\n"), root...), append([]byte("\nsubject= Zscaler Intermediate\n"), intermediate...)...),
 			want: append(append([]byte(nil), root...), intermediate...)},
-		{name: "private key refused", file: append(append([]byte(nil), root...), keyPEM...), wantErr: `"PRIVATE KEY" block`},
-		{name: "no certificate", file: []byte("not a pem file\n"), wantErr: "no PEM certificate"},
-		{name: "unparsable certificate", file: badCert, wantErr: "x509"},
+		{name: "PEM with CRLF", ext: ".crt", file: bytes.ReplaceAll(root, []byte("\n"), []byte("\r\n")), want: root},
+		{name: "single DER certificate", ext: ".cer", file: rootDER, want: root},
+		{name: "concatenated DER certificates", ext: ".crt", file: append(append([]byte(nil), rootDER...), intermediateDER...),
+			want: append(append([]byte(nil), root...), intermediate...)},
+		{name: "private key PEM refused", ext: ".pem", file: append(append([]byte(nil), root...), keyPEM...), wantErr: `"PRIVATE KEY" block`},
+		{name: "private key DER refused", ext: ".cer", file: keyDER, wantErr: "no PEM or DER certificate"},
+		{name: "no certificate", ext: ".pem", file: []byte("not a pem file\n"), wantErr: "no PEM or DER certificate"},
+		{name: "unparsable certificate", ext: ".pem", file: badCert, wantErr: "x509"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			p := filepath.Join(t.TempDir(), "ca.pem")
+			p := filepath.Join(t.TempDir(), "ca"+tc.ext)
 			if err := os.WriteFile(p, tc.file, 0o600); err != nil {
 				t.Fatal(err)
 			}
@@ -205,9 +221,58 @@ func TestLoadExtraCACerts(t *testing.T) {
 	if _, err := LoadExtraCACerts(filepath.Join(t.TempDir(), "missing.pem")); err == nil {
 		t.Fatal("missing file accepted")
 	}
+	if got, err := LoadExtraCACerts(); err != nil || got != nil {
+		t.Fatalf("empty paths = (%q, %v), want (nil, nil)", got, err)
+	}
+}
+
+func TestLoadExtraCACertsMultipleFiles(t *testing.T) {
+	dir := t.TempDir()
+	rootDER := testCertDER(t, "Zscaler Root CA")
+	intDER := testCertDER(t, "Zscaler Intermediate")
+	corpDER := testCertDER(t, "Corp Root CA")
+	rootPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: rootDER})
+	intPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: intDER})
+	corpPEM := pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: corpDER})
+
+	pemPath := filepath.Join(dir, "zscaler.pem")
+	cerPath := filepath.Join(dir, "intermediate.cer")
+	crtPath := filepath.Join(dir, "corp.crt")
+	if err := os.WriteFile(pemPath, rootPEM, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(cerPath, intDER, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	// Duplicate root in the third file alongside a new DER cert; root should appear once.
+	if err := os.WriteFile(crtPath, append(append([]byte(nil), rootDER...), corpDER...), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := LoadExtraCACerts(pemPath, cerPath, crtPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := append(append(append([]byte(nil), rootPEM...), intPEM...), corpPEM...)
+	if !bytes.Equal(got, want) {
+		t.Fatalf("combined certs mismatch:\ngot:\n%s\nwant:\n%s", got, want)
+	}
+
+	badPath := filepath.Join(dir, "bad.cer")
+	if err := os.WriteFile(badPath, []byte("not a cert"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := LoadExtraCACerts(pemPath, badPath); err == nil {
+		t.Fatal("invalid second file accepted")
+	}
 }
 
 func testCertPEM(t *testing.T, cn string) []byte {
+	t.Helper()
+	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: testCertDER(t, cn)})
+}
+
+func testCertDER(t *testing.T, cn string) []byte {
 	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
@@ -226,5 +291,5 @@ func testCertPEM(t *testing.T, cn string) []byte {
 	if err != nil {
 		t.Fatal(err)
 	}
-	return pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der})
+	return der
 }

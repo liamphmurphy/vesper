@@ -25,19 +25,48 @@ const (
 	// guestExtraCAPath holds the extra roots alone, for NODE_EXTRA_CA_CERTS,
 	// which adds to Node's built-in roots rather than replacing them.
 	guestExtraCAPath = "/etc/ssl/certs/vesper-extra-ca.pem"
-	// maxExtraCAFileBytes bounds the file a person points us at; a corporate
+	// maxExtraCAFileBytes bounds one file a person points us at; a corporate
 	// bundle is a few KB.
 	maxExtraCAFileBytes = 1 << 20
+	// maxExtraCABundleBytes bounds the combined re-encoded PEM across all files.
+	maxExtraCABundleBytes = 4 << 20
 	// maxGuestCABundleBytes bounds what the host reads back from a guest; the
 	// image's bundle is about 200 KB.
 	maxGuestCABundleBytes = 8 << 20
 )
 
-// LoadExtraCACerts reads the PEM certificates at path for
-// MicroVM.ExtraCACerts. It refuses a file with no certificate, or with any
-// other PEM block (such as a private key exported by mistake), and returns the
-// certificates re-encoded so nothing else in the file reaches a VM.
-func LoadExtraCACerts(path string) ([]byte, error) {
+// LoadExtraCACerts reads PEM or binary DER certificates from one or more files
+// for MicroVM.ExtraCACerts. It refuses any file with no certificate, or with
+// any non-certificate PEM block (such as a private key exported by mistake),
+// deduplicates identical certificates in order, and returns them re-encoded as
+// PEM so nothing else in the files reaches a VM.
+func LoadExtraCACerts(paths ...string) ([]byte, error) {
+	if len(paths) == 0 {
+		return nil, nil
+	}
+	var out bytes.Buffer
+	seen := make(map[string]struct{})
+	for _, path := range paths {
+		ders, err := loadExtraCACertFile(path)
+		if err != nil {
+			return nil, err
+		}
+		for _, der := range ders {
+			key := string(der)
+			if _, dup := seen[key]; dup {
+				continue
+			}
+			seen[key] = struct{}{}
+			_ = pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: der})
+			if out.Len() > maxExtraCABundleBytes {
+				return nil, fmt.Errorf("extra CA certificates: combined bundle is larger than %d bytes", maxExtraCABundleBytes)
+			}
+		}
+	}
+	return out.Bytes(), nil
+}
+
+func loadExtraCACertFile(path string) ([][]byte, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("extra CA certificates: %w", err)
@@ -50,7 +79,7 @@ func LoadExtraCACerts(path string) ([]byte, error) {
 	if raw.Len() > maxExtraCAFileBytes {
 		return nil, fmt.Errorf("extra CA certificates: %s is larger than %d bytes", path, maxExtraCAFileBytes)
 	}
-	var out bytes.Buffer
+	var ders [][]byte
 	rest := raw.Bytes()
 	for {
 		var block *pem.Block
@@ -64,12 +93,19 @@ func LoadExtraCACerts(path string) ([]byte, error) {
 		if _, err := x509.ParseCertificate(block.Bytes); err != nil {
 			return nil, fmt.Errorf("extra CA certificates: %s: %w", path, err)
 		}
-		_ = pem.Encode(&out, &pem.Block{Type: "CERTIFICATE", Bytes: block.Bytes})
+		ders = append(ders, block.Bytes)
 	}
-	if out.Len() == 0 {
-		return nil, fmt.Errorf("extra CA certificates: %s has no PEM certificate", path)
+	if len(ders) > 0 {
+		return ders, nil
 	}
-	return out.Bytes(), nil
+	// Fall back to binary DER (.cer/.crt), single or concatenated.
+	if certs, err := x509.ParseCertificates(raw.Bytes()); err == nil && len(certs) > 0 {
+		for _, c := range certs {
+			ders = append(ders, c.Raw)
+		}
+		return ders, nil
+	}
+	return nil, fmt.Errorf("extra CA certificates: %s has no PEM or DER certificate", path)
 }
 
 // installExtraCACerts appends ExtraCACerts to a freshly booted VM's system
