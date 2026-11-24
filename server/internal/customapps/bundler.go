@@ -744,6 +744,39 @@ export function onEvent(handler) {
   return () => eventListeners.delete(handler);
 }
 
+// os exposes opt-in native macOS capabilities gated by explicit permissions
+// (os.notifications, os.clipboard, os.file_picker).
+export const os = {
+  notify(opts) {
+    const o = typeof opts === "string" ? { title: opts } : (opts && typeof opts === "object" ? opts : {});
+    return callHost("os-notify", {
+      title: typeof o.title === "string" ? o.title : "",
+      ...(typeof o.subtitle === "string" && o.subtitle ? { subtitle: o.subtitle } : {}),
+      ...(typeof o.body === "string" && o.body ? { body: o.body } : {}),
+      ...(typeof o.silent === "boolean" ? { silent: o.silent } : {}),
+    });
+  },
+  clipboard: {
+    readText() {
+      return callHost("os-clipboard-read", {});
+    },
+    writeText(text) {
+      return callHost("os-clipboard-write", { text: String(text ?? "") });
+    },
+  },
+  pickFiles(opts) {
+    const o = opts && typeof opts === "object" ? opts : {};
+    const extensions = Array.isArray(o.extensions)
+      ? o.extensions.map((ext) => String(ext || "").trim()).filter(Boolean)
+      : undefined;
+    return callHost("os-file-pick", {
+      ...(typeof o.multiple === "boolean" ? { multiple: o.multiple } : {}),
+      ...(extensions && extensions.length ? { extensions } : {}),
+      ...(typeof o.title === "string" && o.title ? { title: o.title } : {}),
+    });
+  },
+};
+
 const imageCache = new Map();
 const resolvedImages = new Map();
 const imageBlobUrls = new Set();
