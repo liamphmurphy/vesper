@@ -3,10 +3,11 @@ import VesperCore
 import WebKit
 
 /// Renders `.embedded(kind, source, info, index)` blocks on iOS:
-/// - `.svgImage` & `.svgSteps`: sandboxed inline SVG via `WKWebView` (plus step controls & captions)
+/// - `.svgImage` & `.svgSteps`: drawn natively by VesperCore's mockup renderer (plus step controls & captions)
 /// - `.mermaid`: Mermaid diagram via `WKWebView` (with source toggle)
-/// - `.app`: sandboxed interactive HTML/JS mini-app via `WKWebView` (with Preview/Code toggle & fullscreen)
-/// - `.math`: display math card
+/// - `.app`: sandboxed interactive HTML/JS mini-app via `WKWebView` (with Preview/Code toggle & fullscreen),
+///   the one block that stays web content
+/// - `.math`: display math, typeset natively (`NativeMath`)
 struct ChatEmbeddedBlockView: View {
     let kind: EmbeddedBlockKind
     let source: String
@@ -39,18 +40,16 @@ struct ChatEmbeddedBlockView: View {
     // MARK: - SVG Image
 
     private var svgImageCard: some View {
-        let themed = ChatSVG.theme(source, palette: vizPalette)
         let title = ChatSVG.title(source) ?? "Diagram"
-        let size = ChatSVG.intrinsicSize(source)
-        let aspect = size.width > 0 && size.height > 0 ? max(0.35, min(2.4, size.width / size.height)) : 1.5
+        let frame = nativeFrame(source, step: nil)
 
         return VStack(alignment: .leading, spacing: 8) {
-            cardHeader(icon: "sparkles.rectangle.stack", title: title, canExpand: true)
-            if showCode {
+            cardHeader(icon: "sparkles.rectangle.stack", title: title, canExpand: frame != nil)
+            if showCode || frame == nil {
+                if frame == nil { undrawable }
                 codeScroll(source)
-            } else {
-                SandboxedHTMLView(html: Self.svgHTML(themed, dark: colorScheme == .dark))
-                    .aspectRatio(aspect, contentMode: .fit)
+            } else if let frame {
+                NativeSVGView(document: frame.document, background: svgBackground(source))
                     .frame(minHeight: 160, maxHeight: 360)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
@@ -58,7 +57,7 @@ struct ChatEmbeddedBlockView: View {
         .padding(10)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .sheet(isPresented: $showFullscreen) {
-            fullscreenSheet(title: title, html: Self.svgHTML(themed, dark: colorScheme == .dark))
+            if let frame { fullscreenSheet(title: title, frame: frame, background: svgBackground(source)) }
         }
     }
 
@@ -68,16 +67,17 @@ struct ChatEmbeddedBlockView: View {
         let parsed = ChatSVG.parseStepsFence(source)
         let total = max(1, ChatSVG.stepCount(parsed.svg, captions: parsed.captions))
         let clamped = min(max(1, currentStep), total)
-        let frame = ChatSVG.theme(ChatSVG.stepFrame(parsed.svg, step: clamped), palette: vizPalette)
+        let frame = nativeFrame(parsed.svg, step: clamped)
         let caption = clamped <= parsed.captions.count ? parsed.captions[clamped - 1] : nil
         let title = ChatSVG.title(parsed.svg) ?? "Step-by-Step Diagram"
 
         return VStack(alignment: .leading, spacing: 8) {
-            cardHeader(icon: "rectangle.stack", title: "\(title) (\(clamped)/\(total))", canExpand: true)
-            if showCode {
+            cardHeader(icon: "rectangle.stack", title: "\(title) (\(clamped)/\(total))", canExpand: frame != nil)
+            if showCode || frame == nil {
+                if frame == nil { undrawable }
                 codeScroll(source)
-            } else {
-                SandboxedHTMLView(html: Self.svgHTML(frame, dark: colorScheme == .dark))
+            } else if let frame {
+                NativeSVGView(document: frame.document, background: svgBackground(parsed.svg))
                     .frame(height: 240)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
 
@@ -120,8 +120,27 @@ struct ChatEmbeddedBlockView: View {
         .padding(10)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .sheet(isPresented: $showFullscreen) {
-            fullscreenSheet(title: title, html: Self.svgHTML(frame, dark: colorScheme == .dark))
+            if let frame { fullscreenSheet(title: title, frame: frame, background: svgBackground(parsed.svg)) }
         }
+    }
+
+    /// A frame compiled by the native renderer (cached like the Mac's), nil when it can't be drawn.
+    private func nativeFrame(_ svg: String, step: Int?) -> ChatSVGFrame? {
+        let themed = ChatSVG.isThemed(svg)
+        let key = EmbedCacheKey(kind: kind, messageID: "ios", theme: themed ? vizPalette.fingerprint : "plain", source: svg, variant: step.map(String.init) ?? "")
+        return ChatSVGNative.frame(key, source: ChatSVGNative.frameSource(svg, palette: vizPalette, themed: themed, step: step))
+    }
+
+    /// The palette's surface behind a themed SVG; white behind one that brings its own colours.
+    private func svgBackground(_ svg: String) -> Color {
+        guard ChatSVG.isThemed(svg), let c = RGBA(hex: vizPalette.surface) else { return .white }
+        return Color(.sRGB, red: c.red, green: c.green, blue: c.blue, opacity: c.alpha)
+    }
+
+    private var undrawable: some View {
+        Text("This SVG couldn\u{2019}t be displayed. Its source is below.")
+            .font(.caption)
+            .foregroundStyle(.red)
     }
 
     // MARK: - Mermaid
@@ -188,14 +207,31 @@ struct ChatEmbeddedBlockView: View {
                 .foregroundStyle(.secondary)
             }
             ScrollView(.horizontal, showsIndicators: false) {
-                Text(source.trimmingCharacters(in: .whitespacesAndNewlines))
-                    .font(.system(.callout, design: .serif))
-                    .textSelection(.enabled)
-                    .padding(.vertical, 6)
+                if let math = renderedMath {
+                    NativeMathView(embed: math)
+                        .padding(.vertical, 6)
+                        .accessibilityLabel(source)
+                } else {
+                    Text(source.trimmingCharacters(in: .whitespacesAndNewlines))
+                        .font(.system(.callout, design: .serif))
+                        .textSelection(.enabled)
+                        .padding(.vertical, 6)
+                }
             }
         }
         .padding(10)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+
+    /// Display math typeset natively in the text colour, cached; nil for TeX that doesn't parse.
+    private var renderedMath: RenderedEmbed? {
+        let request = MathRenderRequest(tex: source, display: true, color: colorScheme == .dark ? VizPalette.dark.ink : VizPalette.light.ink,
+                                        fontSize: UIFont.preferredFont(forTextStyle: .callout).pointSize)
+        let key = request.cacheKey(messageID: "ios")
+        if let hit = EmbedRenderCache.shared.value(for: key) { return hit }
+        guard let drawn = NativeMath.render(request) else { return nil }
+        EmbedRenderCache.shared.insert(drawn, for: key, cost: drawn.pdf.count)
+        return drawn
     }
 
     // MARK: - Chrome Helpers
@@ -242,6 +278,21 @@ struct ChatEmbeddedBlockView: View {
         .background(Color(.tertiarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
     }
 
+    private func fullscreenSheet(title: String, frame: ChatSVGFrame, background: Color) -> some View {
+        NavigationStack {
+            NativeSVGView(document: frame.document, background: background)
+                .padding(8)
+                .ignoresSafeArea(edges: .bottom)
+                .navigationTitle(title)
+                .navigationBarTitleDisplayMode(.inline)
+                .toolbar {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Button("Done") { showFullscreen = false }
+                    }
+                }
+        }
+    }
+
     private func fullscreenSheet(title: String, html: String, allowCDN: Bool = false) -> some View {
         NavigationStack {
             SandboxedHTMLView(html: html, allowCDN: allowCDN)
@@ -254,15 +305,6 @@ struct ChatEmbeddedBlockView: View {
                     }
                 }
         }
-    }
-
-    private static func svgHTML(_ svg: String, dark: Bool) -> String {
-        let bg = dark ? "#1c1c1e" : "#ffffff"
-        return """
-        <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-        <style>html,body{margin:0;padding:8px;background:\(bg);display:flex;align-items:center;justify-content:center;min-height:100vh;box-sizing:border-box;}svg{max-width:100%;height:auto;}</style>
-        </head><body>\(ChatSVG.document(svg))</body></html>
-        """
     }
 
     private static func mermaidHTML(_ code: String, dark: Bool) -> String {
@@ -280,6 +322,46 @@ struct ChatEmbeddedBlockView: View {
         <script>window.addEventListener('DOMContentLoaded',function(){if(window.mermaid){mermaid.initialize({startOnLoad:true,theme:'\(theme)',securityLevel:'strict'});}});</script>
         </head><body><pre class="mermaid">\(escaped)</pre></body></html>
         """
+    }
+}
+
+// MARK: - Native drawing
+
+/// A compiled SVG drawn by VesperCore's mockup renderer, scaled to fit and redrawn at every size.
+private struct NativeSVGView: View {
+    let document: MockupSVGDocument
+    let background: Color
+
+    var body: some View {
+        let size = document.intrinsicSize
+        Canvas { context, canvasSize in
+            context.withCGContext { cg in
+                MockupSVGRenderer.draw(document, in: cg, rect: CGRect(origin: .zero, size: canvasSize))
+            }
+        }
+        .aspectRatio(size.width / max(size.height, 1), contentMode: .fit)
+        .frame(maxWidth: size.width)
+        .background(background)
+        .frame(maxWidth: .infinity)
+    }
+}
+
+/// Typeset math (a one-page vector PDF from `NativeMath`) at its own size.
+private struct NativeMathView: View {
+    let embed: RenderedEmbed
+
+    var body: some View {
+        Canvas { context, size in
+            guard let provider = CGDataProvider(data: embed.pdf as CFData),
+                  let page = CGPDFDocument(provider)?.page(at: 1) else { return }
+            context.withCGContext { cg in
+                // PDF space is y-up; the canvas is y-down.
+                cg.translateBy(x: 0, y: size.height)
+                cg.scaleBy(x: 1, y: -1)
+                cg.drawPDFPage(page)
+            }
+        }
+        .frame(width: embed.width, height: embed.height)
     }
 }
 
