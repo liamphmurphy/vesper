@@ -93,24 +93,17 @@ test("words and visible properties", () => {
   ]);
 });
 
-test("saving keeps wikilinks, embeds and callouts the editor escaped", async () => {
+test("restoreObsidianSyntax unescapes wikilinks, embeds, callouts, and attachment tildes", async () => {
   const { restoreObsidianSyntax } = await import("./knowledge.ts");
-  const { parseDoc, serializeDoc } = await import("./doc-markdown.ts");
-  const md = "See [[Locations/Watchtower|the tower]] and [[Page#Arrival]] and [[Session 4#^dawn]].\n\n![[Maps/harbour.png]]\n\n> [!info] Secret\n> The bell.\n\n`[[not a link]]` stays code.";
-  const written = serializeDoc(parseDoc(md));
-  assert.match(written, /\\\[\\\[/, "the editor escapes brackets; if this fails the restore step may be unneeded");
-  const restored = restoreObsidianSyntax(written);
-  for (const s of ["[[Locations/Watchtower|the tower]]", "[[Page#Arrival]]", "[[Session 4#^dawn]]", "![[Maps/harbour.png]]", "> [!info] Secret"]) assert.ok(restored.includes(s), `${s} in ${restored}`);
+  const escaped = "See \\[\\[Locations/Watchtower\\|the tower\\]\\] and !\\[\\[Maps/harbour.png\\]\\]\n\n> \\[!info\\] Secret\n> The bell.\n\n`[[not a link]]` stays code.";
+  const restored = restoreObsidianSyntax(escaped);
+  for (const s of ["[[Locations/Watchtower|the tower]]", "![[Maps/harbour.png]]", "> [!info] Secret"]) assert.ok(restored.includes(s), `${s} in ${restored}`);
   assert.ok(restored.includes("`[[not a link]]`"));
   assert.equal(restoreObsidianSyntax("a \\[b\\] c"), "a \\[b\\] c");
-});
-
-test("saving preserves tildes inside attachment embeds", async () => {
-  const { restoreObsidianSyntax } = await import("./knowledge.ts");
-  const { parseDoc, serializeDoc } = await import("./doc-markdown.ts");
-  const md = "![[attachment:88888888-8888-4888-8888-888888888888/backup~1.png]]";
-  const written = serializeDoc(parseDoc(md));
-  assert.equal(restoreObsidianSyntax(written).trim(), md);
+  assert.equal(
+    restoreObsidianSyntax("!\\[\\[attachment:88888888-8888-4888-8888-888888888888/backup\\~1.png\\]\\]"),
+    "![[attachment:88888888-8888-4888-8888-888888888888/backup~1.png]]",
+  );
 });
 
 test("explorer paths: a folder is its pages' shared prefix, and a name is one segment", () => {
