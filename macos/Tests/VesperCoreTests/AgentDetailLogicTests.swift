@@ -80,4 +80,12 @@ final class AgentDetailLogicTests: XCTestCase {
             .selectTab(.tokens)
         )
     }
+
+    func testAgentDetailRouteResolvesNatively() {
+        let registry = NativeRouteRegistry.standard(debug: false)
+        let match = registry.resolve("/agents/pike?tab=skills#overrides")
+        XCTAssertEqual(match?.screen, .agentDetail)
+        XCTAssertEqual(match?.params["handle"], "pike")
+        XCTAssertEqual(match?.query["tab"], "skills")
+    }
 }

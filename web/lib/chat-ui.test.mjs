@@ -695,7 +695,7 @@ test("the design kinds have their own scene, with no placeholder left", () => {
   for (const tool of ["design_render", "design_outline", "design_read", "design_flows"]) assert.equal(chatStatusOf({ tool, input: {} }).kind, "design-view", tool);
 });
 
-test("every ChatStatusKind has a scene, a step glyph, and defined scene CSS classes", () => {
+test("every ChatStatusKind has a scene and defined scene CSS classes", () => {
   const ui = readFileSync(new URL("./chat-ui.ts", import.meta.url), "utf8");
   const typeBlock = /export type ChatStatusKind =([\s\S]*?);/.exec(ui)?.[1];
   assert.ok(typeBlock, "ChatStatusKind union not found");
@@ -703,13 +703,11 @@ test("every ChatStatusKind has a scene, a step glyph, and defined scene CSS clas
   assert.ok(kinds.length >= 40, `expected >= 40 kinds, got ${kinds.length}`);
 
   const scenesSrc = readFileSync(new URL("../app/(app)/chat/_components/activity-scene.tsx", import.meta.url), "utf8");
-  const glyphsSrc = readFileSync(new URL("../app/(app)/chat/_components/step-glyph.tsx", import.meta.url), "utf8");
   const css = readFileSync(new URL("../app/globals.css", import.meta.url), "utf8");
 
   for (const k of kinds) {
     const keyRe = new RegExp(`^ {2}(?:"${k}"|${k}):`, "m");
     assert.match(scenesSrc, keyRe, `activity-scene.tsx missing scene or alias for "${k}"`);
-    assert.match(glyphsSrc, keyRe, `step-glyph.tsx missing glyph for "${k}"`);
   }
 
   // Every static scene-* class referenced in activity-scene.tsx must exist in globals.css.

@@ -21,11 +21,8 @@ import { buildShellModel, protocolArea } from "@/lib/native-shell/shell-model";
 import type { NativeCommand, NavModel, ShellCommandName } from "@/lib/native-shell/protocol";
 import { useHarnessHealth } from "@/components/domain/setup";
 import { useChatListView, useNewConversation, usePersonaNav } from "@/app/(app)/chat/_components/chat-history";
-import { NewSpaceDialog } from "@/app/(app)/spaces/_components/new-space-dialog";
-import { openCommandPalette } from "./command-menu";
 import { openInNewTab } from "./navigator-slot";
 import { applyNativeAppearance } from "./theme";
-import { openShortcuts } from "./shortcuts";
 import { useNativeChatActions } from "./native-chat-actions";
 
 /** The page's find box: the first search or filter field in the content, if any. */
@@ -64,7 +61,6 @@ export function NativeShellHost() {
   const { view, setView } = useChatListView();
   const [query, setQuery] = useState("");
   const health = useHarnessHealth();
-  const [creatingSpace, setCreatingSpace] = useState(false);
 
   // ready once, route on every change.
   const sentReady = useRef(false);
@@ -164,13 +160,13 @@ export function NativeShellHost() {
         const m = chatsModel.current;
         if (m.id !== CHATS_NAVIGATOR_ID || !routeNavCommand(m, cmd, (href) => router.push(href), undefined, openInNewTab)) return;
         if (cmd.type === "nav.action" && cmd.actionId === NEW_CHAT_ACTION) start.current();
-        if (cmd.type === "nav.action" && cmd.actionId === NEW_SPACE_ACTION) setCreatingSpace(true);
+        if (cmd.type === "nav.action" && cmd.actionId === NEW_SPACE_ACTION) router.push("/spaces/new");
         if (cmd.type === "nav.activate" && cmd.itemId.startsWith(START_WITH_PREFIX)) startWithPersona.current(cmd.itemId.slice(START_WITH_PREFIX.length));
         if (cmd.type === "nav.picker" && cmd.pickerId === PERSONA_PICKER) pickPersona.current(cmd.value);
         if (cmd.type === "nav.search" && cmd.searchId === CHAT_SEARCH) setQuery(cmd.value);
         if (cmd.type === "nav.action" && cmd.actionId === CHATS_VIEW_ACTION) {
           if (cmd.menuItemId === VIEW_ARCHIVED || cmd.menuItemId === VIEW_ACTIVE) changeView.current(cmd.menuItemId === VIEW_ARCHIVED ? "archived" : "active");
-          if (cmd.menuItemId === NEW_SPACE_ACTION) setCreatingSpace(true);
+          if (cmd.menuItemId === NEW_SPACE_ACTION) router.push("/spaces/new");
         }
         // A row's menu: the menu item id is the actionId, the chat the itemId.
         if (cmd.type === "nav.action" && cmd.itemId && !cmd.menuItemId) {
@@ -193,20 +189,15 @@ export function NativeShellHost() {
     if (cmd.type === "appearance") applyNativeAppearance(cmd);
     if (cmd.type !== "command") return;
     const run: Record<ShellCommandName, () => void> = {
-      openCommandMenu: () => openCommandPalette(typeof cmd.query === "string" ? { query: cmd.query } : undefined),
+      openCommandMenu: () => {},
       newChat: () => conversation.disabled || conversation.start(),
       toggleCompanion,
-      showShortcuts: openShortcuts,
+      showShortcuts: () => {},
       find: focusFind,
       focusContent,
     };
     run[cmd.name]();
   });
 
-  return (
-    <>
-      <NewSpaceDialog open={creatingSpace} onOpenChange={setCreatingSpace} />
-      {actions.dialog}
-    </>
-  );
+  return <>{actions.dialog}</>;
 }
