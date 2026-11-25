@@ -402,8 +402,16 @@ private struct InboxMockupPane: View {
             return
         }
         let versionId = String(item.id.dropFirst("mockup:".count))
-        let request = API.reviewArtifactVersion(id: artifactId, versionId: versionId, body: .init(decision: decision, note: trimmed.isEmpty ? nil : trimmed))
-        review.run({ try await mutateItem(context.store, request, resources: ["artifacts"]) }) { actions.sent(item.id) }
+        let store = context.store
+        review.run({
+            guard let client = store.client else { return }
+            // The inbox has no drawing on screen; draw the version as the review screen would, so
+            // the decision still records its picture.
+            let source = await MockupRendering.source(client: client, artifactId: artifactId, versionId: versionId)
+            _ = try await MockupRendering.review(client: client, artifactId: artifactId, versionId: versionId, source: source,
+                                                 decision: decision, note: trimmed.isEmpty ? nil : trimmed)
+            store.invalidate(QueryInvalidation(resources: ["artifacts", "inbox"]))
+        }) { actions.sent(item.id) }
     }
 }
 

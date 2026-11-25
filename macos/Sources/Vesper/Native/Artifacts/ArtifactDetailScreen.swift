@@ -785,11 +785,11 @@ private struct MockupReviewBannerView: View {
         errorMessage = nil
         defer { busy = false }
         do {
-            _ = try await client.send(API.reviewArtifactVersion(
-                id: artifact.id,
-                versionId: version.id,
-                body: API.ReviewArtifactVersionBody(decision: decision, note: note)
-            ))
+            let source = version.id == artifact.currentVersion.id
+                ? artifact.bodyMd
+                : await MockupRendering.source(client: client, artifactId: artifact.id, versionId: version.id)
+            _ = try await MockupRendering.review(client: client, artifactId: artifact.id, versionId: version.id,
+                                                 source: source, decision: decision, note: note)
             context.store.invalidate(QueryInvalidation(resources: ["artifacts", "tickets", "epics"]))
             await context.store.refetch(API.getArtifact(id: artifact.id))
             requestingChanges = false
@@ -800,7 +800,8 @@ private struct MockupReviewBannerView: View {
     }
 }
 
-/// Renders an SVG mockup via the app's offscreen `EmbedRenderer` vector PDF pipeline with Fit / 100% / 200% zoom.
+/// Renders an SVG mockup with Fit / 100% / 200% zoom: natively when it conforms to mockup SVG
+/// profile v1, through the offscreen WebKit `EmbedRenderer` (and labelled legacy) when it doesn't.
 struct MockupDetailViewer: View {
     @Environment(\.vesperTheme) private var theme
     let artifactId: String
@@ -813,10 +814,14 @@ struct MockupDetailViewer: View {
     @State private var image: NSImage?
     @State private var intrinsicSize: CGSize = CGSize(width: 1280, height: 800)
     @State private var failed = false
+    @State private var legacy = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
+                if legacy {
+                    MockupLegacyLabel()
+                }
                 Spacer()
                 Picker("Zoom", selection: $zoom) {
                     ForEach(ArtifactDetailLogic.MockupZoomMode.allCases, id: \.self) { mode in
@@ -884,16 +889,26 @@ struct MockupDetailViewer: View {
         failed = false
         let parsed = ArtifactDetailLogic.svgSize(source)
         intrinsicSize = CGSize(width: parsed.width, height: parsed.height)
-        let key = EmbedCacheKey(kind: .svgImage, messageID: "mockup-\(artifactId)-\(versionId)", theme: "light", source: source)
-        if let rendered = await EmbedRenderer.shared.render(key, .svg(source, background: "#ffffff")),
-           let nsImage = NSImage(data: rendered.pdf) {
-            intrinsicSize = CGSize(width: rendered.width > 0 ? rendered.width : parsed.width,
-                                   height: rendered.height > 0 ? rendered.height : parsed.height)
-            image = nsImage
+        if let drawing = await MockupRendering.draw(source: source, cacheID: "mockup-\(artifactId)-\(versionId)") {
+            intrinsicSize = CGSize(width: drawing.size.width, height: drawing.size.height)
+            image = drawing.image
+            legacy = drawing.isLegacy
         } else if let fallback = NSImage(data: Data(source.utf8)) {
             image = fallback
         } else {
             failed = true
         }
+    }
+}
+
+/// Marks a mockup drawn by WebKit because its SVG predates profile v1.
+struct MockupLegacyLabel: View {
+    @Environment(\.vesperTheme) private var theme
+
+    var body: some View {
+        Label("Legacy SVG \u{00B7} drawn with WebKit", systemImage: "clock.arrow.circlepath")
+            .font(.system(size: theme.pointSize(.small)))
+            .foregroundStyle(theme.palette.tertiaryText)
+            .help("This version uses SVG outside mockup profile v1, so the native renderer doesn\u{2019}t draw it. Edit it to bring it into the profile.")
     }
 }
