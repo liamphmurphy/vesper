@@ -427,6 +427,7 @@ struct ChatTranscriptView: View {
             if isRunning {
                 _ = await context.store.refetch(API.getChat(id: chatId))
                 _ = await context.store.refetch(messagesRequest)
+                _ = await context.store.refetch(API.listChatFollowups(id: chatId))
             }
             _ = await context.store.refetch(asidesRequest)
         }
