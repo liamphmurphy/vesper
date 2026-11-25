@@ -796,7 +796,7 @@ app sandbox's CSP and the ports of `web/lib/chat-svg.ts` and `web/lib/chat-app.t
 - **Diagrams.** svg-image and svg-steps theme `var(--viz-*)` with the page's `--viz-*` tokens as the web
   does, render each step-through frame on demand (and the next one ahead), and offer Image/Code,
   Save to Library (`POST /library/diagrams`, the web's request, with `exportSvg` of the last frame) and
-  Download. Mermaid (`NativeMermaid`: flowchart and sequence) uses the
+  Download. Mermaid (`NativeMermaid`: flowchart, sequence, pie, gantt, state, ER and class) uses the
   colours the web's mermaid.js theme gave diagrams, and shows its code for any other diagram type, a
   syntax error, or a fence over `NativeMermaid.maxSource` (20,000 characters); its Save to Library
   sends the laid-out SVG.
