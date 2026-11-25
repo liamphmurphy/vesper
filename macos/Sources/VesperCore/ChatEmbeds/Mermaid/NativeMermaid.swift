@@ -51,6 +51,8 @@ public enum NativeMermaid {
             return try MermaidPie.parse(doc).draw(theme)
         case "gantt":
             return try MermaidGantt.parse(doc).draw(theme)
+        case "stateDiagram", "stateDiagram-v2":
+            return try MermaidState.parse(doc).draw(theme, title: doc.title)
         default:
             throw .unsupportedDiagram(doc.keyword)
         }
