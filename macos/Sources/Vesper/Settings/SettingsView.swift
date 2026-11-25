@@ -29,6 +29,7 @@ extension SettingsPane: Identifiable {
         case .power: return "Power & Stack"
         case .backups: return "Backups"
         case .security: return "Security"
+        case .companion: return "iPhone Companion"
         case .updates: return "Updates"
         }
     }
@@ -55,6 +56,7 @@ extension SettingsPane: Identifiable {
         case .power: return "bolt"
         case .backups: return "externaldrive"
         case .security: return "touchid"
+        case .companion: return "iphone"
         case .updates: return "arrow.down.circle"
         }
     }
@@ -72,7 +74,7 @@ private let settingsSidebarGroups: [SettingsSidebarGroup] = [
     SettingsSidebarGroup(id: "integrations", title: "Integrations", panes: [.secrets, .connectors, .repositories]),
     SettingsSidebarGroup(id: "workspace", title: "Workspace", panes: [.workspace, .runners, .devWorkspace, .spaces]),
     SettingsSidebarGroup(id: "account", title: "Account", panes: [.signIn]),
-    SettingsSidebarGroup(id: "mac-app", title: "Mac App", panes: [.general, .notifications, .shortcuts, .files, .workspaces, .power, .backups, .security, .updates]),
+    SettingsSidebarGroup(id: "mac-app", title: "Mac App", panes: [.general, .notifications, .shortcuts, .files, .workspaces, .power, .backups, .security, .companion, .updates]),
 ]
 
 @MainActor
@@ -218,6 +220,8 @@ struct SettingsView: View {
             SettingsSpacesPane(aux: aux, navigation: navigation)
         case .signIn:
             SettingsSignInPane(aux: aux)
+        case .companion:
+            SettingsCompanionPane(aux: aux)
         case .general, .notifications, .shortcuts, .files, .workspaces, .power, .backups, .security, .updates:
             SettingsDetail(aux: aux, section: navigation.selection)
         }

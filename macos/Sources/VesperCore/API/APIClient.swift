@@ -27,22 +27,47 @@ public enum APIError: Error, Equatable, Sendable {
 /// How requests reach the network. Tests inject a stub.
 public typealias HTTPTransport = @Sendable (URLRequest) async throws -> (Data, HTTPURLResponse)
 
-/// Calls the Vesper API with the shell's session cookie, for actions taken outside a page
-/// (notification buttons, the menu bar, quick capture, sent files) and for the monitors. Paths are
-/// built by the validated request builders and must start with `/api/v1/`.
+/// Authentication method used by `APIClient` and `EventStream`.
+public enum APIAuth: Sendable, Equatable {
+    case cookie(String)
+    case bearer(String)
+
+    public var rawToken: String {
+        switch self {
+        case .cookie(let token), .bearer(let token): return token
+        }
+    }
+}
+
+/// Calls the Vesper API with either the desktop shell's session cookie or a paired companion
+/// device's bearer token. Paths are built by the validated request builders and must start with `/api/v1/`.
 public final class APIClient: Sendable {
     public let baseURL: URL
-    public let sessionToken: String
+    public let auth: APIAuth
+    public var sessionToken: String { auth.rawToken }
     private let transport: HTTPTransport
 
-    public init(baseURL: URL, sessionToken: String, transport: HTTPTransport? = nil) {
+    public init(baseURL: URL, auth: APIAuth, transport: HTTPTransport? = nil) {
         self.baseURL = baseURL
-        self.sessionToken = sessionToken
+        self.auth = auth
         self.transport = transport ?? APIClient.urlSessionTransport
     }
 
+    public convenience init(baseURL: URL, sessionToken: String, transport: HTTPTransport? = nil) {
+        self.init(baseURL: baseURL, auth: .cookie(sessionToken), transport: transport)
+    }
+
     public convenience init(session: StackSession, transport: HTTPTransport? = nil) {
-        self.init(baseURL: session.baseURL, sessionToken: session.sessionToken, transport: transport)
+        self.init(baseURL: session.baseURL, auth: .cookie(session.sessionToken), transport: transport)
+    }
+
+    /// Builds an `HTTPTransport` backed by a custom `URLSession` (e.g. a TLS-pinned companion session).
+    public static func transport(session: URLSession) -> HTTPTransport {
+        { request in
+            let (data, response) = try await session.data(for: request)
+            guard let http = response as? HTTPURLResponse else { throw URLError(.badServerResponse) }
+            return (data, http)
+        }
     }
 
     static let urlSession: URLSession = {
@@ -73,9 +98,14 @@ public final class APIClient: Sendable {
         return url
     }
 
-    /// Adds the cookie and standard headers to a request for `url` (also used by the SSE stream).
+    /// Adds the session cookie or companion bearer token to a request (also used by the SSE stream).
     public func authorize(_ request: inout URLRequest) {
-        request.setValue("\(StackSession.cookieName)=\(sessionToken)", forHTTPHeaderField: "Cookie")
+        switch auth {
+        case .cookie(let token):
+            request.setValue("\(StackSession.cookieName)=\(token)", forHTTPHeaderField: "Cookie")
+        case .bearer(let token):
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
     }
 
     /// Executes a prebuilt URLRequest through this client's transport (used by `OwnerAuthAPI` where

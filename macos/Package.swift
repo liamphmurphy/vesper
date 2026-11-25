@@ -4,8 +4,9 @@ import PackageDescription
 
 let package = Package(
     name: "Vesper",
-    platforms: [.macOS(.v26)],
+    platforms: [.macOS(.v26), .iOS(.v26)],
     products: [
+        .library(name: "VesperCore", targets: ["VesperCore"]),
         .executable(name: "Vesper", targets: ["Vesper"]),
         .executable(name: "vesper-matte", targets: ["VesperMatte"]),
     ],

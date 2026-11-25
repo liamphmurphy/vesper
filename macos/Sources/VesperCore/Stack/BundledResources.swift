@@ -79,10 +79,12 @@ public struct StackLaunch: Sendable {
     public var runnerSlots: Int?
     /// PEM or DER files of roots agent VMs trust, for a TLS-inspecting proxy (RUNNER_EXTRA_CA_FILE). The variable in the environment wins.
     public var extraCaFiles: [String]
+    /// Optional TLS listen address for LAN/Tailscale companion devices (VESPER_COMPANION_ADDR), e.g. ":8443".
+    public var companionAddr: String?
 
     public init(
         resources: BundledResources, dataDirectory: URL, secretsKey: String, port: Int = 8080, nodeBin: String? = nil,
-        rootfsUrl: String? = nil, runnerSlots: Int? = nil, extraCaFiles: [String] = []
+        rootfsUrl: String? = nil, runnerSlots: Int? = nil, extraCaFiles: [String] = [], companionAddr: String? = nil
     ) {
         self.resources = resources
         self.dataDirectory = dataDirectory
@@ -92,6 +94,7 @@ public struct StackLaunch: Sendable {
         self.rootfsUrl = rootfsUrl
         self.runnerSlots = runnerSlots
         self.extraCaFiles = extraCaFiles
+        self.companionAddr = companionAddr
     }
 
     public var address: String { "127.0.0.1:\(port)" }
@@ -117,6 +120,9 @@ public struct StackLaunch: Sendable {
         let caPaths = extraCaFiles.filter { !$0.isEmpty }
         if !caPaths.isEmpty, base["RUNNER_EXTRA_CA_FILE"]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
             env["RUNNER_EXTRA_CA_FILE"] = caPaths.joined(separator: ":")
+        }
+        if let addr = companionAddr, !addr.isEmpty, base["VESPER_COMPANION_ADDR"]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
+            env["VESPER_COMPANION_ADDR"] = addr
         }
         env["VESPER_APP_SIGN_IN_CODE"] = "stdout"
         env.removeValue(forKey: "VESPER_NO_SIGNIN")

@@ -1,9 +1,21 @@
 import Foundation
 import Observation
 
-// The public surface the app target uses to run the bundled `vesper app` (docs/dev/native-mac-app.md,
-// "Shell ↔ Go"). The window code depends only on this file's public API; the implementation fills
-// in the bodies.
+/// A signed-in connection to the running stack.
+public struct StackSession: Sendable, Equatable {
+    /// e.g. http://127.0.0.1:8080
+    public var baseURL: URL
+    /// The `vesper_session` cookie value. Put it into each web view's cookie store and send it on
+    /// the shell's own API calls. Never log it.
+    public var sessionToken: String
+
+    public init(baseURL: URL, sessionToken: String) {
+        self.baseURL = baseURL
+        self.sessionToken = sessionToken
+    }
+
+    public static let cookieName = "vesper_session"
+}
 
 /// Health phases, as desktop/src/stack-health.ts (minus "remote": the app is local only).
 public enum StackPhase: String, Sendable, Codable {
@@ -43,21 +55,10 @@ public struct StackHealth: Sendable, Equatable {
     public static let initial = StackHealth(phase: .starting, title: "Starting…")
 }
 
-/// A signed-in connection to the running stack.
-public struct StackSession: Sendable, Equatable {
-    /// e.g. http://127.0.0.1:8080
-    public var baseURL: URL
-    /// The `vesper_session` cookie value. Put it into each web view's cookie store and send it on
-    /// the shell's own API calls. Never log it.
-    public var sessionToken: String
-
-    public init(baseURL: URL, sessionToken: String) {
-        self.baseURL = baseURL
-        self.sessionToken = sessionToken
-    }
-
-    public static let cookieName = "vesper_session"
-}
+#if os(macOS)
+// The public surface the app target uses to run the bundled `vesper app` (docs/dev/native-mac-app.md,
+// "Shell ↔ Go"). The window code depends only on this file's public API; the implementation fills
+// in the bodies.
 
 /// Knobs for the controller. The defaults are what the app uses; tests and the integration test override them.
 public struct StackOptions: Sendable {
@@ -137,6 +138,7 @@ public final class StackController {
     public var runnerSlotsOverride: Int?
     /// RUNNER_EXTRA_CA_FILE paths for the next start (the environment variable still wins). Empty: none.
     public var extraCaFilesOverride: [String] = []
+    public var companionAddrOverride: String?
     /// Called when the process exits on its own after a successful start. `willRestart` says whether auto-restart will follow.
     public var onCrash: ((StackExitInfo, _ willRestart: Bool) -> Void)?
     /// Called whenever `session` changes (monitors start and stop from here).
@@ -192,6 +194,7 @@ public final class StackController {
         minFreeDiskGb = settings.minFreeDiskGb
         runnerSlotsOverride = settings.runnerSlots
         extraCaFilesOverride = settings.extraCaFiles
+        companionAddrOverride = settings.companionEnabled ? ":\(settings.companionPort)" : nil
         recomputeHealth()
     }
 
@@ -263,7 +266,8 @@ public final class StackController {
         let launch = StackLaunch(
             resources: resources, dataDirectory: dataDirectory, secretsKey: secretsKey, port: options.port,
             nodeBin: StackLaunch.resolveNode(resources: resources, environment: env), rootfsUrl: rootfsUrl,
-            runnerSlots: runnerSlotsOverride, extraCaFiles: extraCaFilesOverride
+            runnerSlots: runnerSlotsOverride, extraCaFiles: extraCaFilesOverride,
+            companionAddr: companionAddrOverride
         )
 
         generation += 1
@@ -691,3 +695,4 @@ public enum StackSignIn {
             .map(\.value)
     }
 }
+#endif

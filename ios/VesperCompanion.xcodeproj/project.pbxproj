@@ -1,0 +1,260 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		AA0000010000000000000001 /* VesperCompanionApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000010000000000000001 /* VesperCompanionApp.swift */; };
+		AA0000020000000000000002 /* PairingView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000020000000000000002 /* PairingView.swift */; };
+		AA0000030000000000000003 /* RootTabView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000030000000000000003 /* RootTabView.swift */; };
+		AA0000040000000000000004 /* ChatViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000040000000000000004 /* ChatViews.swift */; };
+		AA0000050000000000000005 /* InboxView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000050000000000000005 /* InboxView.swift */; };
+		AA0000060000000000000006 /* RunsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000060000000000000006 /* RunsView.swift */; };
+		AA0000070000000000000007 /* QuickCaptureView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000070000000000000007 /* QuickCaptureView.swift */; };
+		AA0000080000000000000008 /* VesperCore in Frameworks */ = {isa = PBXBuildFile; productRef = DD0000020000000000000002 /* VesperCore */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		BB0000010000000000000001 /* VesperCompanionApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VesperCompanionApp.swift; sourceTree = "<group>"; };
+		BB0000020000000000000002 /* PairingView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PairingView.swift; sourceTree = "<group>"; };
+		BB0000030000000000000003 /* RootTabView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RootTabView.swift; sourceTree = "<group>"; };
+		BB0000040000000000000004 /* ChatViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatViews.swift; sourceTree = "<group>"; };
+		BB0000050000000000000005 /* InboxView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InboxView.swift; sourceTree = "<group>"; };
+		BB0000060000000000000006 /* RunsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RunsView.swift; sourceTree = "<group>"; };
+		BB0000070000000000000007 /* QuickCaptureView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = QuickCaptureView.swift; sourceTree = "<group>"; };
+		BB0000080000000000000008 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+		BB0000990000000000000099 /* VesperCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VesperCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		CC0000010000000000000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000080000000000000008 /* VesperCore in Frameworks */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		EE0000010000000000000001 = {
+			isa = PBXGroup;
+			children = (
+				EE0000020000000000000002 /* VesperCompanion */,
+				EE0000030000000000000003 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		EE0000020000000000000002 /* VesperCompanion */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000010000000000000001 /* VesperCompanionApp.swift */,
+				BB0000020000000000000002 /* PairingView.swift */,
+				BB0000030000000000000003 /* RootTabView.swift */,
+				BB0000040000000000000004 /* ChatViews.swift */,
+				BB0000050000000000000005 /* InboxView.swift */,
+				BB0000060000000000000006 /* RunsView.swift */,
+				BB0000070000000000000007 /* QuickCaptureView.swift */,
+				BB0000080000000000000008 /* Info.plist */,
+			);
+			path = VesperCompanion;
+			sourceTree = "<group>";
+		};
+		EE0000030000000000000003 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				BB0000990000000000000099 /* VesperCompanion.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		FF0000010000000000000001 /* VesperCompanion */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = 110000020000000000000002 /* Build configuration list for PBXNativeTarget "VesperCompanion" */;
+			buildPhases = (
+				CC0000020000000000000002 /* Sources */,
+				CC0000010000000000000001 /* Frameworks */,
+				CC0000030000000000000003 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = VesperCompanion;
+			packageProductDependencies = (
+				DD0000020000000000000002 /* VesperCore */,
+			);
+			productName = VesperCompanion;
+			productReference = BB0000990000000000000099 /* VesperCompanion.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		FF0000990000000000000099 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1600;
+				LastUpgradeCheck = 1600;
+			};
+			buildConfigurationList = 110000010000000000000001 /* Build configuration list for PBXProject "VesperCompanion" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = EE0000010000000000000001;
+			packageReferences = (
+				DD0000010000000000000001 /* XCLocalSwiftPackageReference "../macos" */,
+			);
+			productRefGroup = EE0000030000000000000003 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				FF0000010000000000000001 /* VesperCompanion */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		CC0000030000000000000003 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		CC0000020000000000000002 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA0000010000000000000001 /* VesperCompanionApp.swift in Sources */,
+				AA0000020000000000000002 /* PairingView.swift in Sources */,
+				AA0000030000000000000003 /* RootTabView.swift in Sources */,
+				AA0000040000000000000004 /* ChatViews.swift in Sources */,
+				AA0000050000000000000005 /* InboxView.swift in Sources */,
+				AA0000060000000000000006 /* RunsView.swift in Sources */,
+				AA0000070000000000000007 /* QuickCaptureView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		220000010000000000000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Debug;
+		};
+		220000020000000000000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				IPHONEOS_DEPLOYMENT_TARGET = 26.0;
+				MARKETING_VERSION = 1.0;
+				SDKROOT = iphoneos;
+				SUPPORTED_PLATFORMS = "iphoneos iphonesimulator";
+				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_VERSION = 6.0;
+				TARGETED_DEVICE_FAMILY = "1,2";
+			};
+			name = Release;
+		};
+		220000030000000000000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = VesperCompanion/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.liamphmurphy.vesper.companion;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Debug;
+		};
+		220000040000000000000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				GENERATE_INFOPLIST_FILE = NO;
+				INFOPLIST_FILE = VesperCompanion/Info.plist;
+				PRODUCT_BUNDLE_IDENTIFIER = com.liamphmurphy.vesper.companion;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_VERSION = 6.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		110000010000000000000001 /* Build configuration list for PBXProject "VesperCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				220000010000000000000001 /* Debug */,
+				220000020000000000000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+		110000020000000000000002 /* Build configuration list for PBXNativeTarget "VesperCompanion" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				220000030000000000000003 /* Debug */,
+				220000040000000000000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Debug;
+		};
+/* End XCConfigurationList section */
+
+/* Begin XCLocalSwiftPackageReference section */
+		DD0000010000000000000001 /* XCLocalSwiftPackageReference "../macos" */ = {
+			isa = XCLocalSwiftPackageReference;
+			relativePath = ../macos;
+		};
+/* End XCLocalSwiftPackageReference section */
+
+/* Begin XCSwiftPackageProductDependency section */
+		DD0000020000000000000002 /* VesperCore */ = {
+			isa = XCSwiftPackageProductDependency;
+			package = DD0000010000000000000001 /* XCLocalSwiftPackageReference "../macos" */;
+			productName = VesperCore;
+		};
+/* End XCSwiftPackageProductDependency section */
+	};
+	rootObject = FF0000990000000000000099 /* Project object */;
+}

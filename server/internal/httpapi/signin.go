@@ -7,6 +7,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/auth"
+	"github.com/liamphmurphy/vesper/server/internal/companion"
 )
 
 // SignInPath is where a sign-in link points: GET with ?code=.
@@ -31,6 +32,20 @@ func (s *Server) signedIn(next http.Handler) http.Handler {
 			return
 		}
 		if s.AnonymousAPI {
+			next.ServeHTTP(w, r)
+			return
+		}
+		if bearer := companionBearerToken(r); bearer != "" {
+			ok, err := companion.ValidDeviceToken(r.Context(), s.Q, bearer)
+			if err != nil {
+				s.Log.Error("companion device token lookup", "err", err)
+				writeError(w, http.StatusInternalServerError, api.Internal, "internal error", "")
+				return
+			}
+			if !ok {
+				writeError(w, http.StatusUnauthorized, api.Unauthenticated, "paired device token is invalid or revoked", "")
+				return
+			}
 			next.ServeHTTP(w, r)
 			return
 		}

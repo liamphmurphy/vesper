@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 // The release feed request behind Updates (desktop/src/native.ts checkForUpdates). The feed is public,
@@ -25,3 +26,4 @@ public enum UpdateCheck {
         return Updates.pickUpdate(currentVersion: currentVersion, feedURL: feedURL, release: release)
     }
 }
+#endif

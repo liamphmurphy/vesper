@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 // Port of the backup inspect/import helpers in desktop/src/stack.ts. The bundled `vesper` binary does
@@ -163,3 +164,4 @@ public enum BackupImport {
         }
     }
 }
+#endif

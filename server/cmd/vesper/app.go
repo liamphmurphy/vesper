@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"crypto/rand"
+	"crypto/tls"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -30,6 +31,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/blob"
 	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
+	"github.com/liamphmurphy/vesper/server/internal/companion"
 	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/db"
@@ -80,6 +82,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	defaultData := defaultAppDataDir()
 	dataDirFlag := fs.String("data-dir", envOr("VESPER_APP_DATA_DIR", defaultData), "persistent Vesper desktop data directory")
 	addrFlag := fs.String("addr", envOr("VESPER_APP_ADDR", "127.0.0.1:8080"), "loopback listen address for Vesper app")
+	companionAddrFlag := fs.String("companion-addr", strings.TrimSpace(os.Getenv("VESPER_COMPANION_ADDR")), "optional TLS listen address for LAN/Tailscale companion devices (e.g. :8443)")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -299,6 +302,42 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 
 	imgMgr := NewImageManager()
+	var companionServer *http.Server
+	if addr := strings.TrimSpace(*companionAddrFlag); addr != "" {
+		hostName, _ := os.Hostname()
+		mat, cerr := companion.LoadOrCreateCert(filepath.Join(dataDir, "companion"), hostName)
+		if cerr != nil {
+			_ = ln.Close()
+			return fmt.Errorf("companion tls cert: %w", cerr)
+		}
+		cln, lerr := net.Listen("tcp", addr)
+		if lerr != nil {
+			_ = ln.Close()
+			return fmt.Errorf("companion listen %s: %w", addr, lerr)
+		}
+		companionPort := cln.Addr().(*net.TCPAddr).Port
+		srv.Companion = &httpapi.CompanionRuntimeInfo{
+			Enabled:         true,
+			Port:            companionPort,
+			CertFingerprint: mat.FingerprintSHA256,
+		}
+		apiHandler := srv.Handler()
+		// Companion listener is TLS-only for paired LAN/Tailscale devices; it
+		// omits loopbackHostOnly because clients connect by LAN/Tailscale IP or
+		// MagicDNS, and relies on TLS + paired bearer token / session cookie auth.
+		companionServer = &http.Server{
+			Handler:           buildAppMux(apiHandler, webHandler, imgMgr),
+			ReadHeaderTimeout: 10 * time.Second,
+			TLSConfig:         mat.Config,
+		}
+		go func() {
+			if err := companionServer.Serve(tls.NewListener(cln, mat.Config)); err != nil && !errors.Is(err, http.ErrServerClosed) {
+				log.Error("companion listener stopped", "err", err)
+			}
+		}()
+		log.Info("companion TLS listener ready", "addr", cln.Addr().String(), "fingerprint", mat.FingerprintSHA256)
+	}
+
 	apiHandler := srv.Handler()
 	// Only the outer listener checks Host: microVMs reach apiHandler in-process as
 	// api.vesper.internal, which is not a loopback name.
@@ -346,6 +385,9 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 
 	sctx, scancel := context.WithTimeout(context.Background(), 10*time.Second)
+	if companionServer != nil {
+		_ = companionServer.Shutdown(sctx)
+	}
 	if serr := hs.Shutdown(sctx); serr != nil && serveErr == nil {
 		serveErr = serr
 	}

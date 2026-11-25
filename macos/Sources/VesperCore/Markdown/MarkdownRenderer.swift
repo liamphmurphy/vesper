@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// How a `MarkdownView` draws: the type token and colour its container gives the text (the web's
@@ -668,3 +669,4 @@ private extension NSFont {
         return NSFont(descriptor: descriptor, size: pointSize) ?? self
     }
 }
+#endif
