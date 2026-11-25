@@ -1139,6 +1139,23 @@ func (q *Queries) ReviewArtifactVersion(ctx context.Context, arg ReviewArtifactV
 	return i, err
 }
 
+const setArtifactChat = `-- name: SetArtifactChat :exec
+UPDATE artifacts SET chat_session_id = $1 WHERE id = $2 AND workspace_id = $3
+`
+
+type SetArtifactChatParams struct {
+	ChatID      *uuid.UUID
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+}
+
+// The chat a persona made the artifact in (a mockup posted as a chat card):
+// reviews of it are told to that chat.
+func (q *Queries) SetArtifactChat(ctx context.Context, arg SetArtifactChatParams) error {
+	_, err := q.db.Exec(ctx, setArtifactChat, arg.ChatID, arg.ID, arg.WorkspaceID)
+	return err
+}
+
 const setArtifactCurrentVersion = `-- name: SetArtifactCurrentVersion :exec
 UPDATE artifacts SET current_version_id = $2, search_text = $3, summary = $4 WHERE id = $1
 `

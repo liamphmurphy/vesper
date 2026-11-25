@@ -22,40 +22,36 @@ enum EmbedImages {
         cache.setObject(image, forKey: name)
         return image
     }
-}
 
-/// Draws math. Math is meant to be laid out natively (SwiftMath, which couldn't be vendored yet: see
-/// docs/dev/native-mac-app.md "Native chat embeds"); whatever the native engine can't lay out goes
-/// through the render-once web path (KaTeX in `EmbedRenderer`), which today is all of it.
-@MainActor
-protocol MathRenderer {
-    /// The drawn math, or nil when this renderer can't lay it out.
-    func render(_ request: MathRenderRequest, messageID: String) async -> RenderedEmbed?
-}
-
-/// KaTeX in the off-screen renderer, exported as a vector PDF: the same layout and fonts as the web.
-struct WebMathRenderer: MathRenderer {
-    func render(_ request: MathRenderRequest, messageID: String) async -> RenderedEmbed? {
-        guard !request.tex.isEmpty else { return nil }
-        return await EmbedRenderer.shared.render(request.cacheKey(messageID: messageID), .math(request))
+    /// A natively compiled SVG frame as an image that redraws the document at each size AppKit asks
+    /// for, so it stays sharp at any zoom. Not a PDF: CoreGraphics' PDF output flattens gradient
+    /// alpha (see `MockupRendering.image`).
+    static func image(_ frame: ChatSVGFrame, key: EmbedCacheKey, background: String) -> NSImage {
+        let name = "native|\(key.description)|\(background)" as NSString
+        if let hit = cache.object(forKey: name) { return hit }
+        let fill = RGBA(hex: background).map { CGColor(srgbRed: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha) }
+        let document = frame.document
+        let image = NSImage(size: document.intrinsicSize, flipped: true) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            MockupSVGRenderer.draw(document, in: ctx, rect: rect, options: MockupSVGRenderOptions(background: fill))
+            return true
+        }
+        cache.setObject(image, forKey: name)
+        return image
     }
 }
 
-/// A native engine first, the web path for what it can't lay out.
-struct FallbackMathRenderer: MathRenderer {
-    var primary: (any MathRenderer)?
-    var fallback: any MathRenderer
-
-    func render(_ request: MathRenderRequest, messageID: String) async -> RenderedEmbed? {
-        if let primary, let drawn = await primary.render(request, messageID: messageID) { return drawn }
-        return await fallback.render(request, messageID: messageID)
-    }
-}
-
+/// Draws math natively (`NativeMath`: SwiftMath layout, CoreGraphics drawing), cached like every
+/// other embed. nil when the TeX doesn't parse; the view keeps showing the source then.
 @MainActor
 enum MathRendering {
-    /// Plug a native renderer in as `primary` when SwiftMath is vendored.
-    static let shared: any MathRenderer = FallbackMathRenderer(primary: nil, fallback: WebMathRenderer())
+    static func render(_ request: MathRenderRequest, messageID: String) -> RenderedEmbed? {
+        let key = request.cacheKey(messageID: messageID)
+        if let hit = EmbedRenderCache.shared.value(for: key) { return hit }
+        guard let drawn = NativeMath.render(request) else { return nil }
+        EmbedRenderCache.shared.insert(drawn, for: key, cost: drawn.pdf.count)
+        return drawn
+    }
 }
 
 /// A rendered image sized as drawn, shrinking to fit the width (and `maxHeight`) without growing.

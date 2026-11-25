@@ -15,6 +15,9 @@ public enum EmbeddedBlockKind: String, Sendable, CaseIterable, Hashable {
     case svgSteps = "svg-steps"
     /// ```app / ```html-app: a self-contained HTML document run in a sandboxed web view.
     case app
+    /// ```mockup: a mockup version a persona made with create_mockup (`ChatMockupCard`), drawn
+    /// natively for the person to review in place.
+    case mockup
 
     /// The kind for a fence's info string, nil for a fence that stays a code block. Like the web, only
     /// the first word counts and case doesn't.
@@ -27,12 +30,14 @@ public enum EmbeddedBlockKind: String, Sendable, CaseIterable, Hashable {
         case "svg-image": return .svgImage
         case "svg-steps": return .svgSteps
         case "app", "html-app": return .app
+        case "mockup": return .mockup
         default: return nil
         }
     }
 
-    /// Whether the block is drawn once into a vector image (everything but apps, which stay live).
-    public var isRenderedOnce: Bool { self != .app }
+    /// Whether the block is drawn once into a vector image (everything but apps, which stay live, and
+    /// mockup cards, which load their version from the server).
+    public var isRenderedOnce: Bool { self != .app && self != .mockup }
 
     /// Whether "Save to Library" applies: the diagrams (POST /library/diagrams takes any SVG document
     /// from an assistant reply). Math and apps aren't diagrams.

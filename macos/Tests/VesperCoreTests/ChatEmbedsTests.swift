@@ -21,9 +21,9 @@ final class ChatEmbedsTests: XCTestCase {
         XCTAssertNil(EmbeddedBlockKind.classify(info: nil))
     }
 
-    func testOnlyDiagramsSaveToLibraryAndOnlyAppsStayLive() {
+    func testOnlyDiagramsSaveToLibraryAndOnlyAppsAndMockupsStayLive() {
         XCTAssertEqual(EmbeddedBlockKind.allCases.filter(\.savesToLibrary), [.mermaid, .svgImage, .svgSteps])
-        XCTAssertEqual(EmbeddedBlockKind.allCases.filter { !$0.isRenderedOnce }, [.app])
+        XCTAssertEqual(EmbeddedBlockKind.allCases.filter { !$0.isRenderedOnce }, [.app, .mockup])
     }
 
     // MARK: Cache keys
@@ -179,32 +179,18 @@ final class ChatEmbedsTests: XCTestCase {
         XCTAssertEqual(ChatApp.jsonString(#"a"b"#), #""a\"b""#)
     }
 
-    // MARK: Renderer page
+    // MARK: Mermaid theme
 
-    func testRendererPageLoadsNothingRemote() throws {
-        XCTAssertTrue(EmbedRendererPage.csp.hasPrefix("default-src 'none'"))
-        XCTAssertTrue(EmbedRendererPage.csp.contains("connect-src 'none'"))
-        XCTAssertFalse(EmbedRendererPage.csp.contains("http"))
-        let dir = try XCTUnwrap(EmbedRendererPage.bundledDirectory(), "Resources/embeds missing from VesperCore's bundle")
-        let html = try XCTUnwrap(EmbedRendererPage.html(resources: dir))
-        XCTAssertTrue(html.contains("window.VesperEmbeds"))
-        XCTAssertFalse(html.contains("url(fonts/"), "KaTeX's fonts must be inlined")
-        XCTAssertNil(html.range(of: #"(src|href)\s*=\s*["']?https?:"#, options: .regularExpression), "the renderer page must not reference the network")
-        let mermaid = try XCTUnwrap(EmbedRendererPage.mermaidScript(resources: dir))
-        XCTAssertTrue(mermaid.hasPrefix("/* mermaid "))
-    }
-
-    func testMermaidConfigMatchesTheWebsInitialize() throws {
-        let config = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EmbedRendererPage.mermaidConfig(.dark).utf8)) as? [String: Any])
-        XCTAssertEqual(config["securityLevel"] as? String, "strict")
-        XCTAssertEqual(config["theme"] as? String, "base")
-        XCTAssertEqual(config["htmlLabels"] as? Bool, false)
-        let vars = try XCTUnwrap(config["themeVariables"] as? [String: Any])
-        XCTAssertEqual(vars["darkMode"] as? Bool, true)
-        XCTAssertEqual(vars["primaryColor"] as? String, VizPalette.dark.panel)
-        XCTAssertEqual(vars["pie8"] as? String, VizPalette.dark.series[7])
-        let light = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(EmbedRendererPage.mermaidConfig(.light).utf8)) as? [String: Any])
-        XCTAssertEqual((light["themeVariables"] as? [String: Any])?["darkMode"] as? Bool, false)
+    /// Native mermaid keeps the colours the web's mermaid.js "base" theme gave chat diagrams.
+    func testMermaidThemeMapsThePaletteLikeTheWebsInitialize() {
+        let dark = MermaidTheme(.dark)
+        XCTAssertTrue(dark.isDark)
+        XCTAssertEqual(dark.nodeFill, VizPalette.dark.panel)
+        XCTAssertEqual(dark.nodeStroke, VizPalette.dark.series[0])
+        XCTAssertEqual(dark.text, VizPalette.dark.ink)
+        XCTAssertEqual(dark.line, VizPalette.dark.line)
+        XCTAssertEqual(dark.series(7), VizPalette.dark.series[7])
+        XCTAssertFalse(MermaidTheme(.light).isDark)
     }
 
     // MARK: Cache

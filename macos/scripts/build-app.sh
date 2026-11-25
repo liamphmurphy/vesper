@@ -34,6 +34,9 @@ bin_dir="$(cd "${macos_dir}" && swift build -c release --show-bin-path)"
 # VesperCore's resources (Shiki for code blocks; CodeHighlighter.bundledScript finds them in Resources).
 core_bundle="${bin_dir}/Vesper_VesperCore.bundle"
 [[ -d "${core_bundle}" ]] || { echo "Missing ${core_bundle}" >&2; exit 1; }
+# SwiftMath's font (Latin Modern Math) for chat math; its Bundle.module looks in Resources too.
+math_bundle="${bin_dir}/Vesper_SwiftMath.bundle"
+[[ -d "${math_bundle}" ]] || { echo "Missing ${math_bundle}" >&2; exit 1; }
 
 # 1b. Vesper for Safari (docs/dev/safari-extension.md): the Safari web extension's handler. SwiftPM
 #     can't build an app extension, so compile it here: the shared bridge plus the principal class,
@@ -89,6 +92,7 @@ mkdir -p "${contents}/MacOS" "${contents}/Resources/node/bin" "${contents}/Resou
 cp "${bin_dir}/Vesper" "${contents}/MacOS/Vesper"
 chmod 0755 "${contents}/MacOS/Vesper"
 ditto "${core_bundle}" "${contents}/Resources/Vesper_VesperCore.bundle"
+ditto "${math_bundle}" "${contents}/Resources/Vesper_SwiftMath.bundle"
 for sub in bin postgres design-worker images; do
   ditto "${res_src}/${sub}" "${contents}/Resources/${sub}"
 done
@@ -132,6 +136,7 @@ done
 log "signed ${count} Mach-O files"
 sign --entitlements "${entitlements}" "${contents}/Resources/bin/vesper" 2>&1 | grep -v 'replacing existing signature' || true
 sign "${contents}/Resources/Vesper_VesperCore.bundle" 2>&1 | grep -v 'replacing existing signature' || true
+sign "${contents}/Resources/Vesper_SwiftMath.bundle" 2>&1 | grep -v 'replacing existing signature' || true
 # Safari only loads a sandboxed extension; sign it with its entitlements before the app seals it.
 sign --entitlements "${safari_src}/VesperSafari.entitlements" "${appex}" 2>&1 | grep -v 'replacing existing signature' || true
 sign "${app}" 2>&1 | grep -v 'replacing existing signature' || true

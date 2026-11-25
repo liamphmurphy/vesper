@@ -11,11 +11,32 @@ public struct MockupSVGRenderOptions: Sendable {
     /// ancestors' transforms, opacity, clips and masks: the editor's layer for a dragged element.
     public var onlyPaths: Set<String>?
     public var background: CGColor?
+    /// Per-frame values replacing an element's own, by its tree path: what a CSS animation does
+    /// to the element (persona characters). Instances under a `<use>` take their referenced
+    /// element's override, as CSS styles a use's shadow clones. Clip-path children ignore them.
+    public var nodeOverrides: [String: MockupSVGNodeOverride]
 
-    public init(hiddenPaths: Set<String> = [], onlyPaths: Set<String>? = nil, background: CGColor? = nil) {
+    public init(hiddenPaths: Set<String> = [], onlyPaths: Set<String>? = nil, background: CGColor? = nil,
+                nodeOverrides: [String: MockupSVGNodeOverride] = [:]) {
         self.hiddenPaths = hiddenPaths
         self.onlyPaths = onlyPaths
         self.background = background
+        self.nodeOverrides = nodeOverrides
+    }
+}
+
+/// An element's animated values for one frame. A CSS `transform` replaces the SVG `transform`
+/// attribute rather than composing with it, and an animated `opacity` replaces the attribute's.
+public struct MockupSVGNodeOverride: Equatable, Sendable {
+    /// Maps the element's space into its parent's, in place of its `transform` attribute (a
+    /// `<use>` keeps its x/y offset inside it).
+    public var transform: CGAffineTransform?
+    /// Group opacity in place of the element's `opacity`; 0 draws nothing.
+    public var opacity: Double?
+
+    public init(transform: CGAffineTransform? = nil, opacity: Double? = nil) {
+        self.transform = transform
+        self.opacity = opacity
     }
 }
 
@@ -86,18 +107,21 @@ struct MockupSVGDrawer {
                 return
             }
         }
+        let override = options.nodeOverrides[n.sourcePath]
+        let opacity = override?.opacity ?? n.style.opacity
+        guard opacity > 0 else { return }
         ctx.saveGState()
         defer { ctx.restoreGState() }
-        ctx.concatenate(n.transform)
+        ctx.concatenate(transform(of: n, override))
         if let clipRect = n.clipRect { ctx.clip(to: clipRect) }
         if let id = n.clipPath {
             guard let clip = MockupSVGClip.path(for: id, node: n, document: doc) else { return }
             ctx.addPath(clip.path)
             ctx.clip(using: clip.rule)
         }
-        let group = n.style.opacity < 0.999 || n.mask != nil
+        let group = opacity < 0.999 || n.mask != nil
         if group {
-            ctx.setAlpha(n.style.opacity)
+            ctx.setAlpha(opacity)
             ctx.beginTransparencyLayer(auxiliaryInfo: nil)
         }
         if let id = n.mask, !applyMask(id, node: n, in: ctx) {
@@ -107,6 +131,11 @@ struct MockupSVGDrawer {
         if !filtering { drawShape(n, in: ctx) }
         for c in n.children { draw(c, in: ctx, filtering: filtering) }
         if group { ctx.endTransparencyLayer() }
+    }
+
+    private func transform(of n: MockupSVGRenderNode, _ override: MockupSVGNodeOverride?) -> CGAffineTransform {
+        guard let replaced = override?.transform else { return n.transform }
+        return n.offset.concatenating(replaced)
     }
 
     mutating func drawShape(_ n: MockupSVGRenderNode, in ctx: CGContext) {
@@ -332,7 +361,7 @@ struct MockupSVGDrawer {
         if contentUnits == "objectBoundingBox", !bbox.isNull {
             mctx.concatenate(CGAffineTransform(a: bbox.width, b: 0, c: 0, d: bbox.height, tx: bbox.minX, ty: bbox.minY))
         }
-        var inner = MockupSVGDrawer(doc: doc, options: MockupSVGRenderOptions())
+        var inner = MockupSVGDrawer(doc: doc, options: MockupSVGRenderOptions(nodeOverrides: options.nodeOverrides))
         inner.depth = depth + 1
         guard let maskNode = MockupSVGDefinitionNodes.node(for: id, in: doc) else { return false }
         for c in maskNode.children { inner.drawDefinitionChild(c, in: mctx) }
@@ -348,18 +377,20 @@ struct MockupSVGDrawer {
 
     /// Draws a child of a referenced element (mask, pattern, marker) as ordinary content.
     mutating func drawDefinitionChild(_ n: MockupSVGRenderNode, in ctx: CGContext) {
-        guard n.style.display else { return }
+        let override = options.nodeOverrides[n.sourcePath]
+        let opacity = override?.opacity ?? n.style.opacity
+        guard n.style.display, opacity > 0 else { return }
         ctx.saveGState()
         defer { ctx.restoreGState() }
-        ctx.concatenate(n.transform)
+        ctx.concatenate(transform(of: n, override))
         if let clipRect = n.clipRect { ctx.clip(to: clipRect) }
         if let id = n.clipPath, let clip = MockupSVGClip.path(for: id, node: n, document: doc) {
             ctx.addPath(clip.path)
             ctx.clip(using: clip.rule)
         }
-        let group = n.style.opacity < 0.999
+        let group = opacity < 0.999
         if group {
-            ctx.setAlpha(n.style.opacity)
+            ctx.setAlpha(opacity)
             ctx.beginTransparencyLayer(auxiliaryInfo: nil)
         }
         drawShape(n, in: ctx)
@@ -587,7 +618,7 @@ enum MockupSVGPatterns {
         } else if contentBBox {
             tctx.concatenate(CGAffineTransform(a: bbox.width, b: 0, c: 0, d: bbox.height, tx: 0, ty: 0))
         }
-        var inner = MockupSVGDrawer(doc: doc, options: MockupSVGRenderOptions())
+        var inner = MockupSVGDrawer(doc: doc, options: MockupSVGRenderOptions(nodeOverrides: renderer.options.nodeOverrides))
         inner.depth = renderer.depth + 1
         for c in node.children { inner.drawDefinitionChild(c, in: tctx) }
         guard let image = tctx.makeImage() else { return }

@@ -157,7 +157,7 @@ final class PersonaCharacterTests: XCTestCase {
         XCTAssertEqual(detected, [.idle, .coding, .reading, .needsYou])
     }
 
-    func testRenderHTMLIncludesStrictCSPKeyframesEscapingAndCacheKeys() {
+    func testRenderHTMLIncludesStrictCSPKeyframesAndEscaping() {
         let svg = "<svg xmlns=\"http://www.w3.org/2000/svg\" width=\"128\" height=\"128\" viewBox=\"0 0 10 10\"><g data-motion-coding=\"type\" data-show=\"coding\"><circle fill=\"currentColor\" cx=\"32\" cy=\"32\" r=\"10\"/></g><text>1 &lt; 2</text><script>evil()</script></svg>"
         let html = PersonaCharacterSanitizer.renderHTML(svg: svg, color: "#a3a6ff", state: .coding, clipped: true, reduceMotion: false)
         guard let html else { return XCTFail("Expected HTML") }
@@ -182,15 +182,6 @@ final class PersonaCharacterTests: XCTestCase {
         let reduced = PersonaCharacterSanitizer.renderHTML(svg: svg, color: "#a3a6ff", state: .coding, reduceMotion: true)
         XCTAssertTrue(reduced?.contains("data-pc-state=\"static\"") == true)
         XCTAssertTrue(reduced?.contains("data-pc-reduced-motion=\"true\"") == true)
-
-        // Cache key changes when any dimension changes.
-        let k1 = PersonaCharacterSanitizer.cacheKey(svg: svg, color: "#A3A6FF", state: .idle, pixelSize: 48)
-        let k2 = PersonaCharacterSanitizer.cacheKey(svg: svg, color: "#a3a6ff", state: .idle, pixelSize: 48)
-        let k3 = PersonaCharacterSanitizer.cacheKey(svg: svg, color: "#a3a6ff", state: .coding, pixelSize: 48)
-        let k4 = PersonaCharacterSanitizer.cacheKey(svg: svg, color: "#a3a6ff", state: .idle, pixelSize: 96)
-        XCTAssertEqual(k1, k2)
-        XCTAssertNotEqual(k1, k3)
-        XCTAssertNotEqual(k1, k4)
     }
 
     func testActivityStateMatchesTheWebTable() {

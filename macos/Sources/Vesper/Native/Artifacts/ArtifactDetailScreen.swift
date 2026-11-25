@@ -800,8 +800,8 @@ private struct MockupReviewBannerView: View {
     }
 }
 
-/// Renders an SVG mockup with Fit / 100% / 200% zoom: natively when it conforms to mockup SVG
-/// profile v1, through the offscreen WebKit `EmbedRenderer` (and labelled legacy) when it doesn't.
+/// Renders an SVG mockup natively with Fit / 100% / 200% zoom; a version outside mockup SVG profile
+/// v1 is simplified to draw and labelled legacy.
 struct MockupDetailViewer: View {
     @Environment(\.vesperTheme) private var theme
     let artifactId: String
@@ -814,13 +814,13 @@ struct MockupDetailViewer: View {
     @State private var image: NSImage?
     @State private var intrinsicSize: CGSize = CGSize(width: 1280, height: 800)
     @State private var failed = false
-    @State private var legacy = false
+    @State private var legacy: [String]?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack {
-                if legacy {
-                    MockupLegacyLabel()
+                if let legacy {
+                    MockupLegacyLabel(dropped: legacy)
                 }
                 Spacer()
                 Picker("Zoom", selection: $zoom) {
@@ -889,10 +889,10 @@ struct MockupDetailViewer: View {
         failed = false
         let parsed = ArtifactDetailLogic.svgSize(source)
         intrinsicSize = CGSize(width: parsed.width, height: parsed.height)
-        if let drawing = await MockupRendering.draw(source: source, cacheID: "mockup-\(artifactId)-\(versionId)") {
+        if let drawing = MockupRendering.draw(source: source) {
             intrinsicSize = CGSize(width: drawing.size.width, height: drawing.size.height)
             image = drawing.image
-            legacy = drawing.isLegacy
+            legacy = drawing.isLegacy ? drawing.dropped : nil
         } else if let fallback = NSImage(data: Data(source.utf8)) {
             image = fallback
         } else {
@@ -903,12 +903,16 @@ struct MockupDetailViewer: View {
 
 /// Marks a mockup drawn by WebKit because its SVG predates profile v1.
 struct MockupLegacyLabel: View {
+    /// What simplifying the version left out (`MockupSVGSimplified.dropped`).
+    var dropped: [String] = []
     @Environment(\.vesperTheme) private var theme
 
     var body: some View {
-        Label("Legacy SVG \u{00B7} drawn with WebKit", systemImage: "clock.arrow.circlepath")
+        Label("Legacy SVG \u{00B7} simplified to draw", systemImage: "clock.arrow.circlepath")
             .font(.system(size: theme.pointSize(.small)))
             .foregroundStyle(theme.palette.tertiaryText)
-            .help("This version uses SVG outside mockup profile v1, so the native renderer doesn\u{2019}t draw it. Edit it to bring it into the profile.")
+            .help("This version uses SVG outside mockup profile v1, so it\u{2019}s shown simplified"
+                + (dropped.isEmpty ? "" : " (left out: \(dropped.joined(separator: ", ")))")
+                + ". Edit it to bring it into the profile.")
     }
 }

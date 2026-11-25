@@ -1,0 +1,39 @@
+sequenceDiagram
+    title Checkout
+    autonumber
+    actor U as Shopper
+    participant W as Web app
+    participant API
+    participant DB as Orders DB
+    U->>+W: Place order
+    W->>+API: POST /orders
+    Note right of API: validates the cart
+    loop every item
+        API->>DB: reserve stock
+        DB-->>API: ok
+    end
+    alt card accepted
+        API-)DB: write order
+        API-->>W: 201 Created
+    else card declined
+        API--xW: 402 Payment required
+    end
+    opt receipt wanted
+        W->>W: render receipt
+    end
+    par notify
+        API--)U: email
+    and log
+        API->>API: audit
+    end
+    critical commit
+        DB->DB: fsync
+    option timeout
+        DB-->API: retry
+    end
+    break out of stock
+        API<<->>DB: release
+    end
+    deactivate API
+    Note over U,W: done<br>thanks
+    W-->>-U: Confirmation

@@ -250,8 +250,8 @@ struct ArtifactReviewScreen: View {
     private func topCompareBar(artifact: API.Artifact, primary: API.ArtifactVersion, compare: API.ArtifactVersion?) -> some View {
         let others = artifact.versions.filter { $0.id != primary.id }
         return HStack(spacing: 12) {
-            if primaryDrawing?.drawing?.isLegacy == true {
-                MockupLegacyLabel()
+            if let drawing = primaryDrawing?.drawing, drawing.isLegacy {
+                MockupLegacyLabel(dropped: drawing.dropped)
             }
             Picker("Version", selection: Binding(
                 get: { primary.id },
@@ -749,7 +749,7 @@ struct ArtifactReviewScreen: View {
         }
         guard let source, !source.isEmpty else { return nil }
         let parsed = ArtifactDetailLogic.svgSize(source)
-        if let drawing = await MockupRendering.draw(source: source, cacheID: "review-\(artifact.id)-\(version.id)") {
+        if let drawing = MockupRendering.draw(source: source) {
             return RenderedMockup(image: drawing.image, size: drawing.size, label: version.label, versionId: version.id,
                                   drawing: drawing, source: source)
         }

@@ -41,6 +41,8 @@ var mockupPresentationPropSet = func() map[string]bool {
 // the validators that run next report it. CSS with no single conversion
 // (combinators, pseudo-classes, at-rules, unknown properties, var(), calc())
 // is an apperr.Invalid naming the rule.
+//
+// Ported to macos/.../MockupSVGNormalizer.swift; testdata/mockup-svg/normalize keeps both in step.
 func NormalizeMockupSVG(body string) (string, error) {
 	doc, ok := scanMockupCSSDoc(body)
 	if !ok || (len(doc.styles) == 0 && !doc.hasClassOrStyle) {

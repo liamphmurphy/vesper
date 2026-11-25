@@ -2,8 +2,8 @@ import SwiftUI
 import VesperCore
 
 /// /native-debug/scenes, behind `NativeDebug`: previews all 59 `ActivitySceneKind` scenes,
-/// tests hold/crossfade/wind-down transitions, and exercises the pooled `PersonaCharacterView`
-/// (`active: true` live web view alongside cached `active: false` snapshots). Not a product screen.
+/// tests hold/crossfade/wind-down transitions, and exercises the natively drawn `PersonaCharacterView`
+/// (`active: true` animating alongside still `active: false` frames). Not a product screen.
 struct ScenesDebugScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -114,13 +114,13 @@ struct ScenesDebugScreen: View {
         }
     }
 
-    // MARK: - Pooled Persona Character Showcase
+    // MARK: - Persona Character Showcase
 
     private var personaCharacterCard: some View {
         VStack(alignment: .leading, spacing: 12) {
             VStack(alignment: .leading, spacing: 2) {
-                Text("Pooled PersonaCharacterView").vesperText(.heading, theme)
-                Text("Left: 1 live pooled WKWebView (`active: true`). Right: offscreen cached snapshots (`active: false`).")
+                Text("Native PersonaCharacterView").vesperText(.heading, theme)
+                Text("Left: animated at display refresh (`active: true`). Right: still frames drawn natively (`active: false`).")
                     .vesperText(.small, theme)
                     .foregroundStyle(theme.palette.secondaryText)
             }
@@ -130,12 +130,12 @@ struct ScenesDebugScreen: View {
                     liveCharacterPreview
                     characterControls
                     Spacer()
-                    cachedSnapshotsPreview
+                    stillFramesPreview
                 }
                 VStack(alignment: .leading, spacing: 14) {
                     HStack(alignment: .center, spacing: 16) {
                         liveCharacterPreview
-                        cachedSnapshotsPreview
+                        stillFramesPreview
                     }
                     characterControls
                 }
@@ -156,7 +156,7 @@ struct ScenesDebugScreen: View {
                 active: true,
                 framed: true
             )
-            Text("Live pool")
+            Text("Animated")
                 .vesperText(.micro, theme)
                 .foregroundStyle(theme.palette.secondaryText)
         }
@@ -193,9 +193,9 @@ struct ScenesDebugScreen: View {
         }
     }
 
-    private var cachedSnapshotsPreview: some View {
+    private var stillFramesPreview: some View {
         VStack(alignment: .leading, spacing: 6) {
-            Text("Cached snapshots (active: false)")
+            Text("Still frames (active: false)")
                 .vesperText(.small, theme)
                 .foregroundStyle(theme.palette.secondaryText)
             HStack(spacing: 10) {

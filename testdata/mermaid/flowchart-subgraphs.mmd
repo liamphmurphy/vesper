@@ -1,0 +1,22 @@
+---
+title: Deploy pipeline
+---
+flowchart LR
+    %% A CI pipeline with stages
+    dev([Developer]) -- push --> repo[(Git repo)]
+    subgraph ci [Continuous integration]
+        direction TB
+        build[[Build]] --> test{Tests pass?}
+        test -->|no| fail>Notify author]
+        test -->|yes| pkg[/Package artifact/]
+    end
+    subgraph cd [Delivery]
+        stage{{Staging}} -.-> prod((Production))
+    end
+    repo ==> build
+    pkg --> stage
+    prod --- monitor[\Monitoring\]
+    classDef danger fill:#fde2e2,stroke:#c0392b,color:#7b1d1d
+    class fail danger
+    style prod stroke-width:3px
+    linkStyle 0 stroke:#2A78D6

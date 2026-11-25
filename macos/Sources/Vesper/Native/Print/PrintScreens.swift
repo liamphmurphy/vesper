@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import VesperCore
-import WebKit
 
 /// Native SwiftUI print preview + macOS print/PDF dialog for `/print/knowledge/:id`.
 struct PrintKnowledgeScreen: View {
@@ -11,7 +10,7 @@ struct PrintKnowledgeScreen: View {
     @State private var style: KnowledgePrintStyle = .clean
     @State private var showMetadata = false
     @State private var didAutoPrint = false
-    @State private var webHolder = PrintWebViewHolder()
+    @State private var images = PrintImages()
 
     private var pageId: String { context.match.params["id"] ?? "" }
     private var initialStyle: KnowledgePrintStyle {
@@ -26,6 +25,9 @@ struct PrintKnowledgeScreen: View {
         let hasQuery = page?.properties["query"] != nil
         let queryEntry = hasQuery ? context.store.entry(KnowledgeAPI.getSavedQuery(id: pageId)) : nil
         let printable = page.map { $0.kind == .document } ?? false
+        let document = page.flatMap { page in
+            printable ? PrintDocumentBuilder.knowledgeDocument(page: page, style: style, showMetadata: showMetadata, savedQuery: queryEntry?.data) : nil
+        }
 
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -59,12 +61,12 @@ struct PrintKnowledgeScreen: View {
                 Spacer(minLength: 8)
 
                 Button {
-                    triggerPrint(jobTitle: page?.title ?? "Untitled")
+                    if let document { NativePrint.run(document, images: images.loaded, in: context.window()?.window) }
                 } label: {
                     Label("Print / Save as PDF", systemImage: "printer")
                 }
                 .buttonStyle(.vesper(.primary))
-                .disabled(!printable)
+                .disabled(document == nil || !images.ready)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -86,24 +88,14 @@ struct PrintKnowledgeScreen: View {
                         .buttonStyle(.vesper(.primary))
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else {
-                    let html = PrintHTMLBuilder.buildKnowledgePrintHTML(
-                        page: page,
-                        style: style,
-                        showMetadata: showMetadata,
-                        savedQuery: queryEntry?.data,
-                        darkScreen: theme.mode == .dark
-                    )
-                    PrintHTMLWebView(
-                        holder: webHolder,
-                        html: html,
-                        baseURL: context.baseURL(),
-                        onReady: {
+                } else if let document {
+                    PrintPreview(document: document, images: images.loaded)
+                        .task(id: document.imageURLs) {
+                            await images.load(document.imageURLs, client: context.store.client)
                             guard !didAutoPrint else { return }
                             didAutoPrint = true
-                            triggerPrint(jobTitle: page.title.isEmpty ? "Untitled" : page.title)
+                            NativePrint.run(document, images: images.loaded, in: context.window()?.window)
                         }
-                    )
                 }
             } else {
                 ProgressView()
@@ -135,10 +127,6 @@ struct PrintKnowledgeScreen: View {
         let docTitle = (title?.isEmpty == false ? title! : "Untitled")
         context.chrome = NativeChrome(title: docTitle, subtitle: "PDF · \(style.label)")
     }
-
-    private func triggerPrint(jobTitle: String) {
-        webHolder.printDocument(jobTitle: jobTitle, in: context.window()?.window)
-    }
 }
 
 /// Native SwiftUI print preview + macOS print/PDF dialog for `/print/artifacts/:id`.
@@ -149,7 +137,7 @@ struct PrintArtifactScreen: View {
     @State private var oldVersionBody: String?
     @State private var loadingOldVersion = false
     @State private var didAutoPrint = false
-    @State private var webHolder = PrintWebViewHolder()
+    @State private var images = PrintImages()
 
     private var artifactId: String { context.match.params["id"] ?? "" }
     private var requestedVersionId: String? { context.match.query["version"] }
@@ -167,6 +155,20 @@ struct PrintArtifactScreen: View {
         let printable = artifact?.type != .mockup && viewing?.content.kind.rawValue == "markdown"
         let bodyMarkdown = isOld ? oldVersionBody : artifact?.bodyMd
         let title = artifact.map { LibraryLogic.artifactTitle(title: $0.title, displayId: $0.displayId) } ?? "Artifact"
+        let document = artifact.flatMap { artifact -> PrintDocument? in
+            guard printable, let viewing, let bodyMarkdown else { return nil }
+            var document = PrintDocumentBuilder.artifactDocument(
+                title: title,
+                versionLabel: viewing.label,
+                authorName: viewing.createdBy.name,
+                createdAt: viewing.createdAt,
+                summary: artifact.summary,
+                bodyMarkdown: bodyMarkdown
+            )
+            // An older version's job and running header say which version it is.
+            if isOld { document.title = "\(title) (\(viewing.label))" }
+            return document
+        }
 
         VStack(spacing: 0) {
             HStack(spacing: 12) {
@@ -181,13 +183,12 @@ struct PrintArtifactScreen: View {
                 Spacer(minLength: 8)
 
                 Button {
-                    let job = isOld && viewing != nil ? "\(title) (\(viewing!.label))" : title
-                    webHolder.printDocument(jobTitle: job, in: context.window()?.window)
+                    if let document { NativePrint.run(document, images: images.loaded, in: context.window()?.window) }
                 } label: {
                     Label("Print / Save as PDF", systemImage: "printer")
                 }
                 .buttonStyle(.vesper(.primary))
-                .disabled(!printable || bodyMarkdown == nil)
+                .disabled(document == nil || !images.ready)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -198,7 +199,7 @@ struct PrintArtifactScreen: View {
             if let error = entry.error {
                 QueryErrorView(message: error.userMessage) { context.store.load(req) }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let artifact, let viewing {
+            } else if artifact != nil, viewing != nil {
                 if !printable {
                     VStack(spacing: 12) {
                         Text("Only markdown artifacts export to PDF.")
@@ -208,27 +209,14 @@ struct PrintArtifactScreen: View {
                             .foregroundStyle(p.secondaryText)
                     }
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
-                } else if let bodyMarkdown {
-                    let html = PrintHTMLBuilder.buildArtifactPrintHTML(
-                        title: title,
-                        versionLabel: viewing.label,
-                        authorName: viewing.createdBy.name,
-                        createdAt: viewing.createdAt,
-                        summary: artifact.summary,
-                        bodyMarkdown: bodyMarkdown,
-                        darkScreen: theme.mode == .dark
-                    )
-                    PrintHTMLWebView(
-                        holder: webHolder,
-                        html: html,
-                        baseURL: context.baseURL(),
-                        onReady: {
+                } else if let document {
+                    PrintPreview(document: document, images: images.loaded)
+                        .task(id: document.imageURLs) {
+                            await images.load(document.imageURLs, client: context.store.client)
                             guard !didAutoPrint else { return }
                             didAutoPrint = true
-                            let job = isOld ? "\(title) (\(viewing.label))" : title
-                            webHolder.printDocument(jobTitle: job, in: context.window()?.window)
+                            NativePrint.run(document, images: images.loaded, in: context.window()?.window)
                         }
-                    )
                 } else {
                     ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -257,26 +245,54 @@ struct PrintArtifactScreen: View {
     }
 }
 
-// MARK: - Print WebView Host & NSPrintOperation
+// MARK: - Native printing
+
+/// The printout's images, fetched before it's laid out: TextKit lays an attachment out at the size
+/// it has, so an image that arrived after printing started would be missing from the paper.
+@MainActor
+@Observable
+private final class PrintImages {
+    private(set) var loaded: [String: NSImage] = [:]
+    /// False while a fetch is in flight; printing waits for it so every page has its images.
+    private(set) var ready = false
+
+    func load(_ urls: [String], client: APIClient?) async {
+        ready = false
+        defer { ready = true }
+        for url in urls where loaded[url] == nil {
+            guard let data = await Self.data(url, client: client), let image = NSImage(data: data) else { continue }
+            if Task.isCancelled { return }
+            loaded[url] = image
+        }
+    }
+
+    /// The API's own files with the session, other in-app paths from the server, web and inline
+    /// `data:` images directly (as `MarkdownView` loads them).
+    private static func data(_ source: String, client: APIClient?) async -> Data? {
+        if source.hasPrefix("/api/v1/"), let client {
+            return try? await client.request("GET", source, timeout: 30)
+        }
+        let url: URL?
+        if source.hasPrefix("/") && !source.hasPrefix("//") {
+            url = client.flatMap { URL(string: source, relativeTo: $0.baseURL) }
+        } else {
+            url = URL(string: source).flatMap { ["https", "http", "data"].contains($0.scheme ?? "") ? $0 : nil }
+        }
+        guard let url else { return nil }
+        return try? await URLSession.shared.data(from: url).0
+    }
+}
 
 @MainActor
-private final class PrintWebViewHolder {
-    weak var webView: WKWebView?
-
-    func printDocument(jobTitle: String, in window: NSWindow?) {
-        guard let webView else { return }
-        let printInfo = (NSPrintInfo.shared.copy() as? NSPrintInfo) ?? NSPrintInfo()
-        printInfo.topMargin = 36
-        printInfo.bottomMargin = 36
-        printInfo.leftMargin = 36
-        printInfo.rightMargin = 36
-        printInfo.isHorizontallyCentered = true
-        printInfo.isVerticallyCentered = false
-        printInfo.horizontalPagination = .fit
-        printInfo.verticalPagination = .automatic
-
-        let op = webView.printOperation(with: printInfo)
-        op.jobTitle = jobTitle
+private enum NativePrint {
+    /// The macOS print dialog (with Save as PDF) for `document`, laid out afresh at the paper's
+    /// printable width so it paginates as text rather than as a scaled picture of the preview.
+    static func run(_ document: PrintDocument, images: [String: NSImage], in window: NSWindow?) {
+        let info = PrintRenderer.printInfo()
+        let width = PrintRenderer.printableWidth(info)
+        let view = PrintTextView(text: PrintRenderer.render(document, width: width, images: images), title: document.title, width: width)
+        let op = NSPrintOperation(view: view, printInfo: info)
+        op.jobTitle = document.title
         op.showsPrintPanel = true
         op.showsProgressPanel = true
         if let window {
@@ -287,49 +303,44 @@ private final class PrintWebViewHolder {
     }
 }
 
-private struct PrintHTMLWebView: NSViewRepresentable {
-    let holder: PrintWebViewHolder
-    let html: String
-    let baseURL: URL?
-    let onReady: () -> Void
+/// The printout on a sheet of paper, at the default paper's printable width: the same text view
+/// that prints, so the preview is what comes out.
+private struct PrintPreview: View {
+    let document: PrintDocument
+    let images: [String: NSImage]
 
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onReady: onReady)
-    }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let cfg = WKWebViewConfiguration()
-        cfg.websiteDataStore = .default()
-        let wv = WKWebView(frame: .zero, configuration: cfg)
-        wv.navigationDelegate = context.coordinator
-        holder.webView = wv
-        context.coordinator.lastHTML = html
-        wv.loadHTMLString(html, baseURL: baseURL)
-        return wv
-    }
-
-    func updateNSView(_ wv: WKWebView, context: Context) {
-        holder.webView = wv
-        context.coordinator.onReady = onReady
-        if context.coordinator.lastHTML != html {
-            context.coordinator.lastHTML = html
-            wv.loadHTMLString(html, baseURL: baseURL)
+    var body: some View {
+        let info = PrintRenderer.printInfo()
+        let width = PrintRenderer.printableWidth(info)
+        ScrollView {
+            PrintPaper(text: PrintRenderer.render(document, width: width, images: images), title: document.title, width: width)
+                .frame(width: width)
+                .padding(.horizontal, info.leftMargin)
+                .padding(.vertical, info.topMargin)
+                .background(Color.white)
+                .shadow(color: .black.opacity(0.12), radius: 10, y: 4)
+                .padding(28)
+                .frame(maxWidth: .infinity)
         }
     }
+}
 
-    @MainActor
-    final class Coordinator: NSObject, WKNavigationDelegate {
-        var onReady: () -> Void
-        var lastHTML: String = ""
+private struct PrintPaper: NSViewRepresentable {
+    let text: NSAttributedString
+    let title: String
+    let width: CGFloat
 
-        init(onReady: @escaping () -> Void) {
-            self.onReady = onReady
-        }
+    func makeNSView(context: Context) -> PrintTextView {
+        PrintTextView(text: text, title: title, width: width)
+    }
 
-        func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { [weak self] in
-                self?.onReady()
-            }
-        }
+    func updateNSView(_ view: PrintTextView, context: Context) {
+        guard view.textStorage?.isEqual(to: text) != true else { return }
+        view.textStorage?.setAttributedString(text)
+        view.sizeToFit()
+    }
+
+    func sizeThatFits(_ proposal: ProposedViewSize, nsView view: PrintTextView, context: Context) -> CGSize? {
+        CGSize(width: width, height: view.frame.height)
     }
 }

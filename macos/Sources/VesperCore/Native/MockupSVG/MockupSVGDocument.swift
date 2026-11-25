@@ -23,10 +23,16 @@ public final class MockupSVGDocument: @unchecked Sendable {
     private let nodesByPath: [String: MockupSVGRenderNode]
     public let drawablePaths: [String]
 
-    public init(source: String) throws {
+    public convenience init(source: String) throws {
         let violations = MockupSVGProfile.violations(source)
         guard violations.isEmpty else { throw NotConforming(violations: violations) }
-        let tree = try MockupSVGTree.parse(source)
+        try self.init(trusted: MockupSVGTree.parse(source))
+    }
+
+    /// Compiles a tree without the profile check, for SVG another whitelist already restricted to
+    /// what the renderer draws: persona characters (`PersonaCharacterSanitizer`), whose `data-*`
+    /// rig attributes and glyph `rotate` the mockup profile rejects.
+    public init(trusted tree: MockupSVGTree) {
         self.tree = tree
         let r = tree.root
         let vb: CGRect
@@ -60,7 +66,7 @@ public final class MockupSVGDocument: @unchecked Sendable {
         definitions = defs
         definitionPaths = defPaths
 
-        var compiler = MockupSVGCompiler(definitions: defs, viewBox: vb)
+        var compiler = MockupSVGCompiler(definitions: defs, definitionPaths: defPaths, viewBox: vb)
         root = compiler.compile(r, path: "", parentStyle: .initial, parentCTM: .identity, instanceOf: nil, depth: 0)
         nodesByPath = compiler.byPath
         drawablePaths = compiler.drawable
@@ -190,6 +196,11 @@ final class MockupSVGRenderNode: @unchecked Sendable {
     let style: MockupSVGStyle
     /// Its `transform` (and for `<use>`, the x/y offset), mapping its space into its parent's.
     let transform: CGAffineTransform
+    /// The `<use>` x/y offset alone, kept when a `MockupSVGNodeOverride` replaces the `transform`.
+    let offset: CGAffineTransform
+    /// The path of the tree element it was compiled from: its own path, or for an instance under a
+    /// `<use>`, the referenced element's, so overrides reach every instance as CSS reaches clones.
+    let sourcePath: String
     /// Element space to root user space.
     let ctm: CGAffineTransform
     let parentCTM: CGAffineTransform
@@ -205,12 +216,15 @@ final class MockupSVGRenderNode: @unchecked Sendable {
 
     init(path: String, targetPath: String, element: MockupSVGNode, style: MockupSVGStyle, transform: CGAffineTransform,
          ctm: CGAffineTransform, parentCTM: CGAffineTransform, shape: Shape, children: [MockupSVGRenderNode],
-         isDefinition: Bool, clipPath: String?, mask: String?, clipRect: CGRect?) {
+         isDefinition: Bool, clipPath: String?, mask: String?, clipRect: CGRect?,
+         offset: CGAffineTransform = .identity, sourcePath: String? = nil) {
         self.path = path
         self.targetPath = targetPath
         self.element = element
         self.style = style
         self.transform = transform
+        self.offset = offset
+        self.sourcePath = sourcePath ?? path
         self.ctm = ctm
         self.parentCTM = parentCTM
         self.shape = shape
@@ -275,6 +289,7 @@ final class MockupSVGRenderNode: @unchecked Sendable {
 
 struct MockupSVGCompiler {
     let definitions: [String: MockupSVGNode]
+    let definitionPaths: [String: String]
     let viewBox: CGRect
     var byPath: [String: MockupSVGRenderNode] = [:]
     var drawable: [String] = []
@@ -282,15 +297,19 @@ struct MockupSVGCompiler {
     static let definitionElements: Set<String> = ["defs", "symbol", "clipPath", "mask", "marker", "pattern", "linearGradient", "radialGradient"]
     static let maxUseDepth = 8
 
-    init(definitions: [String: MockupSVGNode], viewBox: CGRect) {
+    init(definitions: [String: MockupSVGNode], definitionPaths: [String: String] = [:], viewBox: CGRect) {
         self.definitions = definitions
+        self.definitionPaths = definitionPaths
         self.viewBox = viewBox
     }
 
     /// `instanceOf` is the `<use>` path an instance subtree reports as its target.
+    /// `sourcePath` is the tree path of `n` when it differs from `path` (inside an instance).
     mutating func compile(_ n: MockupSVGNode, path: String, parentStyle: MockupSVGStyle, parentCTM: CGAffineTransform,
-                          instanceOf: String?, depth: Int, inDefinition: Bool = false) -> MockupSVGRenderNode {
+                          instanceOf: String?, depth: Int, inDefinition: Bool = false,
+                          sourcePath: String? = nil) -> MockupSVGRenderNode {
         let name = n.localName
+        let source = sourcePath ?? path
         var style = parentStyle.inherited()
         Self.apply(n, to: &style, viewBox: viewBox)
         let isDefinition = inDefinition || Self.definitionElements.contains(name)
@@ -318,11 +337,13 @@ struct MockupSVGCompiler {
 
         if name == "use" {
             let x = len(n, "x", \.width), y = len(n, "y", \.height)
-            transform = CGAffineTransform(translationX: x, y: y).concatenating(transform)
+            let offset = CGAffineTransform(translationX: x, y: y)
+            transform = offset.concatenating(transform)
             let useCTM = transform.concatenating(parentCTM)
             if depth < Self.maxUseDepth,
                let raw = n.attribute("href") ?? n.attributes.first(where: { $0.name.hasSuffix(":href") })?.value,
                let id = MockupSVGValues.fragment(raw), let ref = definitions[id] {
+                let refSource = definitionPaths[id]
                 if ref.localName == "symbol" {
                     let w = n.attribute("width").flatMap { MockupSVGValues.length($0, percent: true) }?.resolve(viewBox.width) ?? viewBox.width
                     let h = n.attribute("height").flatMap { MockupSVGValues.length($0, percent: true) }?.resolve(viewBox.height) ?? viewBox.height
@@ -339,19 +360,22 @@ struct MockupSVGCompiler {
                     let inner = mapping.concatenating(useCTM)
                     var kids: [MockupSVGRenderNode] = []
                     for (i, c) in ref.children.enumerated() where c.isElement {
-                        let k = compile(c, path: "\(path)#\(i)", parentStyle: symStyle, parentCTM: inner, instanceOf: target, depth: depth + 1)
+                        let k = compile(c, path: "\(path)#\(i)", parentStyle: symStyle, parentCTM: inner, instanceOf: target, depth: depth + 1,
+                                        sourcePath: refSource.map { MockupSVGTree.childPath($0, i) })
                         kids.append(k)
                     }
                     children = [MockupSVGRenderNode(path: "\(path)#symbol", targetPath: target, element: ref, style: symStyle, transform: mapping,
                                                     ctm: inner, parentCTM: useCTM, shape: .none, children: kids, isDefinition: false,
-                                                    clipPath: nil, mask: nil, clipRect: nil)]
+                                                    clipPath: nil, mask: nil, clipRect: nil, sourcePath: refSource)]
                 } else {
-                    children = [compile(ref, path: "\(path)#0", parentStyle: style, parentCTM: useCTM, instanceOf: target, depth: depth + 1)]
+                    children = [compile(ref, path: "\(path)#0", parentStyle: style, parentCTM: useCTM, instanceOf: target, depth: depth + 1,
+                                        sourcePath: refSource)]
                 }
             }
             let node = MockupSVGRenderNode(path: path, targetPath: target, element: n, style: style, transform: transform, ctm: useCTM,
                                            parentCTM: parentCTM, shape: .none, children: children, isDefinition: isDefinition,
-                                           clipPath: Self.ref(n, "clip-path"), mask: Self.ref(n, "mask"), clipRect: clipRect)
+                                           clipPath: Self.ref(n, "clip-path"), mask: Self.ref(n, "mask"), clipRect: clipRect,
+                                           offset: offset, sourcePath: source)
             register(node, instance: instanceOf != nil, drawable: !isDefinition)
             return node
         }
@@ -362,12 +386,13 @@ struct MockupSVGCompiler {
                 if MockupSVGProfile.ignoredElements.contains(c.localName) { continue }
                 children.append(compile(c, path: instanceOf == nil ? MockupSVGTree.childPath(path, i) : "\(path).\(i)",
                                         parentStyle: style, parentCTM: ctm, instanceOf: instanceOf, depth: depth,
-                                        inDefinition: isDefinition))
+                                        inDefinition: isDefinition, sourcePath: MockupSVGTree.childPath(source, i)))
             }
         }
         let node = MockupSVGRenderNode(path: path, targetPath: target, element: n, style: style, transform: transform, ctm: ctm,
                                        parentCTM: parentCTM, shape: shape, children: children, isDefinition: isDefinition,
-                                       clipPath: Self.ref(n, "clip-path"), mask: Self.ref(n, "mask"), clipRect: nil)
+                                       clipPath: Self.ref(n, "clip-path"), mask: Self.ref(n, "mask"), clipRect: nil,
+                                       sourcePath: source)
         let isShape = node.isDrawable
         register(node, instance: instanceOf != nil, drawable: isShape && !isDefinition)
         return node

@@ -640,6 +640,62 @@ func (q *Queries) LockDesignProposal(ctx context.Context, arg LockDesignProposal
 	return i, err
 }
 
+const mockupFeedbackBetween = `-- name: MockupFeedbackBetween :many
+SELECT id, session_id, seq, role, body_md, harness, model, run_id, run_turn_id, context_refs, citations, usage, created_at, code_changes, persona_id, git_branch, git_commit_sha, checklist_state, bookmarked, bookmarked_at FROM chat_messages
+WHERE session_id = $1 AND role = 'system' AND seq > $2 AND seq < $3
+  AND context_refs @> '[{"kind": "artifact"}]'::jsonb
+ORDER BY seq
+`
+
+type MockupFeedbackBetweenParams struct {
+	SessionID uuid.UUID
+	AfterSeq  int64
+	BeforeSeq int64
+}
+
+// The mockup review notices (system messages that carry an artifact ref)
+// posted after one user message and before another, for the later one's turn.
+func (q *Queries) MockupFeedbackBetween(ctx context.Context, arg MockupFeedbackBetweenParams) ([]ChatMessage, error) {
+	rows, err := q.db.Query(ctx, mockupFeedbackBetween, arg.SessionID, arg.AfterSeq, arg.BeforeSeq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ChatMessage{}
+	for rows.Next() {
+		var i ChatMessage
+		if err := rows.Scan(
+			&i.ID,
+			&i.SessionID,
+			&i.Seq,
+			&i.Role,
+			&i.BodyMd,
+			&i.Harness,
+			&i.Model,
+			&i.RunID,
+			&i.RunTurnID,
+			&i.ContextRefs,
+			&i.Citations,
+			&i.Usage,
+			&i.CreatedAt,
+			&i.CodeChanges,
+			&i.PersonaID,
+			&i.GitBranch,
+			&i.GitCommitSha,
+			&i.ChecklistState,
+			&i.Bookmarked,
+			&i.BookmarkedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const publishDesignDraft = `-- name: PublishDesignDraft :one
 UPDATE design_proposals SET status = $1, ops = $2, base_seq = $3, result_seq = $4,
   resolved_at = CASE WHEN $1::text = 'applied' THEN now() ELSE NULL END
