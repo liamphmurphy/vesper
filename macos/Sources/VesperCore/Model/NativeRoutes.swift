@@ -61,10 +61,10 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         switch self {
         case .chat, .chatDetail, .rootLanding: .chat
         case .spacesHome, .spaceNew, .spaceDetail: .spaces
-        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .slidesPresent, .designEditor, .designPresent: .knowledge
+        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .designEditor: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect, .customApp: .apps
-        case .inbox, .pdf, .setup, .agentDetail, .printKnowledge, .printArtifact, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
+        case .inbox, .pdf, .setup, .agentDetail, .slidesPresent, .designPresent, .printKnowledge, .printArtifact, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
     }
 }

@@ -114,6 +114,7 @@ final class NativeRoutesTests: XCTestCase {
             "/apps/finance": .apps,
             "/apps/docs/d1": .knowledge, "/apps/slides/s1": .knowledge, "/apps/designs/g1": .knowledge,
             "/present/slides/s1": nil, "/present/designs/g1": nil,
+            "/print/knowledge/p1": nil, "/print/artifacts/a1": nil,
             "/": .chat, "/setup": nil,
             "/inbox": nil, "/pdf": nil, "/native-debug": nil,
         ]
