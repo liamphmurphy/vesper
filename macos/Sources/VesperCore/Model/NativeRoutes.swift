@@ -40,6 +40,8 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case docEditor
     case slidesEditor
     case slidesPresent
+    case designEditor
+    case designPresent
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -56,7 +58,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         switch self {
         case .chat, .chatDetail, .rootLanding: .chat
         case .spacesHome, .spaceNew, .spaceDetail: .spaces
-        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .slidesPresent: .knowledge
+        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .slidesPresent, .designEditor, .designPresent: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
         case .inbox, .pdf, .setup, .agentDetail, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
@@ -156,6 +158,8 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/apps/slides/:id", .slidesEditor),
         NativeRoute("/present/slides/:id", .slidesPresent),
         NativeRoute("/apps/designs", .appsRedirect),
+        NativeRoute("/apps/designs/:id", .designEditor),
+        NativeRoute("/present/designs/:id", .designPresent),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

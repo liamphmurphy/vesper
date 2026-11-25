@@ -19,7 +19,7 @@ let package = Package(
             // Shiki for code blocks, built by scripts/build-shiki-bundle.mjs (Markdown/CodeHighlighter.swift);
             // mermaid and KaTeX for chat embeds, built by scripts/build-embeds-bundle.mjs (ChatEmbeds/);
             // elkjs for offline node graph layout, built by scripts/build-elk-bundle.mjs (NodeGraph/ELKLayoutEngine.swift).
-            resources: [.copy("Resources/shiki"), .copy("Resources/embeds"), .copy("Resources/elk")]
+            resources: [.copy("Resources/shiki"), .copy("Resources/embeds"), .copy("Resources/elk"), .copy("Resources/designs")]
         ),
         // The markdown parser, vendored from swiftlang/swift-cmark (Vendor/cmark-gfm/README.md) so the
         // build fetches nothing.

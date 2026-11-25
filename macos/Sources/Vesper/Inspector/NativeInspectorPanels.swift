@@ -84,9 +84,8 @@ struct NativeInspectorPanelHost: View {
                 case "chat.design":
                     if let designId = props["designId"] as? String, !designId.isEmpty {
                         let reviewing = (props["reviewing"] as? Bool) ?? false
-                        let path = reviewing ? "/apps/designs/\(designId)?review=1" : "/apps/designs/\(designId)"
-                        HostedWebPageView(path: path)
-                            .id(path)
+                        DesignEditorView(canvasId: designId, embedded: true, initialReviewing: reviewing)
+                            .id(designId)
                     }
                 case "chat.canvas":
                     if let chatId = props["chatId"] as? String, !chatId.isEmpty {
@@ -686,7 +685,7 @@ private struct ChatCanvasDetailPanelView: View {
                     SlidesEditorView(canvasId: canvas.id, embedded: true)
                         .id(canvas.id)
                 case .design:
-                    HostedWebPageView(path: "/apps/designs/\(canvas.id)")
+                    DesignEditorView(canvasId: canvas.id, embedded: true)
                         .id(canvas.id)
                 default:
                     VStack(spacing: 0) {

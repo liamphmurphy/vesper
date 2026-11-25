@@ -4,10 +4,10 @@ import VesperCore
 /// Editor content slot for a Knowledge page.
 ///
 /// Switches on `KnowledgeShellLogic.editorTarget(for:query:)` and renders:
-/// - `.deck` -> `HostedWebPageView(path: "/apps/slides/<canvasId>")`
-/// - `.design` -> `HostedWebPageView(path: "/apps/designs/<canvasId>")`
+/// - `.deck` -> native `SlidesEditorView(canvasId:embedded: true)`
+/// - `.design` -> native `DesignEditorView(canvasId:embedded: true)`
 /// - standalone PDF page -> native `PDFViewerView`
-/// - Docs (`page.kind == .document` with `page.canvasId != nil`) -> Tiptap `HostedWebPageView(path: "/apps/docs/<canvasId>")`
+/// - Docs (`page.kind == .document` with `page.canvasId != nil`) -> native `DocEditorView(canvasId:embedded: true)`
 /// - Standard Knowledge markdown pages (`page.kind == .document`, `page.canvasId == nil`, non-PDF) -> native `KnowledgeEditorView`
 struct KnowledgePageEditorSlot: View {
     @Environment(NativeScreenContext.self) private var context
@@ -28,9 +28,9 @@ struct KnowledgePageEditorSlot: View {
             SlidesEditorView(canvasId: canvasId, embedded: true)
                 .id(canvasId)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .design(_, let hostedPath):
-            HostedWebPageView(path: hostedPath)
-                .id(hostedPath)
+        case .design(let canvasId, _):
+            DesignEditorView(canvasId: canvasId, embedded: true, initialReviewing: query["review"] == "1")
+                .id(canvasId)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .pdf(let sourcePath, let title):
             VStack(spacing: 0) {

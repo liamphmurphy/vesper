@@ -111,6 +111,8 @@ final class NativeRoutesTests: XCTestCase {
             "/workflows": .apps, "/workflows/wf-1": .apps, "/workflows/runs/wr-1": .apps, "/scheduled": .apps,
             "/learn": .apps, "/learn/l1": .apps, "/reports": .apps, "/costs": .apps, "/http": .apps, "/dev": .apps,
             "/apps": .apps, "/apps/docs": .apps, "/apps/slides": .apps, "/apps/designs": .apps,
+            "/apps/docs/d1": .knowledge, "/apps/slides/s1": .knowledge, "/apps/designs/g1": .knowledge,
+            "/present/slides/s1": nil, "/present/designs/g1": nil,
             "/": .chat, "/setup": nil,
             "/inbox": nil, "/pdf": nil, "/native-debug": nil,
         ]
@@ -119,11 +121,8 @@ final class NativeRoutesTests: XCTestCase {
             XCTAssertNotNil(screen, path)
             XCTAssertEqual(screen?.area, area, path)
         }
-        // Individual custom apps and creative editors remain on WKWebView.
+        // Individual custom apps remain on WKWebView.
         XCTAssertNil(standard.resolve("/apps/finance"))
-        XCTAssertNil(standard.resolve("/apps/docs/d1"))
-        XCTAssertNil(standard.resolve("/apps/slides/s1"))
-        XCTAssertNil(standard.resolve("/apps/designs/g1"))
     }
 
     func testHttpClientIsNative() {
