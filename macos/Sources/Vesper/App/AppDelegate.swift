@@ -26,7 +26,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         }
         app = AppModel(dataDirectory: dataDir, stack: stack, devConnection: dev)
         NSApp.mainMenu = MainMenu.build(delegate: self)
-        ShellBridge.services = app.system
         app.system.start()
         app.aux.start()
         app.startHidden = app.aux.shouldStartHidden()
@@ -79,12 +78,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         return quit.shouldTerminate()
     }
 
-    /// Unsaved pages, active runs, then the stack. false: stay open.
+    /// Active runs, then the stack. false: stay open.
     private func prepareToQuit() async -> Bool {
-        for window in app.windows where !(await window.confirmLeavingUnsavedChanges()) {
-            vlog("quit: cancelled for unsaved changes")
-            return false
-        }
         guard await app.system.confirmQuit() else {
             vlog("quit: cancelled for active runs")
             return false
@@ -187,7 +182,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     // MARK: Edit / View / History
 
     private var web: WKWebView? {
-        (NSApp.keyWindow?.windowController as? CustomAppWindowController)?.webView ?? app.keyController?.webView
+        app.keyController?.webView
     }
 
     @objc func find(_ sender: Any?) { app.keyController?.showFindBar() }

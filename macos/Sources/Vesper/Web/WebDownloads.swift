@@ -151,3 +151,14 @@ private final class NoticeActions: NSObject {
     static let shared = NoticeActions()
     @objc func reveal() { DownloadNotice.revealTarget() }
 }
+
+@MainActor
+enum WebNavigationPolicy {
+    /// Content-Disposition: attachment, or a type WebKit can't display, becomes a download.
+    static func shouldDownload(_ response: WKNavigationResponse) -> Bool {
+        if let http = response.response as? HTTPURLResponse,
+           let cd = http.value(forHTTPHeaderField: "Content-Disposition"),
+           cd.trimmingCharacters(in: .whitespaces).lowercased().hasPrefix("attachment") { return true }
+        return !response.canShowMIMEType
+    }
+}

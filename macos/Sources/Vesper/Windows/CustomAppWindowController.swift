@@ -1,7 +1,6 @@
 import AppKit
 import SwiftUI
 import VesperCore
-import WebKit
 
 /// Dedicated lightweight standalone macOS window for a single Vesper Custom App (`/apps/<slug>?standalone=1`).
 /// Chromeless (no Vesper sidebar, tab strip, or right inspector) with a compact unified toolbar providing
@@ -15,7 +14,6 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
     let app: AppModel
     let slug: String
     let toastStore = ToastStore()
-    var webView: WKWebView? { nil }
 
     private let onClose: () -> Void
     private let detailRequest: APIRequest<API.CustomAppDetail>

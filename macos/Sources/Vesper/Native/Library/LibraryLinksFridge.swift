@@ -654,8 +654,8 @@ struct LibraryFridgeView: View {
         guard let prompt = LibraryLogic.deleteMomentsConfirmation(count: chosen.count),
               let client = context.store.client else { return }
         Task {
-            guard await ShellBridge.confirmSheet(title: prompt.title, body: prompt.body, confirmLabel: "Delete", cancelLabel: nil, destructive: true,
-                                                 window: context.window()?.window) else { return }
+            guard await NativeDialogs.confirmSheet(title: prompt.title, body: prompt.body, confirmLabel: "Delete", cancelLabel: nil, destructive: true,
+                                                   window: context.window()?.window) else { return }
             deleting = true
             defer { deleting = false }
             var failed = 0

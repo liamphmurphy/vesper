@@ -78,15 +78,12 @@ final class AppModel {
         let sys = AppearanceMonitor.current()
         let cmd = currentAppearanceCommand()
         let theme = effectiveTheme(system: sys)
-        let bgColor = theme.colors["bg"].flatMap { NSColor.fromCSS($0) }
         for controller in windows where !controller.retired {
             for tab in controller.tabs.list.items where tab.kind == .vesper {
                 if ownsAppearance || tab.state.theme == nil {
                     tab.state.theme = theme
                     tab.state.pageMode = theme.mode
-                    if let bgColor { tab.webView.underPageBackgroundColor = bgColor }
                 }
-                tab.bridge?.sendAppearance(cmd)
             }
             controller.applyAppearanceCommand(cmd)
         }
@@ -202,7 +199,6 @@ final class AppModel {
         state.theme = theme
         state.pageMode = theme.mode
         let tab = WebContentController(app: self, kind: kind, state: state, path: path)
-        tab.bridge?.onRouteChange = { [weak self] in self?.scheduleSessionSave() }
         if let conn = connection, !restoringSession { tab.connect(conn) }
         return tab
     }

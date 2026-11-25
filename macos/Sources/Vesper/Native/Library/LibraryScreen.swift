@@ -510,7 +510,7 @@ struct LibraryItemActions {
 
     func rename(_ item: API.LibraryItem) {
         Task {
-            let entered = await ShellBridge.promptSheet(
+            let entered = await NativeDialogs.promptSheet(
                 title: "Rename \u{201C}\(item.title)\u{201D}", body: nil, label: "Title", value: item.title, placeholder: nil,
                 confirmLabel: "Save", cancelLabel: nil, maxLength: 300, window: context.window()?.window)
             guard let title = entered?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty, title != item.title else { return }
@@ -545,8 +545,8 @@ struct LibraryItemActions {
     ) {
         guard let prompt = LibraryLogic.removeConfirmation(items) else { return }
         Task {
-            guard await ShellBridge.confirmSheet(title: prompt.title, body: prompt.body, confirmLabel: "Remove", cancelLabel: nil, destructive: true,
-                                                 window: context.window()?.window) else { return }
+            guard await NativeDialogs.confirmSheet(title: prompt.title, body: prompt.body, confirmLabel: "Remove", cancelLabel: nil, destructive: true,
+                                                   window: context.window()?.window) else { return }
             then()
             onBusy?(true)
             let ok = await deleteMany(items, invalidation: invalidation)

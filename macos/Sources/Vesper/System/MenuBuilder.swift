@@ -64,4 +64,44 @@ enum MenuBuilder {
         guard let key else { return nil }
         return (key, mask)
     }
+
+    /// Builds an NSMenu from a native `MenuItem` tree.
+    static func menu(from items: [MenuItem], onSelect: @escaping (String) -> Void) -> NSMenu {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for item in items {
+            if item.separator == true { menu.addItem(.separator()); continue }
+            let mi = ClosureMenuItem(title: item.label ?? "", handler: onSelect, id: item.id)
+            mi.isEnabled = item.disabled != true
+            if item.checked == true { mi.state = .on }
+            if let icon = item.icon { mi.image = SidebarIcons.image(icon) }
+            if item.destructive == true {
+                mi.attributedTitle = NSAttributedString(string: item.label ?? "", attributes: [.foregroundColor: NSColor.systemRed])
+            }
+            if let children = item.children, !children.isEmpty {
+                mi.submenu = Self.menu(from: children, onSelect: onSelect)
+                mi.target = nil
+                mi.action = nil
+            }
+            menu.addItem(mi)
+        }
+        return menu
+    }
+}
+
+@MainActor
+final class ClosureMenuItem: NSMenuItem {
+    private let handler: (String) -> Void
+    private let itemId: String
+
+    init(title: String, handler: @escaping (String) -> Void, id: String) {
+        self.handler = handler
+        self.itemId = id
+        super.init(title: title, action: #selector(fire), keyEquivalent: "")
+        target = self
+    }
+
+    required init(coder: NSCoder) { fatalError("not used") }
+
+    @objc private func fire() { handler(itemId) }
 }
