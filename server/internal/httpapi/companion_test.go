@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -8,9 +9,11 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/companion"
+	"github.com/liamphmurphy/vesper/server/internal/realtime"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 	"github.com/liamphmurphy/vesper/server/internal/testdb"
@@ -121,5 +124,61 @@ func TestCompanionPairingAuthAndRevocation(t *testing.T) {
 	handler.ServeHTTP(retryRec, retryReq)
 	if retryRec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 after revocation, got %d", retryRec.Code)
+	}
+}
+
+func TestCompanionBearerAuthStreamsSSEEvents(t *testing.T) {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	pool := testdb.New(t)
+	q := store.New(pool)
+	if _, err := seed.Run(ctx, pool, seed.Options{UserName: "Liam", UserEmail: "liam@localhost"}); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	u, err := q.GetLocalUser(ctx)
+	if err != nil {
+		t.Fatalf("GetLocalUser: %v", err)
+	}
+	code, _, err := companion.NewPairingCode(ctx, q)
+	if err != nil {
+		t.Fatalf("NewPairingCode: %v", err)
+	}
+	_, token, err := companion.RedeemPairingCode(ctx, q, u.ID, code, "Test iPhone", "ios")
+	if err != nil {
+		t.Fatalf("RedeemPairingCode: %v", err)
+	}
+
+	hub := realtime.New()
+	defer hub.Close()
+	srv := &Server{Pool: pool, Q: q, Events: hub}
+	ts := httptest.NewServer(srv.Handler())
+	defer ts.Close()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ts.URL+"/events", nil)
+	if err != nil {
+		t.Fatalf("NewRequest: %v", err)
+	}
+	req.Header.Set("Accept", "text/event-stream")
+	req.Header.Set("Authorization", "Bearer "+token)
+
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET /events: %v", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("GET /events status = %d, want 200", resp.StatusCode)
+	}
+	if ct := resp.Header.Get("Content-Type"); !strings.HasPrefix(ct, "text/event-stream") {
+		t.Fatalf("Content-Type = %q, want text/event-stream", ct)
+	}
+	scanner := bufio.NewScanner(resp.Body)
+	if !scanner.Scan() {
+		t.Fatalf("expected initial SSE frame, err=%v", scanner.Err())
+	}
+	if line := scanner.Text(); !strings.Contains(line, `"type":"reset"`) {
+		t.Fatalf("first SSE line = %q, want reset event", line)
 	}
 }

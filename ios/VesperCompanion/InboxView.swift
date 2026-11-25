@@ -3,7 +3,6 @@ import VesperCore
 
 struct InboxView: View {
     let connection: CompanionConnectionManager
-    let sseTick: Int
     @Binding var badgeCount: Int
 
     @State private var items: [InboxItem] = []
@@ -62,7 +61,7 @@ struct InboxView: View {
             .navigationTitle("Inbox")
             .refreshable { await load() }
             .task(id: connection.state) { await load() }
-            .onChange(of: sseTick) { _, _ in
+            .onChange(of: connection.eventVersion) { _, _ in
                 Task { await load(silent: true) }
             }
             .sheet(item: $replyTarget) { item in

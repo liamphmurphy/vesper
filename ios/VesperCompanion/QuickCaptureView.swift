@@ -1,49 +1,151 @@
+import PhotosUI
 import SwiftUI
+import UIKit
 import VesperCore
 
 struct QuickCaptureView: View {
     let connection: CompanionConnectionManager
 
+    // Note capture state
     @State private var text = ""
-    @State private var saving = false
-    @State private var confirmation: String?
-    @State private var errorMessage: String?
+    @State private var savingNote = false
+    @State private var noteConfirmation: String?
+    @State private var noteError: String?
+
+    // Photo capture to Library state
+    @State private var showCamera = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var capturedPhoto: ImageUploadHelper.PreparedPhoto?
+    @State private var photoTitle = ""
+    @State private var uploadingPhoto = false
+    @State private var photoConfirmation: String?
+    @State private var photoError: String?
 
     var body: some View {
         NavigationStack {
             Form {
                 Section("Quick Note to Knowledge Inbox") {
                     TextEditor(text: $text)
-                        .frame(minHeight: 180)
-                }
-                Section {
+                        .frame(minHeight: 130)
+
                     Button {
                         Task { await captureNote() }
                     } label: {
-                        if saving {
+                        if savingNote {
                             ProgressView()
                                 .frame(maxWidth: .infinity)
                         } else {
-                            Label("Save to Inbox", systemImage: "tray.and.arrow.down.fill")
+                            Label("Save Note to Inbox", systemImage: "tray.and.arrow.down.fill")
                                 .frame(maxWidth: .infinity)
                         }
                     }
-                    .disabled(saving || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || connection.apiClient == nil)
-                }
-                if let confirmation {
-                    Section {
-                        Label(confirmation, systemImage: "checkmark.circle.fill")
+                    .disabled(savingNote || text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || connection.apiClient == nil)
+
+                    if let noteConfirmation {
+                        Label(noteConfirmation, systemImage: "checkmark.circle.fill")
+                            .font(.callout)
                             .foregroundStyle(.green)
                     }
+                    if let noteError {
+                        Text(noteError)
+                            .font(.callout)
+                            .foregroundStyle(.red)
+                    }
                 }
-                if let errorMessage {
-                    Section {
-                        Text(errorMessage)
+
+                Section("Capture Photo to Library") {
+                    HStack(spacing: 12) {
+                        Button {
+                            photoError = nil
+                            photoConfirmation = nil
+                            showCamera = true
+                        } label: {
+                            Label("Take Photo", systemImage: "camera.fill")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(!CameraCaptureSheet.isCameraAvailable)
+
+                        PhotosPicker(selection: $selectedPhotoItem, matching: .images) {
+                            Label("Photo Library", systemImage: "photo.on.rectangle")
+                                .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.bordered)
+                    }
+
+                    if !CameraCaptureSheet.isCameraAvailable {
+                        Text("Camera is unavailable on this device; use Photo Library instead.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if let capturedPhoto {
+                        VStack(alignment: .leading, spacing: 10) {
+                            Image(uiImage: capturedPhoto.thumbnail)
+                                .resizable()
+                                .scaledToFit()
+                                .frame(maxWidth: .infinity, maxHeight: 220)
+                                .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                            TextField("Optional name (e.g. whiteboard-notes)", text: $photoTitle)
+                                .textInputAutocapitalization(.never)
+
+                            HStack {
+                                Button(role: .destructive) {
+                                    self.capturedPhoto = nil
+                                    photoTitle = ""
+                                } label: {
+                                    Label("Clear", systemImage: "trash")
+                                }
+                                .buttonStyle(.bordered)
+
+                                Spacer()
+
+                                Button {
+                                    Task { await uploadPhotoToLibrary() }
+                                } label: {
+                                    if uploadingPhoto {
+                                        ProgressView()
+                                    } else {
+                                        Label("Send to Library", systemImage: "arrow.up.circle.fill")
+                                    }
+                                }
+                                .buttonStyle(.borderedProminent)
+                                .disabled(uploadingPhoto || connection.apiClient == nil)
+                            }
+                        }
+                        .padding(.vertical, 4)
+                    }
+
+                    if let photoConfirmation {
+                        Label(photoConfirmation, systemImage: "checkmark.circle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.green)
+                    }
+                    if let photoError {
+                        Text(photoError)
+                            .font(.callout)
                             .foregroundStyle(.red)
                     }
                 }
             }
-            .navigationTitle("Quick Capture")
+            .navigationTitle("Capture")
+            .fullScreenCover(isPresented: $showCamera) {
+                CameraCaptureSheet { image in
+                    if let prepared = ImageUploadHelper.prepare(image) {
+                        capturedPhoto = prepared
+                        photoError = nil
+                        photoConfirmation = nil
+                    } else {
+                        photoError = "Could not encode captured photo."
+                    }
+                }
+                .ignoresSafeArea()
+            }
+            .onChange(of: selectedPhotoItem) { _, newItem in
+                guard let newItem else { return }
+                Task { await loadPickedPhoto(newItem) }
+            }
         }
     }
 
@@ -51,19 +153,65 @@ struct QuickCaptureView: View {
         guard let client = connection.apiClient else { return }
         switch Capture.buildCaptureRequest(CaptureInput(kind: .note, text: text)) {
         case .failure(let err):
-            errorMessage = err.message
+            noteError = err.message
         case .success(let call):
-            saving = true
-            errorMessage = nil
-            confirmation = nil
-            defer { saving = false }
+            savingNote = true
+            noteError = nil
+            noteConfirmation = nil
+            defer { savingNote = false }
             do {
                 try await client.send(call)
                 text = ""
-                confirmation = "Saved to your Knowledge Inbox."
+                noteConfirmation = "Saved to your Knowledge Inbox."
             } catch {
-                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+                noteError = (error as? APIError)?.userMessage ?? error.localizedDescription
             }
+        }
+    }
+
+    private func loadPickedPhoto(_ item: PhotosPickerItem) async {
+        defer { selectedPhotoItem = nil }
+        photoError = nil
+        photoConfirmation = nil
+        do {
+            guard let data = try await item.loadTransferable(type: Data.self),
+                  let image = UIImage(data: data),
+                  let prepared = ImageUploadHelper.prepare(image) else {
+                photoError = "Could not load selected photo."
+                return
+            }
+            capturedPhoto = prepared
+        } catch {
+            photoError = error.localizedDescription
+        }
+    }
+
+    private func uploadPhotoToLibrary() async {
+        guard let client = connection.apiClient, let capturedPhoto else { return }
+        uploadingPhoto = true
+        photoError = nil
+        photoConfirmation = nil
+        defer { uploadingPhoto = false }
+
+        let finalPrepared: ImageUploadHelper.PreparedPhoto
+        if !photoTitle.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+           let renamed = ImageUploadHelper.prepare(capturedPhoto.thumbnail, preferredName: photoTitle) {
+            finalPrepared = renamed
+        } else {
+            finalPrepared = capturedPhoto
+        }
+
+        do {
+            let created = try await client.uploadLibraryItem(
+                fileName: finalPrepared.fileName,
+                mime: finalPrepared.mime,
+                data: finalPrepared.data
+            )
+            self.capturedPhoto = nil
+            photoTitle = ""
+            photoConfirmation = "Sent “\(created.title.isEmpty ? finalPrepared.fileName : created.title)” to Library."
+        } catch {
+            photoError = (error as? APIError)?.userMessage ?? error.localizedDescription
         }
     }
 }

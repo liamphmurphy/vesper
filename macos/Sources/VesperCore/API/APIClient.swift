@@ -170,6 +170,22 @@ public final class APIClient: Sendable {
         return id
     }
 
+    /// POST /api/v1/library: one file as multipart. Returns the created library item.
+    public func uploadLibraryItem(fileName: String, mime: String, data: Data, timeout: TimeInterval = 120) async throws -> API.LibraryItem {
+        let (body, contentType) = Drop.buildMultipartBody(fileName: fileName, mime: mime, data: data)
+        let answer = try await request("POST", "/api/v1/library", body: body, contentType: contentType, timeout: timeout)
+        do {
+            return try JSONDecoder().decode(API.LibraryItem.self, from: answer)
+        } catch {
+            throw APIError.decoding("\(error)")
+        }
+    }
+
+    /// GET a binary API path (e.g. `/api/v1/chat-attachments/{id}/content` or `/api/v1/library/{id}/content`).
+    public func fetchRaw(_ path: String, accept: String = "*/*", timeout: TimeInterval = 30) async throws -> Data {
+        try await request("GET", path, headers: ["Accept": accept], timeout: timeout)
+    }
+
     /// The API's error body is { code, message }; fall back to the status.
     public static func errorMessage(status: Int, body: Data) -> String {
         if let object = try? JSONSerialization.jsonObject(with: body) as? [String: Any],

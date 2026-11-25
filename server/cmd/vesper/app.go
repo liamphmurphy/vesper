@@ -302,6 +302,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	}
 
 	imgMgr := NewImageManager()
+	apiHandler := srv.Handler()
 	var companionServer *http.Server
 	if addr := strings.TrimSpace(*companionAddrFlag); addr != "" {
 		hostName, _ := os.Hostname()
@@ -321,7 +322,6 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 			Port:            companionPort,
 			CertFingerprint: mat.FingerprintSHA256,
 		}
-		apiHandler := srv.Handler()
 		// Companion listener is TLS-only for paired LAN/Tailscale devices; it
 		// omits loopbackHostOnly because clients connect by LAN/Tailscale IP or
 		// MagicDNS, and relies on TLS + paired bearer token / session cookie auth.
@@ -330,6 +330,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 			ReadHeaderTimeout: 10 * time.Second,
 			TLSConfig:         mat.Config,
 		}
+		companionServer.RegisterOnShutdown(events.Close)
 		go func() {
 			if err := companionServer.Serve(tls.NewListener(cln, mat.Config)); err != nil && !errors.Is(err, http.ErrServerClosed) {
 				log.Error("companion listener stopped", "err", err)
@@ -338,7 +339,6 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		log.Info("companion TLS listener ready", "addr", cln.Addr().String(), "fingerprint", mat.FingerprintSHA256)
 	}
 
-	apiHandler := srv.Handler()
 	// Only the outer listener checks Host: microVMs reach apiHandler in-process as
 	// api.vesper.internal, which is not a loopback name.
 	topHandler := loopbackHostOnly(buildAppMux(apiHandler, webHandler, imgMgr), ln.Addr().(*net.TCPAddr).Port)
