@@ -138,6 +138,10 @@ public struct NativeSettings: Sendable, Codable, Equatable {
         public var runnerSlots = 2
         /// Absolute paths of extra root certificate files (PEM or DER) for agent VMs (RUNNER_EXTRA_CA_FILE).
         public var extraCaFiles: [String] = []
+        /// Allow paired iPhone/mobile companions to reach Vesper over TLS on local Wi-Fi and Tailscale.
+        public var companionEnabled = false
+        /// TCP port for the opt-in TLS companion listener (VESPER_COMPANION_ADDR).
+        public var companionPort = 8443
         public init() {}
     }
     public struct Files: Sendable, Codable, Equatable {
@@ -372,6 +376,8 @@ extension NativeSettings {
             out.stack.minFreeDiskGb = base.stack.minFreeDiskGb
         }
         out.stack.runnerSlots = intIn(stack["runnerSlots"], 1, 32, base.stack.runnerSlots)
+        out.stack.companionEnabled = bool(stack["companionEnabled"], base.stack.companionEnabled)
+        out.stack.companionPort = intIn(stack["companionPort"], 1024, 65535, base.stack.companionPort)
         if let list = stack["extraCaFiles"] {
             out.stack.extraCaFiles = normalizeCaFilePaths(list, fallback: base.stack.extraCaFiles)
         } else if let legacy = stack["extraCaFile"] {

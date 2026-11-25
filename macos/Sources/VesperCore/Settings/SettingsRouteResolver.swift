@@ -28,6 +28,7 @@ public enum SettingsPane: String, CaseIterable, Sendable, Hashable, Codable {
     case power
     case backups
     case security
+    case companion
     case updates
 }
 
@@ -86,6 +87,7 @@ public enum SettingsRouteResolver {
         "power": .power,
         "backups": .backups,
         "security": .security,
+        "companion": .companion,
         "updates": .updates,
     ]
 
@@ -98,6 +100,7 @@ public enum SettingsRouteResolver {
         .secrets: "provider credentials api secrets keys tokens oauth anthropic openai google github ssh pat",
         .connectors: "mcp servers tools oauth integration",
         .repositories: "repos github owners organizations presets discovery",
+        .companion: "iphone ios mobile companion tailscale lan qr pair remote",
         .workspace: "setup checklist encryption secrets_key image engine generation codex antigravity media providers music video omni tts voice speech lyria gemini",
         .runners: "runner backends microvm docker fake concurrency slots host folders environment test",
         .devWorkspace: "nix lazyvim neovim tmux gitconfig container ssh dev",

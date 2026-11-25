@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     var actions: AppActions { app.actions }
     private var pendingLinks: [URL] = []
     private var launched = false
+    private let companionBonjour = CompanionBonjourAdvertiser()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         let env = ProcessInfo.processInfo.environment
@@ -32,6 +33,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
         if let stack {
             stack.apply(app.settings.settings.stack)
+            companionBonjour.update(
+                enabled: app.settings.settings.stack.companionEnabled,
+                port: app.settings.settings.stack.companionPort
+            )
             Task { await stack.start() }
         }
         launched = true

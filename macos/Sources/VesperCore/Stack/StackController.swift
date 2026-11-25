@@ -138,6 +138,7 @@ public final class StackController {
     public var runnerSlotsOverride: Int?
     /// RUNNER_EXTRA_CA_FILE paths for the next start (the environment variable still wins). Empty: none.
     public var extraCaFilesOverride: [String] = []
+    public var companionAddrOverride: String?
     /// Called when the process exits on its own after a successful start. `willRestart` says whether auto-restart will follow.
     public var onCrash: ((StackExitInfo, _ willRestart: Bool) -> Void)?
     /// Called whenever `session` changes (monitors start and stop from here).
@@ -193,6 +194,7 @@ public final class StackController {
         minFreeDiskGb = settings.minFreeDiskGb
         runnerSlotsOverride = settings.runnerSlots
         extraCaFilesOverride = settings.extraCaFiles
+        companionAddrOverride = settings.companionEnabled ? ":\(settings.companionPort)" : nil
         recomputeHealth()
     }
 
@@ -264,7 +266,8 @@ public final class StackController {
         let launch = StackLaunch(
             resources: resources, dataDirectory: dataDirectory, secretsKey: secretsKey, port: options.port,
             nodeBin: StackLaunch.resolveNode(resources: resources, environment: env), rootfsUrl: rootfsUrl,
-            runnerSlots: runnerSlotsOverride, extraCaFiles: extraCaFilesOverride
+            runnerSlots: runnerSlotsOverride, extraCaFiles: extraCaFilesOverride,
+            companionAddr: companionAddrOverride
         )
 
         generation += 1
