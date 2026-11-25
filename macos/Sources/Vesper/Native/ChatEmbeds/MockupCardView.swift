@@ -333,7 +333,7 @@ struct MockupCardView: View {
             return
         }
         guard !Task.isCancelled else { return }
-        if let drawn = await MockupRendering.draw(source: fetched, cacheID: "chat-mockup-\(card.artifactID)-\(card.versionID)") {
+        if let drawn = MockupRendering.draw(source: fetched) {
             drawing = drawn
             drawnSource = fetched
         } else if !Task.isCancelled {
