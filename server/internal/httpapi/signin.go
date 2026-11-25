@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	_ "embed"
 	"errors"
 	"net/http"
 	"time"
@@ -9,6 +10,9 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/auth"
 	"github.com/liamphmurphy/vesper/server/internal/companion"
 )
+
+//go:embed signin_page.html
+var signInPageHTML []byte
 
 // SignInPath is where a sign-in link points: GET with ?code=.
 const SignInPath = "/api/v1/sign-in"
@@ -97,6 +101,15 @@ func (s *Server) signIn(w http.ResponseWriter, r *http.Request) {
 	}
 	setSessionCookie(w, r, token)
 	http.Redirect(w, r, "/", http.StatusSeeOther)
+}
+
+// signInPage serves the embedded static HTML page at GET /sign-in so headless
+// and browser sign-in flows work without a separate web SPA bundle.
+func (s *Server) signInPage(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.Header().Set("Cache-Control", "no-store")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(signInPageHTML)
 }
 
 func setSessionCookie(w http.ResponseWriter, r *http.Request, token string) {

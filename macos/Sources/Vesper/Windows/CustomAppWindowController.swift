@@ -5,22 +5,22 @@ import WebKit
 
 /// Dedicated lightweight standalone macOS window for a single Vesper Custom App (`/apps/<slug>?standalone=1`).
 /// Chromeless (no Vesper sidebar, tab strip, or right inspector) with a compact unified toolbar providing
-/// Reload, a native Permissions popover, and "Open in Vesper".
+/// Reload, a native Permissions popover, and "Open in Vesper", hosting the native SwiftUI `CustomAppScreen`.
 @MainActor
-final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate, ShellHostActions {
+final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NSToolbarDelegate {
     private static let reloadItemId = NSToolbarItem.Identifier("vesper.customApp.reload")
     private static let permissionsItemId = NSToolbarItem.Identifier("vesper.customApp.permissions")
     private static let openInVesperItemId = NSToolbarItem.Identifier("vesper.customApp.openInVesper")
 
     let app: AppModel
     let slug: String
-    let content: WebContentController
     let toastStore = ToastStore()
-
-    var webView: WKWebView { content.webView }
+    var webView: WKWebView? { nil }
 
     private let onClose: () -> Void
     private let detailRequest: APIRequest<API.CustomAppDetail>
+    private let screenContext: NativeScreenContext
+    private let runtimeModel: StandaloneCustomAppModel
     private var permissionsPopover: NSPopover?
     private weak var permissionsButton: NSButton?
     private var closed = false
@@ -30,13 +30,28 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
         self.slug = slug
         self.onClose = onClose
         self.detailRequest = API.getCustomApp(slug: slug)
+        self.runtimeModel = StandaloneCustomAppModel(theme: app.effectiveTheme())
 
-        let state = ShellState()
-        let theme = app.effectiveTheme()
-        state.theme = theme
-        state.pageMode = theme.mode
-        let path = CustomAppStandaloneLogic.standalonePath(slug: slug)
-        self.content = WebContentController(app: app, kind: .vesper, state: state, path: path, standaloneSlug: slug)
+        let match = NativeRouteMatch(
+            screen: .customApp,
+            path: CustomAppStandaloneLogic.standalonePath(slug: slug),
+            params: ["slug": slug],
+            query: ["standalone": "1"]
+        )
+        let ctx = NativeScreenContext(match: match, store: app.system.store) { [weak app] targetPath, newTab in
+            guard let app else { return }
+            if newTab {
+                app.openVesperTab(path: targetPath, nextTo: app.keyController?.window)
+                NSApp.activate()
+            } else {
+                app.aux.openInMainWindow(targetPath)
+            }
+        }
+        ctx.window = { [weak app] in app?.keyController }
+        ctx.baseURL = { [weak app] in app?.connection?.baseURL }
+        ctx.openCustomAppWindow = { [weak app] nextSlug in app?.aux.openCustomAppWindow(slug: nextSlug) }
+        ctx.closeCustomAppWindow = { [weak app] nextSlug in app?.aux.closeCustomAppWindow(slug: nextSlug) }
+        self.screenContext = ctx
 
         let initialRect = NSRect(
             x: 0,
@@ -64,9 +79,16 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
         super.init(window: window)
         window.delegate = self
 
-        let root = StandaloneContentContainer(content: content, toastStore: toastStore)
-        window.contentViewController = root
-        _ = root.view
+        let rootView = StandaloneCustomAppRootView(
+            slug: slug,
+            context: screenContext,
+            model: runtimeModel,
+            toastStore: toastStore,
+            onOpenInWorkbench: { [weak self] in self?.openInVesper(nil) }
+        )
+        let hosting = NSHostingController(rootView: rootView)
+        window.contentViewController = hosting
+        _ = hosting.view
 
         let autosaveName = CustomAppStandaloneLogic.frameAutosaveName(slug: slug)
         if !window.setFrameUsingName(autosaveName) {
@@ -82,24 +104,11 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
         toolbar.autosavesConfiguration = false
         window.toolbar = toolbar
 
-        content.bridge?.shellHost = self
-        content.bridge?.onOpenInMain = { [weak app] targetPath, newTab in
-            guard let app else { return }
-            if newTab {
-                app.openVesperTab(path: targetPath, nextTo: app.keyController?.window)
-                NSApp.activate()
-            } else {
-                app.aux.openInMainWindow(targetPath)
-            }
-        }
-
         app.system.store.observe(detailRequest)
         app.system.store.load(detailRequest)
 
         bindState()
-        if let conn = app.connection {
-            content.connect(conn)
-        }
+        applyPageMode(runtimeModel.theme.mode)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -115,16 +124,10 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
     }
 
     private func bindState() {
-        track({ [weak self] in self?.content.state.pageMode }) { [weak self] mode in
-            self?.applyPageMode(mode)
-        }
         track({ [weak self] () -> String in
             guard let self else { return "" }
             if let name = self.app.system.store.entry(self.detailRequest).data?.name, !name.isEmpty {
                 return name
-            }
-            if let pageTitle = self.content.state.pageTitle, !pageTitle.isEmpty {
-                return cleanTabTitle(pageTitle)
             }
             return Self.initialTitle(slug: self.slug, store: self.app.system.store)
         }) { [weak self] title in
@@ -141,21 +144,13 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
     }
 
     func connect(_ conn: Connection) {
-        content.connect(conn)
         app.system.store.load(detailRequest)
     }
 
     func applyAppearanceCommand(_ command: NativeCommand) {
         let theme = app.effectiveTheme()
-        if app.ownsAppearance || content.state.theme == nil {
-            content.state.theme = theme
-            content.state.pageMode = theme.mode
-            if let bg = theme.colors["bg"].flatMap({ NSColor.fromCSS($0) }) {
-                content.webView.underPageBackgroundColor = bg
-            }
-        }
-        content.bridge?.sendAppearance(command)
-        applyPageMode(content.state.pageMode)
+        runtimeModel.theme = theme
+        applyPageMode(theme.mode)
         if permissionsPopover?.isShown == true {
             rebuildPermissionsPopoverContent()
         }
@@ -181,7 +176,7 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
     // MARK: Toolbar Actions
 
     @objc private func reloadApp(_ sender: Any?) {
-        content.retry()
+        runtimeModel.reloadNonce += 1
     }
 
     @objc private func togglePermissionsPopover(_ sender: Any?) {
@@ -290,36 +285,6 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
         }
     }
 
-    // MARK: ShellHostActions
-
-    func showToast(_ toast: ToastItemModel, from webView: WKWebView?) {
-        toastStore.show(toast, from: webView)
-    }
-
-    func dismissToast(id: String) {
-        toastStore.dismissFromPage(id: id)
-    }
-
-    func showShortcuts() {
-        app.aux.showShortcuts()
-    }
-
-    func openCommandPalette(_ request: CommandPaletteRequest?) {
-        app.aux.openCommandPalette(request: request, from: app.keyController)
-    }
-
-    func closeCommandPalette() {
-        app.aux.closeCommandPalette()
-    }
-
-    func showQuickLook(items: [QuickLookItem], index: Int?) {
-        app.aux.previewQuickLook(items: items, index: index, from: window)
-    }
-
-    func openCustomAppWindow(slug: String) {
-        app.aux.openCustomAppWindow(slug: slug)
-    }
-
     // MARK: NSWindowDelegate
 
     func windowWillClose(_ notification: Notification) {
@@ -335,53 +300,49 @@ final class CustomAppWindowController: NSWindowController, NSWindowDelegate, NST
             }
         }
         toastStore.teardown()
-        content.teardown()
         onClose()
     }
 }
 
-/// Hosts the standalone Custom App web view together with the window-level toast HUD.
 @MainActor
-private final class StandaloneContentContainer: NSViewController {
-    private let content: WebContentController
-    private let toastStore: ToastStore
-    private var toastHost: NSHostingView<ToastOverlayView>?
+@Observable
+private final class StandaloneCustomAppModel {
+    var theme: ThemeTokens
+    var reloadNonce: Int = 0
 
-    init(content: WebContentController, toastStore: ToastStore) {
-        self.content = content
-        self.toastStore = toastStore
-        super.init(nibName: nil, bundle: nil)
+    init(theme: ThemeTokens) {
+        self.theme = theme
     }
+}
 
-    required init?(coder: NSCoder) { fatalError("not used") }
+private struct StandaloneCustomAppRootView: View {
+    let slug: String
+    let context: NativeScreenContext
+    let model: StandaloneCustomAppModel
+    let toastStore: ToastStore
+    let onOpenInWorkbench: () -> Void
 
-    override func loadView() {
-        let root = NSView()
-        view = root
+    var body: some View {
+        ZStack(alignment: .bottom) {
+            CustomAppScreen(
+                overrideSlug: slug,
+                standalone: true,
+                reloadNonce: model.reloadNonce,
+                onOpenInWorkbench: onOpenInWorkbench
+            )
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(model.theme.palette.background)
+            .foregroundStyle(model.theme.palette.text)
+            .tint(model.theme.palette.accent)
+            .environment(\.vesperTheme, model.theme)
+            .environment(\.colorScheme, model.theme.mode == .dark ? .dark : .light)
+            .environment(context)
 
-        addChild(content)
-        content.view.translatesAutoresizingMaskIntoConstraints = false
-        root.addSubview(content.view)
-        NSLayoutConstraint.activate([
-            content.view.topAnchor.constraint(equalTo: root.topAnchor),
-            content.view.leadingAnchor.constraint(equalTo: root.leadingAnchor),
-            content.view.trailingAnchor.constraint(equalTo: root.trailingAnchor),
-            content.view.bottomAnchor.constraint(equalTo: root.bottomAnchor),
-        ])
-
-        let host = NSHostingView(rootView: ToastOverlayView(store: toastStore))
-        host.translatesAutoresizingMaskIntoConstraints = false
-        host.sizingOptions = [.intrinsicContentSize]
-        host.isHidden = true
-        toastHost = host
-        root.addSubview(host, positioned: .above, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            host.centerXAnchor.constraint(equalTo: root.centerXAnchor),
-            host.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
-            host.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
-        ])
-        track({ [weak toastStore] in toastStore?.toasts.isEmpty ?? true }) { [weak host] isEmpty in
-            host?.isHidden = isEmpty
+            if !toastStore.toasts.isEmpty {
+                ToastOverlayView(store: toastStore)
+                    .frame(maxWidth: 440)
+                    .padding(.bottom, 20)
+            }
         }
     }
 }

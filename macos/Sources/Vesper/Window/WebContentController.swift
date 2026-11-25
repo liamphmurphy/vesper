@@ -140,6 +140,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         services?.baseURL = conn.baseURL
         osBridge?.baseURL = conn.baseURL
         state.loadError = nil
+        // Native screens fetch directly via APIClient; skip loading the hidden WKWebView when a native screen owns the route.
+        guard nativeHost == nil else { return }
         if sameServer, webView.url != nil {
             webView.reload()
         } else if let url = URL(string: pendingPath, relativeTo: conn.baseURL)?.absoluteURL {
@@ -155,10 +157,11 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         pendingPath = path
         // Show the native screen now rather than after the page's router changes the URL.
         syncNativeScreen(path: path)
-        if nativeHost == nil && (wasNative || !state.ready),
+        if nativeHost != nil {
+            return
+        }
+        if wasNative || !state.ready,
            let base, let url = URL(string: path, relativeTo: base)?.absoluteURL {
-            // The hidden WKWebView may have unmounted NativeShellHost on a removed web route (404),
-            // so load the web route directly when returning from a native screen to a web route.
             webView.load(URLRequest(url: url))
         } else if state.ready {
             bridge?.send(.navigate(path: path))
@@ -405,6 +408,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     /// beforeunload prompts, so the shell asks. A page that doesn't answer within a second counts
     /// as having none, so a hung page can always be closed.
     func hasUnsavedChanges() async -> Bool {
+        if nativeHost != nil { return false }
         let web = webView
         let check = Task { @MainActor () -> Bool in
             let result = try? await web.callAsyncJavaScript(

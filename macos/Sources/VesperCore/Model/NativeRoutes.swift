@@ -37,6 +37,14 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case artifactDetail
     case artifactReview
     case agentDetail
+    case docEditor
+    case slidesEditor
+    case slidesPresent
+    case designEditor
+    case designPresent
+    case customApp
+    case printKnowledge
+    case printArtifact
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -53,10 +61,10 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         switch self {
         case .chat, .chatDetail, .rootLanding: .chat
         case .spacesHome, .spaceNew, .spaceDetail: .spaces
-        case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
+        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .designEditor: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
-        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
-        case .inbox, .pdf, .setup, .agentDetail, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
+        case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect, .customApp: .apps
+        case .inbox, .pdf, .setup, .agentDetail, .slidesPresent, .designPresent, .printKnowledge, .printArtifact, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
     }
 }
@@ -148,8 +156,16 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/setup", .setup),
         NativeRoute("/apps", .appsHome),
         NativeRoute("/apps/docs", .appsRedirect),
+        NativeRoute("/apps/docs/:id", .docEditor),
         NativeRoute("/apps/slides", .appsRedirect),
+        NativeRoute("/apps/slides/:id", .slidesEditor),
+        NativeRoute("/present/slides/:id", .slidesPresent),
         NativeRoute("/apps/designs", .appsRedirect),
+        NativeRoute("/apps/designs/:id", .designEditor),
+        NativeRoute("/present/designs/:id", .designPresent),
+        NativeRoute("/apps/:slug", .customApp),
+        NativeRoute("/print/knowledge/:id", .printKnowledge),
+        NativeRoute("/print/artifacts/:id", .printArtifact),
     ]
 
     /// The app's registry. Debug-only screens are enabled only when `debug` is set.

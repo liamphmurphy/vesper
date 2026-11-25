@@ -3,9 +3,9 @@
 // (Vesper Native/ChatEmbeds/EmbedRenderer.swift) runs to draw ```mermaid fences and $$ math, as the
 // web does (components/domain/mermaid-fence.tsx, rehype-katex). The output is checked in so the app
 // build fetches nothing and the renderer page loads nothing remote; re-run after upgrading mermaid or
-// katex in web/package.json:
+// katex in design-worker/package.json:
 //
-//   node macos/scripts/build-embeds-bundle.mjs        (needs web/node_modules: npm --prefix web ci)
+//   node macos/scripts/build-embeds-bundle.mjs        (needs design-worker/node_modules: npm --prefix design-worker ci)
 //
 // - mermaid.js: mermaid's own IIFE build (dist/mermaid.min.js), unchanged.
 // - katex.js: KaTeX's UMD build, unchanged.
@@ -16,7 +16,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const modules = join(repo, "web/node_modules");
+const modules = join(repo, "design-worker/node_modules");
 const out = join(repo, "macos/Sources/VesperCore/Resources/embeds");
 const version = (pkg) => JSON.parse(readFileSync(join(modules, pkg, "package.json"), "utf8")).version;
 

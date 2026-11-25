@@ -1,15 +1,15 @@
-// Renders macos/Resources/AppIcon.icns from web/public/logo.svg. Run: node macos/scripts/gen-icon.mjs
+// Renders macos/Resources/AppIcon.icns from design-worker/assets/logo.svg. Run: node macos/scripts/gen-icon.mjs
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-// @resvg/resvg-js comes from web/node_modules (run `npm ci` in web/ first).
-const { Resvg } = createRequire(import.meta.url)("../../web/node_modules/@resvg/resvg-js");
+// @resvg/resvg-js comes from design-worker/node_modules (run `npm ci` in design-worker/ first).
+const { Resvg } = createRequire(import.meta.url)("../../design-worker/node_modules/@resvg/resvg-js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const macosRoot = path.resolve(__dirname, "..");
-const svgPath = path.resolve(macosRoot, "../web/public/logo.svg");
+const svgPath = path.resolve(macosRoot, "../design-worker/assets/logo.svg");
 const buildDir = path.resolve(macosRoot, "Resources");
 
 // Apple .icns OSType PNG chunk types and pixel dimensions.

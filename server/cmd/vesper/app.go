@@ -192,13 +192,10 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	defer func() { _ = os.Remove(runtimePath) }()
 
 	designToken := randomHex16()
-	webDistDir := resolveWebDistDir(exeDir)
-	var webHandler http.Handler
+	workerDir := resolveDesignWorkerDir(exeDir)
 	var designWorkerURL string
-	if webDistDir != "" {
-		// The UI is a static build Go serves itself; node runs only the design worker beside it.
-		webHandler = staticSPAHandler(webDistDir)
-		workerPort, stopFn, werr := startDesignWorker(ctx, log, webDistDir, designToken, filepath.Join(dataDir, "logs", "design-worker.log"))
+	if workerDir != "" {
+		workerPort, stopFn, werr := startDesignWorker(ctx, log, workerDir, designToken, filepath.Join(dataDir, "logs", "design-worker.log"))
 		if werr != nil {
 			_ = ln.Close()
 			return fmt.Errorf("start design worker: %w", werr)
@@ -326,7 +323,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		// omits loopbackHostOnly because clients connect by LAN/Tailscale IP or
 		// MagicDNS, and relies on TLS + paired bearer token / session cookie auth.
 		companionServer = &http.Server{
-			Handler:           buildAppMux(apiHandler, webHandler, imgMgr),
+			Handler:           buildAppMux(apiHandler, imgMgr),
 			ReadHeaderTimeout: 10 * time.Second,
 			TLSConfig:         mat.Config,
 		}
@@ -341,7 +338,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 
 	// Only the outer listener checks Host: microVMs reach apiHandler in-process as
 	// api.vesper.internal, which is not a loopback name.
-	topHandler := loopbackHostOnly(buildAppMux(apiHandler, webHandler, imgMgr), ln.Addr().(*net.TCPAddr).Port)
+	topHandler := loopbackHostOnly(buildAppMux(apiHandler, imgMgr), ln.Addr().(*net.TCPAddr).Port)
 
 	hs := &http.Server{
 		Handler:           topHandler,
@@ -373,7 +370,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 		fmt.Printf("VESPER_SIGN_IN_CODE=%s\n", code)
 	}
 	fmt.Printf("VESPER_READY_URL=%s\n", baseURL)
-	log.Info("vesper app ready", "url", baseURL, "data_dir", dataDir, "web_dir", webDistDir)
+	log.Info("vesper app ready", "url", baseURL, "data_dir", dataDir, "design_worker_dir", workerDir)
 
 	var serveErr error
 	select {
@@ -401,7 +398,7 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	return serveErr
 }
 
-func buildAppMux(apiHandler, webHandler http.Handler, imgMgr *ImageManager) http.Handler {
+func buildAppMux(apiHandler http.Handler, imgMgr *ImageManager) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
 		if p == "/internal" || strings.HasPrefix(p, "/internal/") {
@@ -413,12 +410,8 @@ func buildAppMux(apiHandler, webHandler http.Handler, imgMgr *ImageManager) http
 			_ = json.NewEncoder(w).Encode(imgMgr.Status())
 			return
 		}
-		if strings.HasPrefix(p, "/api/") || p == "/mcp" || strings.HasPrefix(p, "/mcp/") || p == "/events" {
+		if strings.HasPrefix(p, "/api/") || p == "/mcp" || strings.HasPrefix(p, "/mcp/") || p == "/events" || p == httpapi.SignInPage {
 			apiHandler.ServeHTTP(w, r)
-			return
-		}
-		if webHandler != nil {
-			webHandler.ServeHTTP(w, r)
 			return
 		}
 		http.NotFound(w, r)
@@ -594,9 +587,9 @@ func runAppMicroVMRunner(
 	return r.Run(ctx)
 }
 
-// startDesignWorker runs the bundled design worker (web/design-worker/server.mjs, bundled by
-// web/scripts/build-design-worker.mjs) on a free loopback port with node, and waits until it listens.
-func startDesignWorker(ctx context.Context, log *slog.Logger, webDir, designToken, logPath string) (int, func(), error) {
+// startDesignWorker runs the bundled headless design worker (design-worker/server.mjs, bundled by
+// design-worker/scripts/build.mjs) on a free loopback port with node, and waits until it listens.
+func startDesignWorker(ctx context.Context, log *slog.Logger, workerDir, designToken, logPath string) (int, func(), error) {
 	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return 0, nil, err
@@ -613,9 +606,9 @@ func startDesignWorker(ctx context.Context, log *slog.Logger, webDir, designToke
 		}
 	}
 
-	serverJS := filepath.Join(webDir, "design-worker", "server.mjs")
+	serverJS := filepath.Join(workerDir, "server.mjs")
 	cmd := exec.Command(nodeBin, serverJS)
-	cmd.Dir = webDir
+	cmd.Dir = workerDir
 	cmd.Env = []string{
 		"PATH=" + os.Getenv("PATH"),
 		"HOME=" + os.Getenv("HOME"),
@@ -690,19 +683,19 @@ func startDesignWorker(ctx context.Context, log *slog.Logger, webDir, designToke
 	return port, stopFn, nil
 }
 
-func resolveWebDistDir(exeDir string) string {
+func resolveDesignWorkerDir(exeDir string) string {
 	var cands []string
-	if d := strings.TrimSpace(os.Getenv("VESPER_WEB_DIST_DIR")); d != "" {
+	if d := strings.TrimSpace(os.Getenv("VESPER_DESIGN_WORKER_DIR")); d != "" {
 		cands = append(cands, d)
 	}
 	if exeDir != "" {
 		cands = append(cands,
-			filepath.Join(exeDir, "..", "web"),
-			filepath.Join(exeDir, "web"),
+			filepath.Join(exeDir, "..", "design-worker"),
+			filepath.Join(exeDir, "design-worker"),
 		)
 	}
 	for _, c := range cands {
-		if st, err := os.Stat(filepath.Join(c, "index.html")); err == nil && !st.IsDir() {
+		if st, err := os.Stat(filepath.Join(c, "server.mjs")); err == nil && !st.IsDir() {
 			return c
 		}
 	}

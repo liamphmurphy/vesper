@@ -161,7 +161,7 @@ func Load() (Config, error) {
 		SecretsKey:     env("SECRETS_KEY", ""),
 		PublicURL:      env("PUBLIC_URL", "http://localhost:8080"),
 
-		DesignWorkerURL:   env("DESIGN_WORKER_URL", "http://web:3000/internal/designs"),
+		DesignWorkerURL:   env("DESIGN_WORKER_URL", "http://127.0.0.1:3000/internal/designs"),
 		DesignWorkerToken: env("DESIGN_WORKER_TOKEN", ""),
 	}
 	c.WebURL = strings.TrimRight(env("WEB_URL", c.PublicURL), "/")

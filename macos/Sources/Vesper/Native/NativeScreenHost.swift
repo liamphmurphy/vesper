@@ -169,6 +169,14 @@ struct NativeScreenRoot: View {
         case .artifactDetail: ArtifactDetailScreen()
         case .artifactReview: ArtifactReviewScreen()
         case .agentDetail: AgentDetailScreen()
+        case .docEditor: DocEditorScreen()
+        case .slidesEditor: SlidesEditorScreen()
+        case .slidesPresent: SlidesPresentScreen()
+        case .designEditor: DesignEditorScreen()
+        case .designPresent: DesignPresentScreen()
+        case .customApp: CustomAppScreen()
+        case .printKnowledge: PrintKnowledgeScreen()
+        case .printArtifact: PrintArtifactScreen()
         }
     }
 }

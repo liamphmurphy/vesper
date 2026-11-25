@@ -1,7 +1,7 @@
 name: ci
 
-# Backend, UI and Mac app tests, as independent jobs. Each job runs the same make
-# target you run locally (`make test-server`, `make test-web`), so a red job
+# Backend, design-worker and Mac app tests, as independent jobs. Each job runs the same make
+# target you run locally (`make test-server`, `make test-worker`), so a red job
 # reproduces with one command.
 #
 # Runner: ubuntu-24.04-arm is the largest free GitHub-hosted runner (4 vCPU,
@@ -59,8 +59,8 @@ jobs:
             other)   go test -timeout 30m $(go list ./... | grep -v -E 'internal/httpapi$|internal/runner$') ;;
           esac
 
-  web:
-    name: web tests
+  design-worker:
+    name: design-worker tests
     runs-on: ubuntu-24.04-arm
     timeout-minutes: 20
     steps:
@@ -69,8 +69,8 @@ jobs:
         with:
           node-version: 24
           cache: npm
-          cache-dependency-path: web/package-lock.json
-      - run: make test-web
+          cache-dependency-path: design-worker/package-lock.json
+      - run: make test-worker
 
   # The native Mac app's logic (macos/Sources/VesperCore) and its AppKit target. No stack is needed:
   # the integration test that starts the real stack only runs with VESPER_STACK_IT=1. macOS runners

@@ -261,12 +261,12 @@ func TestComponentsAndTokens(t *testing.T) {
 // The embedded snapshot is the one tokens.css hashes to: run the web's
 // npm run gen:design-tokens after editing tokens.css.
 func TestTokensSnapshotMatchesTokensCSS(t *testing.T) {
-	css, err := os.ReadFile("../../../web/styles/tokens.css")
+	css, err := os.ReadFile("../../../design-worker/styles/tokens.css")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if want := fmt.Sprintf("sha256:%x", sha256.Sum256(css)); TokensHash != want {
-		t.Fatalf("TokensHash = %s, tokens.css is %s; run npm run gen:design-tokens in web/", TokensHash, want)
+		t.Fatalf("TokensHash = %s, tokens.css is %s; run npm run gen:design-tokens in design-worker/", TokensHash, want)
 	}
 }
 

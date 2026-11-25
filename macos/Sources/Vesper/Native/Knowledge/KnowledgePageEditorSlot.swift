@@ -4,10 +4,10 @@ import VesperCore
 /// Editor content slot for a Knowledge page.
 ///
 /// Switches on `KnowledgeShellLogic.editorTarget(for:query:)` and renders:
-/// - `.deck` -> `HostedWebPageView(path: "/apps/slides/<canvasId>")`
-/// - `.design` -> `HostedWebPageView(path: "/apps/designs/<canvasId>")`
+/// - `.deck` -> native `SlidesEditorView(canvasId:embedded: true)`
+/// - `.design` -> native `DesignEditorView(canvasId:embedded: true)`
 /// - standalone PDF page -> native `PDFViewerView`
-/// - Docs (`page.kind == .document` with `page.canvasId != nil`) -> Tiptap `HostedWebPageView(path: "/apps/docs/<canvasId>")`
+/// - Docs (`page.kind == .document` with `page.canvasId != nil`) -> native `DocEditorView(canvasId:embedded: true)`
 /// - Standard Knowledge markdown pages (`page.kind == .document`, `page.canvasId == nil`, non-PDF) -> native `KnowledgeEditorView`
 struct KnowledgePageEditorSlot: View {
     @Environment(NativeScreenContext.self) private var context
@@ -24,9 +24,13 @@ struct KnowledgePageEditorSlot: View {
     var body: some View {
         let target = KnowledgeShellLogic.editorTarget(for: page, query: query)
         switch target {
-        case .deck(_, let hostedPath), .design(_, let hostedPath):
-            HostedWebPageView(path: hostedPath)
-                .id(hostedPath)
+        case .deck(let canvasId, _):
+            SlidesEditorView(canvasId: canvasId, embedded: true)
+                .id(canvasId)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .design(let canvasId, _):
+            DesignEditorView(canvasId: canvasId, embedded: true, initialReviewing: query["review"] == "1")
+                .id(canvasId)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .pdf(let sourcePath, let title):
             VStack(spacing: 0) {
@@ -69,11 +73,10 @@ struct KnowledgePageEditorSlot: View {
                     context.find.searcher = nil
                 }
             }
-        case .hostedPage(let hostedPath):
+        case .hostedPage:
             if page.kind == .document, let canvasId = page.canvasId, !canvasId.isEmpty {
-                let docPath = hostedPath.hasPrefix("/apps/docs/") ? hostedPath : "/apps/docs/\(canvasId)"
-                HostedWebPageView(path: docPath)
-                    .id(docPath)
+                DocEditorView(canvasId: canvasId, embedded: true)
+                    .id(canvasId)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 KnowledgeEditorView(

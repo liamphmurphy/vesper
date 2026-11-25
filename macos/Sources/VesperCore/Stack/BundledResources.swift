@@ -7,16 +7,16 @@ public struct BundledResources: Sendable, Equatable {
     public var vesperBin: URL
     public var postgresBinDir: URL
     public var kernelPath: URL?
-    public var webDistDir: URL?
+    public var designWorkerDir: URL?
     /// `<base>/node/bin/node`, when bundled.
     public var nodeBin: URL?
 
-    public init(baseDir: URL, vesperBin: URL, postgresBinDir: URL, kernelPath: URL? = nil, webDistDir: URL? = nil, nodeBin: URL? = nil) {
+    public init(baseDir: URL, vesperBin: URL, postgresBinDir: URL, kernelPath: URL? = nil, designWorkerDir: URL? = nil, nodeBin: URL? = nil) {
         self.baseDir = baseDir
         self.vesperBin = vesperBin
         self.postgresBinDir = postgresBinDir
         self.kernelPath = kernelPath
-        self.webDistDir = webDistDir
+        self.designWorkerDir = designWorkerDir
         self.nodeBin = nodeBin
     }
 
@@ -27,14 +27,14 @@ public struct BundledResources: Sendable, Equatable {
         let postgres = baseDir.appendingPathComponent("postgres/bin/postgres")
         guard fm.fileExists(atPath: vesper.path), fm.fileExists(atPath: postgres.path) else { return nil }
         let kernel = baseDir.appendingPathComponent("images/vmlinux")
-        let web = baseDir.appendingPathComponent("web")
+        let worker = baseDir.appendingPathComponent("design-worker")
         let node = baseDir.appendingPathComponent("node/bin/node")
         return BundledResources(
             baseDir: baseDir,
             vesperBin: vesper,
             postgresBinDir: baseDir.appendingPathComponent("postgres/bin"),
             kernelPath: fm.fileExists(atPath: kernel.path) ? kernel : nil,
-            webDistDir: fm.fileExists(atPath: web.appendingPathComponent("index.html").path) ? web : nil,
+            designWorkerDir: fm.fileExists(atPath: worker.appendingPathComponent("server.mjs").path) ? worker : nil,
             nodeBin: fm.isExecutableFile(atPath: node.path) ? node : nil
         )
     }
@@ -109,7 +109,7 @@ public struct StackLaunch: Sendable {
         env["VESPER_APP_ADDR"] = address
         env["VESPER_POSTGRES_BIN_DIR"] = resources.postgresBinDir.path
         if let kernel = resources.kernelPath { env["VESPER_KERNEL_PATH"] = kernel.path }
-        if let web = resources.webDistDir { env["VESPER_WEB_DIST_DIR"] = web.path }
+        if let worker = resources.designWorkerDir { env["VESPER_DESIGN_WORKER_DIR"] = worker.path }
         if let node = nodeBin, !node.isEmpty { env["VESPER_NODE_BIN"] = node }
         if let url = rootfsUrl, base["VESPER_ROOTFS_URL"]?.trimmingCharacters(in: .whitespaces).isEmpty ?? true {
             env["VESPER_ROOTFS_URL"] = url

@@ -22,17 +22,16 @@ else
   echo "Using existing staged PostgreSQL bundle at ${res_dir}/postgres"
 fi
 
-echo "Building the static web UI and the design worker..."
-if [[ ! -d "${repo_root}/web/node_modules" ]]; then
-  npm --prefix "${repo_root}/web" ci
+echo "Building the headless design worker..."
+if [[ ! -d "${repo_root}/design-worker/node_modules" ]]; then
+  npm --prefix "${repo_root}/design-worker" ci
 fi
-npm --prefix "${repo_root}/web" run build
+npm --prefix "${repo_root}/design-worker" run build
 
-# web/dist is the whole UI: index.html and assets/ (served by `vesper app` itself), fonts/, and
-# design-worker/ (server.mjs plus the resvg native addon; run with the bundled node).
-rm -rf "${res_dir}/web"
-mkdir -p "${res_dir}/web"
-cp -R "${repo_root}/web/dist/." "${res_dir}/web/"
+# design-worker/dist contains server.mjs, @resvg/resvg-js, pdfjs runtime, and bundled fonts.
+rm -rf "${res_dir}/design-worker" "${res_dir}/web"
+mkdir -p "${res_dir}/design-worker"
+cp -R "${repo_root}/design-worker/dist/." "${res_dir}/design-worker/"
 
 echo "Building vesper (darwin/arm64) binary..."
 CGO_ENABLED=1 GOOS=darwin GOARCH=arm64 \
@@ -68,4 +67,4 @@ if [[ -f "${img_cache}/agent-base.erofs.sha256" ]]; then
 fi
 
 echo "Staged macOS app resources:"
-du -sh "${res_dir}/bin" "${res_dir}/postgres" "${res_dir}/images" "${res_dir}/web"
+du -sh "${res_dir}/bin" "${res_dir}/postgres" "${res_dir}/images" "${res_dir}/design-worker"

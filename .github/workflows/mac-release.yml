@@ -164,8 +164,8 @@ jobs:
       - name: Set the app version from the tag
         env:
           VERSION: ${{ needs.version.outputs.version }}
-        run: npm --prefix web version "$VERSION" --no-git-tag-version --allow-same-version
-      # Stages Postgres, the static web UI and the vesper binary, builds the Swift app, signs it ad hoc
+        run: printf '%s\n' "$VERSION" > VERSION
+      # Stages Postgres, the headless design worker and the vesper binary, builds the Swift app, signs it ad hoc
       # and packs macos/build/Vesper-arm64.dmg and its .sha256.
       - name: Build the DMG
         run: make mac-dmg
