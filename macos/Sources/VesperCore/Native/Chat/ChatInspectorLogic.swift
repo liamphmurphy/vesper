@@ -160,7 +160,7 @@ public enum ChatInspectorLogic {
                 summaryItems.append(InspectorItem(id: "effort", kind: .fact, label: "Effort", value: effortLabel(effort)))
             }
             if let total = costs?.total, total.runs > 0 {
-                let spend = WorkLogic.spendLabel(micros: total.costMicros, unpricedRuns: costs?.unpricedRuns ?? 0)
+                let spend = ReportsLogic.spendLabel(micros: total.costMicros, unpricedRuns: costs?.unpricedRuns ?? 0)
                 summaryItems.append(InspectorItem(id: "cost", kind: .fact, label: "Cost", value: spend, mono: true))
             }
             if let repoUrl = session.repoUrl, !repoUrl.isEmpty {

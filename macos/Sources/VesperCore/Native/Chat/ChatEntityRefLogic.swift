@@ -3,25 +3,16 @@ import Foundation
 // MARK: - Live Entity References in Chat (LAZYAGENTS-317)
 
 public enum ChatEntityRef: Sendable, Equatable, Hashable, Identifiable {
-    case ticket(key: String)
-    case run(id: String)
-    case epic(ref: String)
     case page(ref: String)
 
     public var id: String {
         switch self {
-        case .ticket(let key): "ticket:\(key)"
-        case .run(let id): "run:\(id)"
-        case .epic(let ref): "epic:\(ref.lowercased())"
         case .page(let ref): "page:\(ref.lowercased())"
         }
     }
 
     public var displayLabel: String {
         switch self {
-        case .ticket(let key): key
-        case .run(let id): "run \(String(id.prefix(8)))"
-        case .epic(let ref): ref
         case .page(let ref): ref
         }
     }
@@ -31,10 +22,8 @@ public enum ChatEntityRefExtractor {
     public static let maxRefsPerMessage = 12
 
     private static let wikiBracketRegex = try! NSRegularExpression(pattern: #"\[\[([^\[\]\n]+?)\]\]"#)
-    private static let bareTicketRegex = try! NSRegularExpression(pattern: #"(?<![A-Za-z0-9_/:])([A-Z][A-Z0-9]{1,9}-[0-9]{1,7})(?![A-Za-z0-9_-])"#)
 
-    /// Extracts explicit entity refs (`[[ticket:KEY]]`, `[[run:UUID]]`, `[[epic:ID]]`, `[[page:Path]]`,
-    /// `[[Wiki Page]]`) and auto-detected bare ticket keys (`LAZYAGENTS-123`) outside fenced code blocks
+    /// Extracts Knowledge page entity refs (`[[page:Path]]`, `[[Wiki Page]]`) outside fenced code blocks
     /// and inline code spans. Preserves first-seen order and deduplicates.
     public static func extract(from markdown: String) -> [ChatEntityRef] {
         var result: [ChatEntityRef] = []
@@ -71,11 +60,8 @@ public enum ChatEntityRefExtractor {
             let ns = sanitized as NSString
             let fullRange = NSRange(location: 0, length: ns.length)
 
-            // Collect matches in left-to-right reading order on this line.
             var lineHits: [(location: Int, ref: ChatEntityRef)] = []
-            var wikiRanges: [NSRange] = []
             for match in wikiBracketRegex.matches(in: sanitized, range: fullRange) {
-                wikiRanges.append(match.range)
                 let rawInner = ns.substring(with: match.range(at: 1))
                 // Strip optional alias `target|label` and heading anchor `#section`
                 let targetPart = rawInner.split(separator: "|", maxSplits: 1).first.map(String.init) ?? rawInner
@@ -83,16 +69,6 @@ public enum ChatEntityRefExtractor {
                 guard !trimmed.isEmpty else { continue }
                 if let parsed = parseBracketRef(trimmed) {
                     lineHits.append((match.range.location, parsed))
-                }
-            }
-
-            for match in bareTicketRegex.matches(in: sanitized, range: fullRange) {
-                if wikiRanges.contains(where: { NSIntersectionRange($0, match.range).length > 0 }) {
-                    continue
-                }
-                let key = ns.substring(with: match.range(at: 1)).uppercased()
-                if ChatDispatchCard.isValidTicketKey(key) {
-                    lineHits.append((match.range.location, .ticket(key: key)))
                 }
             }
 
@@ -112,23 +88,14 @@ public enum ChatEntityRefExtractor {
             let value = trimmed[trimmed.index(after: colon)...].trimmingCharacters(in: .whitespaces)
             guard !value.isEmpty else { return nil }
             switch prefix {
-            case "ticket":
-                let upper = value.uppercased()
-                return ChatDispatchCard.isValidTicketKey(upper) ? .ticket(key: upper) : nil
-            case "run":
-                return ChatFenceParsers.isUUID(value) ? .run(id: value.lowercased()) : nil
-            case "epic":
-                return .epic(ref: value)
             case "page", "wiki":
                 let base = value.split(separator: "#", maxSplits: 1).first.map(String.init) ?? value
                 return base.isEmpty ? nil : .page(ref: base)
+            case "ticket", "run", "epic":
+                return nil
             default:
                 break
             }
-        }
-        let upper = trimmed.uppercased()
-        if ChatDispatchCard.isValidTicketKey(upper) {
-            return .ticket(key: upper)
         }
         let pageTarget = trimmed.split(separator: "#", maxSplits: 1).first.map(String.init) ?? trimmed
         let cleanPage = pageTarget.trimmingCharacters(in: .whitespaces)

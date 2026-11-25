@@ -12,7 +12,6 @@ struct SettingsWorkspacePane: View {
         let secretsEntry = store?.entry(API.listSecrets())
         let modelsEntry = store?.entry(API.listChatModels())
         let runnerEntry = store?.entry(API.getRunnerStatus())
-        let plansEntry = store?.entry(API.listPlanningSessions())
         let spacesEntry = store?.entry(API.listChatSpaces())
 
         ScrollViewReader { proxy in
@@ -55,18 +54,15 @@ struct SettingsWorkspacePane: View {
                     let reposCount = activeProjects.filter { $0.repoUrl?.isEmpty == false }.count
                     let firstWorkSpaceId = activeProjects.first?.spaceId ?? spacesEntry?.data?.spaces.first(where: { $0.work != nil && !($0.work?.archived ?? true) })?.id
                     let harnessSecretSet = (secretsEntry?.data?.secrets ?? []).contains { $0.name.hasPrefix("harness:") && $0.project == nil }
-                    let ticketAgents = boot.agents.filter { $0.kind == .main }.count
                     let steps = WorkspaceSetupHelpers.checklist(
                         reposCount: reposCount,
                         firstWorkSpaceId: firstWorkSpaceId,
                         harnessSecretSet: harnessSecretSet,
                         harnessModels: modelsEntry?.data ?? [],
-                        runner: runnerEntry?.data,
-                        ticketAgentsCount: ticketAgents,
-                        plansCount: plansEntry?.data?.count ?? 0
+                        runner: runnerEntry?.data
                     )
 
-                    SettingsCard("Setup checklist", subtitle: "Everything needed before dispatching runs or building branches.") {
+                    SettingsCard("Setup checklist", subtitle: "Everything needed before running coding chats or building branches.") {
                         ForEach(steps) { step in
                             HStack(alignment: .top, spacing: 10) {
                                 Image(systemName: step.done ? "checkmark.circle.fill" : "circle")
@@ -115,7 +111,6 @@ struct SettingsWorkspacePane: View {
             store?.load(API.listSecrets())
             store?.load(API.listChatModels())
             store?.load(API.getRunnerStatus())
-            store?.load(API.listPlanningSessions())
             store?.load(API.listChatSpaces())
             store?.load(API.getImageEngine())
             store?.load(API.listMediaProviders())

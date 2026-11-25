@@ -129,7 +129,7 @@ final class ChatComposerLogicTests: XCTestCase {
         defer { defaults.removePersistentDomain(forName: suiteName) }
 
         let store = ChatDraftStore(defaults: defaults, keyPrefix: "Draft.")
-        let chip = ChatContextChip(kind: .ticket, label: "LAZYAGENTS-286", refKey: "LAZYAGENTS-286")
+        let chip = ChatContextChip(kind: .page, label: "Specs/Chat.md", refId: "Specs/Chat.md")
         let draftA = ChatComposerDraft(text: "Working on composer", chips: [chip])
         let draftNew = ChatComposerDraft(text: "Brand new chat draft")
 
@@ -175,31 +175,26 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertTrue(ChatAttachmentRules.pastedImageTypeIdentifiers.contains("public.heic"))
     }
 
-    // MARK: - Work & Knowledge Context Serialization
+    // MARK: - Knowledge Context Serialization
 
-    func testContextChipSerializationForWorkAndKnowledge() {
-        let workChip = ChatContextChip(kind: .workTicket, label: "Native composer", refKey: "LAZYAGENTS-286", pinned: false)
-        let pinnedRun = ChatContextChip(kind: .workRun, label: "Build mac", refId: "run-99", refKey: "LAZYAGENTS-286", agent: "meow", pinned: true)
+    func testContextChipSerializationForKnowledge() {
         let knowledgeViewing = ChatContextChip(kind: .knowledgePage, label: "Specs/Chat.md", pinned: true)
         let knowledgeFolder = ChatContextChip(kind: .knowledgeFolder, label: "Architecture/")
 
         let serialized = ChatComposerContextLogic.serializeBody(
             "Check this out",
-            chips: [workChip, pinnedRun, knowledgeViewing, knowledgeFolder]
+            chips: [knowledgeViewing, knowledgeFolder]
         )
 
-        XCTAssertTrue(serialized.contains(ChatContextMarker.work))
-        XCTAssertTrue(serialized.contains("Pinned run run-99"))
-        XCTAssertTrue(serialized.contains("Viewing ticket LAZYAGENTS-286"))
         XCTAssertTrue(serialized.contains(ChatContextMarker.knowledge))
         XCTAssertTrue(serialized.contains("Viewing page Specs/Chat.md."))
         XCTAssertTrue(serialized.contains("Attached folder Architecture/."))
 
-        let apiTicket = ChatContextChip(kind: .ticket, label: "LAZYAGENTS-286", refKey: "LAZYAGENTS-286")
-        let refs = ChatComposerContextLogic.toAPIContextRefs([workChip, apiTicket])
+        let apiPage = ChatContextChip(kind: .page, label: "Specs/Chat.md", refId: "page-42")
+        let refs = ChatComposerContextLogic.toAPIContextRefs([knowledgeViewing, apiPage])
         XCTAssertEqual(refs?.count, 1)
-        XCTAssertEqual(refs?.first?.kind, .ticket)
-        XCTAssertEqual(refs?.first?.key, "LAZYAGENTS-286")
+        XCTAssertEqual(refs?.first?.kind, .page)
+        XCTAssertEqual(refs?.first?.id, "page-42")
     }
 
     // MARK: - Send Modes & Harness Usage

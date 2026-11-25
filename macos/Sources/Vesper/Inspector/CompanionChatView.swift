@@ -6,25 +6,14 @@ import VesperCore
 final class CompanionChatStore {
     static let scope = "app:work"
     private static let currentChatKey = "vesper.work.chat"
-    private static let pinnedSubjectKey = "vesper.work.pinned"
     private static let personaKey = "vesper.dockPersona.app:work"
 
-    var subject: CompanionSubject?
     var currentChatId: String? {
         didSet {
             if let currentChatId {
                 UserDefaults.standard.set(currentChatId, forKey: Self.currentChatKey)
             } else {
                 UserDefaults.standard.removeObject(forKey: Self.currentChatKey)
-            }
-        }
-    }
-    var pinned: CompanionSubject? {
-        didSet {
-            if let pinned, let data = try? JSONEncoder().encode(pinned) {
-                UserDefaults.standard.set(data, forKey: Self.pinnedSubjectKey)
-            } else {
-                UserDefaults.standard.removeObject(forKey: Self.pinnedSubjectKey)
             }
         }
     }
@@ -40,16 +29,12 @@ final class CompanionChatStore {
 
     init() {
         self.currentChatId = UserDefaults.standard.string(forKey: Self.currentChatKey)
-        if let data = UserDefaults.standard.data(forKey: Self.pinnedSubjectKey),
-           let decoded = try? JSONDecoder().decode(CompanionSubject.self, from: data) {
-            self.pinned = decoded
-        }
         self.preferredPersonaId = UserDefaults.standard.string(forKey: Self.personaKey)
     }
 }
 
 /// Window-level native SwiftUI Companion Chat replacing `CompanionWebController` (`/companion` WKWebView).
-/// Stays mounted across tab and route switches while its `subject` follows the active tab's inspector model.
+/// Stays mounted across tab and route switches.
 struct CompanionChatHost: View {
     let tabs: TabsModel
     let companionStore: CompanionChatStore
@@ -76,7 +61,6 @@ private struct CompanionChatView: View {
     private static let dockListRequest = DockChatsAPI.list(scope: CompanionChatStore.scope)
 
     var body: some View {
-        let p = theme.palette
         let chats = context.store.entry(Self.dockListRequest).data?.chats ?? []
         let rememberedEntry = companionStore.currentChatId.map { context.store.entry(API.getChat(id: $0)) }
         let isGone: Bool = {
@@ -85,21 +69,15 @@ private struct CompanionChatView: View {
         }()
         let activeChatId = isGone ? nil : companionStore.currentChatId
         let activeChat = isGone ? nil : rememberedEntry?.data
-        let subject = companionStore.subject
-        let pinned = companionStore.pinned
-        let welcome = WorkCompanionLogic.workWelcome(for: subject)
-
-        let emptyText = subject.map {
-            "Talk it through with a persona. It can read the \($0.kind.rawValue) and its ticket; replies to the agent stay in the main pane."
-        } ?? "Talk your work through with a persona: runs, tickets, what's waiting on you. The same chat follows you to every page."
+        let welcome = WorkCompanionLogic.companionWelcome()
 
         DockedChatView(
             chatId: activeChatId,
-            sections: [DockedChatSection(label: "Work chats", chats: chats)],
+            sections: [DockedChatSection(label: "Companion chats", chats: chats)],
             newChatLabel: "New chat",
             creating: companionStore.creating,
             createError: companionStore.createError,
-            emptyDescription: emptyText,
+            emptyDescription: "Talk things through with a persona. The same chat follows you to every page.",
             emptyButtonTitle: "Start a chat",
             welcomeWhere: welcome.whereText,
             welcomeIntro: welcome.intro,
@@ -113,15 +91,11 @@ private struct CompanionChatView: View {
             onOpenFullChat: { id in
                 context.navigate("/chat/\(id)")
             },
-            prepareBody: { body in
-                WorkCompanionLogic.withWorkContext(body, viewing: subject, pinned: pinned)
-            },
-            prepareContextRefs: { refs in
-                WorkCompanionLogic.mergeWorkContextRefs(existing: refs, viewing: subject, pinned: pinned)
-            },
+            prepareBody: { $0 },
+            prepareContextRefs: { $0 },
             onTurnCompleted: nil
         ) {
-            contextChipsView(subject: subject, pinned: pinned, p: p)
+            EmptyView()
         }
         .task {
             context.store.observe(Self.dockListRequest)
@@ -137,65 +111,6 @@ private struct CompanionChatView: View {
         }
         .onDisappear {
             context.store.stopObserving(Self.dockListRequest.key)
-        }
-    }
-
-    @ViewBuilder
-    private func contextChipsView(subject: CompanionSubject?, pinned: CompanionSubject?, p: NativePalette) -> some View {
-        let viewingIsPinned = pinned != nil && subject != nil && WorkCompanionLogic.sameSubject(pinned!, subject!)
-        if pinned != nil || (subject != nil && !viewingIsPinned) {
-            HStack(spacing: 6) {
-                if let pinned {
-                    HStack(spacing: 4) {
-                        Image(systemName: "bookmark.fill")
-                            .font(.system(size: 10))
-                            .foregroundStyle(p.accent)
-                        Text("Pinned: \(WorkCompanionLogic.workSubjectLabel(pinned))")
-                            .font(.system(size: 11))
-                            .foregroundStyle(p.secondaryText)
-                            .lineLimit(1)
-                        Button {
-                            companionStore.pinned = nil
-                        } label: {
-                            Image(systemName: "xmark")
-                                .font(.system(size: 9, weight: .semibold))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Unpin")
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(p.surface, in: Capsule())
-                    .overlay(Capsule().stroke(p.border))
-                }
-
-                if let subject, !viewingIsPinned {
-                    HStack(spacing: 4) {
-                        Image(systemName: subject.kind == .run ? "play.fill" : "checklist")
-                            .font(.system(size: 10))
-                            .foregroundStyle(p.tertiaryText)
-                        Text("Viewing: \(WorkCompanionLogic.workSubjectLabel(subject))")
-                            .font(.system(size: 11))
-                            .foregroundStyle(p.secondaryText)
-                            .lineLimit(1)
-                        Button {
-                            companionStore.pinned = subject
-                        } label: {
-                            Image(systemName: "bookmark")
-                                .font(.system(size: 10))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Pin: keep it attached as you move to other runs and tickets")
-                    }
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 3)
-                    .background(p.surface, in: Capsule())
-                    .overlay(Capsule().stroke(p.border))
-                }
-                Spacer(minLength: 0)
-            }
         }
     }
 
@@ -218,7 +133,7 @@ private struct CompanionChatView: View {
                     API.createChat(body: API.NewChat(
                         hidden: true,
                         personaId: companionStore.preferredPersonaId,
-                        title: "Work"
+                        title: "Companion"
                     )),
                     invalidating: QueryInvalidation(resources: ["chats"])
                 )

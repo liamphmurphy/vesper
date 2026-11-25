@@ -19,7 +19,6 @@ struct SetupScreen: View {
     private static let runnerRequest = API.getRunnerStatus()
     private static let spacesRequest = API.listChatSpaces()
     private static let secretsRequest = API.listSecrets()
-    private static let plansRequest = API.listPlanningSessions()
 
     var body: some View {
         let p = theme.palette
@@ -28,22 +27,18 @@ struct SetupScreen: View {
         let runner = context.store.entry(Self.runnerRequest).data
         let spaces = context.store.entry(Self.spacesRequest).data?.spaces ?? []
         let secrets = context.store.entry(Self.secretsRequest).data?.secrets ?? []
-        let plans = context.store.entry(Self.plansRequest).data ?? []
 
         let me = boot?.me
         let ready = me.map { !LandingLogic.needsProfileSetup(name: $0.name, email: $0.email) } ?? false
         let reposCount = spaces.filter { $0.work?.repoUrl != nil && !($0.work?.repoUrl?.isEmpty ?? true) }.count
         let firstWorkSpaceId = spaces.first(where: { $0.work != nil })?.id
         let harnessSecretSet = secrets.contains { $0.name.hasPrefix("harness:") && $0.project == nil }
-        let ticketAgentsCount = (boot?.agents ?? []).filter { $0.kind == .main }.count
         let checklist = WorkspaceSetupHelpers.checklist(
             reposCount: reposCount,
             firstWorkSpaceId: firstWorkSpaceId,
             harnessSecretSet: harnessSecretSet,
             harnessModels: models,
-            runner: runner,
-            ticketAgentsCount: ticketAgentsCount,
-            plansCount: plans.count
+            runner: runner
         )
 
         ScrollView {
@@ -169,7 +164,6 @@ struct SetupScreen: View {
             context.store.load(Self.runnerRequest)
             context.store.load(Self.spacesRequest)
             context.store.load(Self.secretsRequest)
-            context.store.load(Self.plansRequest)
             hydrateIfNeeded(me: me)
         }
         .onChange(of: me?.id) { _, _ in

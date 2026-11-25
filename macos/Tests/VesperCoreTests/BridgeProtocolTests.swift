@@ -75,8 +75,7 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertEqual(model.id, "ticket:VES-412")
         XCTAssertTrue(model.open)
         XCTAssertEqual(model.activeTabId, "properties")
-        XCTAssertEqual(model.companion?.subject?.kind, .ticket)
-        XCTAssertEqual(model.companion?.subject?.id, "VES-412")
+        XCTAssertNotNil(model.companion)
         XCTAssertEqual(model.tabs.map(\.kind), [.native, .companion, .web])
         XCTAssertEqual(model.tabs[0].sections?.first?.items.count, 12)
         XCTAssertEqual(model.tabs[0].sections?.first?.items[5].steps?.last?.state, .needsHuman)
@@ -152,11 +151,10 @@ final class BridgeProtocolTests: XCTestCase {
         XCTAssertTrue(toggle.contains("\"type\":\"inspector.toggle\""))
 
         let ctx = try NativeCommand.companionContext(CompanionContext(
-            subject: CompanionSubject(kind: .run, id: "r1", title: "Run", agent: "Implementer", ticketKey: "VES-1"),
-            path: "/runs/r1"
+            path: "/spaces/s1"
         )).jsonString()
         XCTAssertTrue(ctx.contains("\"type\":\"companion.context\""))
-        XCTAssertTrue(ctx.contains("\"ticketKey\":\"VES-1\""))
+        XCTAssertTrue(ctx.contains("\"path\":\"\\/spaces\\/s1\"") || ctx.contains("\"path\":\"/spaces/s1\""))
 
         let emptyPanelCtx = try NativeCommand.panelContext(InspectorPanelContext(active: nil, keepKeys: [])).jsonString()
         XCTAssertTrue(emptyPanelCtx.contains("\"type\":\"panel.context\""))

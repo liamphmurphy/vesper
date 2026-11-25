@@ -22,7 +22,6 @@ struct ChatTranscriptView: View {
     var onQuoteMessage: (@MainActor (String, String?) -> Void)? = nil
     var onOpenThread: (@MainActor (String) -> Void)? = nil
     var onForkMessage: (@MainActor (API.ChatMessage) -> Void)? = nil
-    var onPromoteTicket: (@MainActor (API.ChatMessage) -> Void)? = nil
     var onSaveWiki: (@MainActor (API.ChatMessage) -> Void)? = nil
     var onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)? = nil
 
@@ -33,9 +32,6 @@ struct ChatTranscriptView: View {
 
     private var messagesRequest: APIRequest<API.ListChatMessagesResponse> {
         API.listChatMessages(id: chatId, limit: 200)
-    }
-    private var ticketRunsRequest: APIRequest<API.ChatTicketRuns> {
-        API.listChatTicketRuns(id: chatId)
     }
     private var workflowRunsRequest: APIRequest<API.WorkflowRuns> {
         API.listChatWorkflowRuns(id: chatId)
@@ -64,7 +60,6 @@ struct ChatTranscriptView: View {
         let store = context.store
         let messagesEntry = store.entry(messagesRequest)
         let messages = messagesEntry.data?.messages ?? []
-        let ticketRuns = store.entry(ticketRunsRequest).data?.runs ?? []
         let workflowRuns = store.entry(workflowRunsRequest).data?.runs ?? []
         let canvases = store.entry(canvasesRequest).data?.canvases ?? []
         let audios = store.entry(audioRequest).data?.audio ?? []
@@ -189,7 +184,6 @@ struct ChatTranscriptView: View {
                                     isRunning: isRunning,
                                     turnWindow: turnWindows[message.id],
                                     endedTurn: endedTurns[message.id],
-                                    ticketRuns: parsed.hasDispatchSegment ? ticketRuns : [],
                                     workflowRuns: parsed.hasWorkflowRunSegment ? workflowRuns : [],
                                     canvases: parsed.hasCanvasSegment ? canvases : [],
                                     audios: audiosByMessage[message.id] ?? [],
@@ -201,7 +195,6 @@ struct ChatTranscriptView: View {
                                     onQuoteMessage: onQuoteMessage,
                                     onOpenThread: onOpenThread,
                                     onForkMessage: onForkMessage,
-                                    onPromoteTicket: onPromoteTicket,
                                     onSaveWiki: onSaveWiki,
                                     onSecondOpinion: onSecondOpinion,
                                     onScrollToSelf: {
@@ -417,7 +410,6 @@ struct ChatTranscriptView: View {
         }
 
         track(messagesRequest)
-        track(ticketRunsRequest)
         track(workflowRunsRequest)
         track(canvasesRequest)
         track(audioRequest)
@@ -456,7 +448,6 @@ private struct ChatMessageRowView: View {
     let isRunning: Bool
     let turnWindow: ChatTurnWindow?
     let endedTurn: ChatEndedTurn?
-    let ticketRuns: [API.ChatTicketRun]
     let workflowRuns: [API.WorkflowRun]
     let canvases: [API.ChatCanvasSummary]
     let audios: [API.ChatAudio]
@@ -468,7 +459,6 @@ private struct ChatMessageRowView: View {
     let onQuoteMessage: (@MainActor (String, String?) -> Void)?
     let onOpenThread: (@MainActor (String) -> Void)?
     let onForkMessage: (@MainActor (API.ChatMessage) -> Void)?
-    let onPromoteTicket: (@MainActor (API.ChatMessage) -> Void)?
     let onSaveWiki: (@MainActor (API.ChatMessage) -> Void)?
     let onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)?
     let onScrollToSelf: @MainActor () -> Void
@@ -851,11 +841,6 @@ private struct ChatMessageRowView: View {
                         onForkMessage(message)
                     }
                 }
-                if let onPromoteTicket {
-                    Button("Promote to ticket…") {
-                        onPromoteTicket(message)
-                    }
-                }
                 if let onSaveWiki {
                     Button("Save to Knowledge…") {
                         onSaveWiki(message)
@@ -919,8 +904,6 @@ private struct ChatMessageRowView: View {
                 disabled: isRunning,
                 onSelect: onSendReply
             )
-        case .dispatch(let card):
-            ChatDispatchCardView(chatId: chatId, messageId: message.id, card: card, runs: ticketRuns)
         case .recommend(let cards):
             ChatRecommendCardsView(messageId: message.id, cards: cards, onSend: onSendReply)
         case .gallery(let spec):
@@ -1584,9 +1567,6 @@ private struct ChatTranscriptProposalsSlot: View {
     private var characterProposalsRequest: APIRequest<API.ListPersonaCharacterProposalsResponse> {
         API.listPersonaCharacterProposals(id: chatId)
     }
-    private var ticketChangesRequest: APIRequest<API.TicketChangeRequestList> {
-        API.listTicketChangeRequests(id: chatId)
-    }
 
     var body: some View {
         let store = context.store
@@ -1599,7 +1579,6 @@ private struct ChatTranscriptProposalsSlot: View {
                     secretProposals: store.entry(secretProposalsRequest).data?.proposals ?? [],
                 personaProposals: store.entry(personaProposalsRequest).data?.proposals ?? [],
                 characterProposals: store.entry(characterProposalsRequest).data?.proposals ?? [],
-                ticketChanges: store.entry(ticketChangesRequest).data?.requests ?? [],
                 canvases: canvases
             )
         }
@@ -1625,7 +1604,6 @@ private struct ChatTranscriptProposalsSlot: View {
         track(secretProposalsRequest)
         track(personaProposalsRequest)
         track(characterProposalsRequest)
-        track(ticketChangesRequest)
         watched = keys
     }
 }

@@ -356,7 +356,6 @@ struct SpaceScreen: View {
                 harnesses: [],
                 workflows: [],
                 repositories: [],
-                activeTicketRuns: [],
                 selectedHarness: $pickedHarness,
                 selectedModel: $pickedModel,
                 selectedEffort: $pickedEffort,

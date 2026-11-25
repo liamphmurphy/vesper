@@ -344,33 +344,11 @@ public struct RailModel: Codable, Sendable, Hashable {
 
 // MARK: - Native inspector
 
-public enum CompanionSubjectKind: String, Codable, Sendable, Hashable {
-    case run, ticket
-
-    public init(from decoder: Decoder) throws {
-        let raw = try decoder.singleValueContainer().decode(String.self)
-        self = CompanionSubjectKind(rawValue: raw) ?? .ticket
-    }
-}
-
-public struct CompanionSubject: Codable, Sendable, Hashable {
-    public var kind: CompanionSubjectKind
-    public var id: String
-    public var title: String
-    public var agent: String?
-    public var ticketKey: String?
-
-    public init(kind: CompanionSubjectKind, id: String, title: String, agent: String? = nil, ticketKey: String? = nil) {
-        self.kind = kind; self.id = id; self.title = title; self.agent = agent; self.ticketKey = ticketKey
-    }
-}
-
 public struct CompanionContext: Codable, Sendable, Hashable {
-    public var subject: CompanionSubject?
     public var path: String?
 
-    public init(subject: CompanionSubject? = nil, path: String? = nil) {
-        self.subject = subject; self.path = path
+    public init(path: String? = nil) {
+        self.path = path
     }
 }
 

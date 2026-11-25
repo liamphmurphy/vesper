@@ -109,7 +109,6 @@ struct ChatChecklistCardView: View {
     @State private var hoveredIndex: Int?
     @State private var capturingIndex: Int?
     @State private var capturedIndices: Set<Int> = []
-    @State private var promoteItem: ChatChecklistItem?
 
     private var effectiveState: [String: Bool] {
         var merged = persistedState ?? [:]
@@ -152,16 +151,6 @@ struct ChatChecklistCardView: View {
         }
         .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-        .sheet(item: $promoteItem) { item in
-            ChatChecklistPromoteTicketSheet(itemText: item.text) { key in
-                context.showToast(
-                    ToastItemModel(id: "checklist.ticket.\(key)", title: "Created \(key)", tone: .success, actionLabel: "Open"),
-                    onEvent: { event in
-                        if event == .action { context.navigate("/tickets/\(key)") }
-                    }
-                )
-            }
-        }
     }
 
     private func checklistRow(item: ChatChecklistItem, checked: Bool) -> some View {
@@ -192,16 +181,6 @@ struct ChatChecklistCardView: View {
                 .onTapGesture { toggle(item: item, to: !checked) }
 
             HStack(spacing: 6) {
-                Button {
-                    promoteItem = item
-                } label: {
-                    Image(systemName: "ticket")
-                        .imageScale(.small)
-                        .foregroundStyle(p.secondaryText)
-                }
-                .buttonStyle(.plain)
-                .help("Promote to ticket")
-
                 Button {
                     captureToInbox(item: item)
                 } label: {
@@ -284,122 +263,6 @@ struct ChatChecklistCardView: View {
                     description: (error as? APIError)?.userMessage ?? error.localizedDescription,
                     tone: .error
                 ))
-            }
-        }
-    }
-}
-
-private struct ChatChecklistPromoteTicketSheet: View {
-    @Environment(NativeScreenContext.self) private var context
-    @Environment(\.vesperTheme) private var theme
-    @Environment(\.dismiss) private var dismiss
-
-    let itemText: String
-    let onCreated: @MainActor (String) -> Void
-
-    @State private var title: String
-    @State private var descriptionMd: String = ""
-    @State private var projectKey: String = ""
-    @State private var saving = false
-    @State private var error: String?
-
-    init(itemText: String, onCreated: @escaping @MainActor (String) -> Void) {
-        self.itemText = itemText
-        self.onCreated = onCreated
-        self._title = State(initialValue: String(itemText.prefix(240)))
-    }
-
-    var body: some View {
-        let p = theme.palette
-        let projects = context.store.entry(API.listProjects()).data ?? []
-
-        VStack(alignment: .leading, spacing: 14) {
-            Text("Promote to Ticket")
-                .font(.system(size: theme.pointSize(.heading), weight: .semibold))
-                .foregroundStyle(p.text)
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Project")
-                    .font(.system(size: theme.pointSize(.small), weight: .medium))
-                    .foregroundStyle(p.secondaryText)
-                Picker("Project", selection: $projectKey) {
-                    ForEach(projects, id: \.key) { proj in
-                        Text("\(proj.key) — \(proj.name)").tag(proj.key)
-                    }
-                }
-                .labelsHidden()
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Title")
-                    .font(.system(size: theme.pointSize(.small), weight: .medium))
-                    .foregroundStyle(p.secondaryText)
-                TextField("Ticket title", text: $title)
-                    .textFieldStyle(.roundedBorder)
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                Text("Notes (optional)")
-                    .font(.system(size: theme.pointSize(.small), weight: .medium))
-                    .foregroundStyle(p.secondaryText)
-                TextEditor(text: $descriptionMd)
-                    .font(.system(size: theme.pointSize(.body)))
-                    .frame(height: 80)
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
-            }
-
-            if let error {
-                Text(error)
-                    .font(.system(size: theme.pointSize(.small)))
-                    .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-            }
-
-            HStack {
-                Spacer()
-                Button("Cancel") { dismiss() }
-                    .keyboardShortcut(.cancelAction)
-                Button(saving ? "Creating…" : "Create Ticket") {
-                    createTicket()
-                }
-                .buttonStyle(.vesper(.primary))
-                .disabled(saving || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || projectKey.isEmpty)
-                .keyboardShortcut(.defaultAction)
-            }
-        }
-        .padding(18)
-        .frame(width: 440)
-        .background(p.surface)
-        .task {
-            context.store.load(API.listProjects())
-        }
-        .onChange(of: projects.map(\.key), initial: true) { _, keys in
-            if projectKey.isEmpty, let first = keys.first {
-                projectKey = first
-            }
-        }
-    }
-
-    private func createTicket() {
-        let trimmedTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedTitle.isEmpty, !projectKey.isEmpty else { return }
-        saving = true
-        error = nil
-        let desc = descriptionMd.trimmingCharacters(in: .whitespacesAndNewlines)
-        Task {
-            defer { saving = false }
-            do {
-                let ticket = try await context.store.mutate(
-                    API.createTicket(body: API.NewTicket(
-                        descriptionMd: desc.isEmpty ? nil : desc,
-                        projectKey: projectKey,
-                        title: trimmedTitle
-                    )),
-                    invalidating: QueryInvalidation(resources: ["tickets", "boards", "planning"])
-                )
-                onCreated(ticket.key)
-                dismiss()
-            } catch {
-                self.error = (error as? APIError)?.userMessage ?? error.localizedDescription
             }
         }
     }

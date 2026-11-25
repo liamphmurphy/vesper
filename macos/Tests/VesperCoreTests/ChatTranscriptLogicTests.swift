@@ -30,12 +30,6 @@ final class ChatTranscriptLogicTests: XCTestCase {
         - SQLite | Single file
         ```
 
-        ```dispatch
-        LAZYAGENTS-283
-        lazyagents-284
-        BAD-
-        ```
-
         ```recommend
         https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s
         Great walkthrough
@@ -81,8 +75,8 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(parsed.sources[0], ChatListedSource(title: "Vesper Docs", url: "https://example.com/docs", number: 1))
         XCTAssertEqual(parsed.sources[1], ChatListedSource(title: "", url: "", number: 2, ref: "Architecture ADR"))
 
-        // Expect 12 segments: markdown, mermaid, math, chart, choices, dispatch, grouped recommend (2), workflowRun, canvas, pdf, researchPlan, swift markdown
-        XCTAssertEqual(parsed.segments.count, 12)
+        // Expect 11 segments: markdown, mermaid, math, chart, choices, grouped recommend (2), workflowRun, canvas, pdf, researchPlan, swift markdown
+        XCTAssertEqual(parsed.segments.count, 11)
 
         guard case .markdown(let intro) = parsed.segments[0] else { return XCTFail("Expected markdown intro") }
         XCTAssertTrue(intro.contains("[1](cite:1)"))
@@ -106,9 +100,7 @@ final class ChatTranscriptLogicTests: XCTestCase {
             XCTFail("Expected choices segment")
         }
 
-        XCTAssertEqual(parsed.segments[5], .dispatch(ChatDispatchCard(ticketKeys: ["LAZYAGENTS-283", "LAZYAGENTS-284"])))
-
-        if case .recommend(let recs) = parsed.segments[6] {
+        if case .recommend(let recs) = parsed.segments[5] {
             XCTAssertEqual(recs.count, 2)
             XCTAssertEqual(recs[0].youtubeVideoID, "dQw4w9WgXcQ")
             XCTAssertEqual(recs[0].youtubeMomentSeconds, 90)
@@ -117,11 +109,11 @@ final class ChatTranscriptLogicTests: XCTestCase {
             XCTFail("Expected grouped recommend segment")
         }
 
-        XCTAssertEqual(parsed.segments[7], .workflowRun(ChatWorkflowRunCard(workflowID: uuid1.lowercased(), input: "Generate a dungeon battle map")))
-        XCTAssertEqual(parsed.segments[8], .canvas(id: uuid2))
-        XCTAssertEqual(parsed.segments[9], .pdf(id: uuid3))
+        XCTAssertEqual(parsed.segments[6], .workflowRun(ChatWorkflowRunCard(workflowID: uuid1.lowercased(), input: "Generate a dungeon battle map")))
+        XCTAssertEqual(parsed.segments[7], .canvas(id: uuid2))
+        XCTAssertEqual(parsed.segments[8], .pdf(id: uuid3))
 
-        if case .researchPlan(let plan) = parsed.segments[10] {
+        if case .researchPlan(let plan) = parsed.segments[9] {
             XCTAssertEqual(plan.title, "Local LLM Benchmarks")
             XCTAssertEqual(plan.length, .detailed)
             XCTAssertEqual(plan.tone, .report)
@@ -130,7 +122,7 @@ final class ChatTranscriptLogicTests: XCTestCase {
             XCTFail("Expected researchPlan segment")
         }
 
-        if case .markdown(let codeBlock) = parsed.segments[11] {
+        if case .markdown(let codeBlock) = parsed.segments[10] {
             XCTAssertTrue(codeBlock.contains("let x = 42"))
         } else {
             XCTFail("Expected ordinary swift fence to remain markdown")
@@ -193,19 +185,15 @@ final class ChatTranscriptLogicTests: XCTestCase {
     // MARK: - Context Stripping, Citations & Mentions
 
     func testStripsWorkAndKnowledgeContextMarkers() {
-        let ticket = ChatWorkSubject.ticket(key: "LAZYAGENTS-283", title: "Native Chat")
-        let run = ChatWorkSubject.run(id: "r1", title: "Build core", agent: "Meow", ticketKey: "LAZYAGENTS-283")
-        let body = ChatWorkSubject.withWorkContext("Please review this", viewing: run, pinned: ticket)
+        let body = "Please review this"
+            + ChatContextMarker.legacyWork
+            + "Viewing legacy work item."
             + ChatContextMarker.knowledge
             + "Viewing page Architecture/Chat.md"
 
         let stripped = ChatTranscriptLogic.stripContext(body)
         XCTAssertEqual(stripped.typedBody, "Please review this")
-        XCTAssertEqual(stripped.workContextLines.count, 2)
-        XCTAssertTrue(stripped.workContextLines[0].hasPrefix("Pinned ticket LAZYAGENTS-283"))
-        XCTAssertTrue(stripped.workContextLines[1].hasPrefix("Viewing run r1"))
         XCTAssertEqual(stripped.knowledgeContextLines, ["Viewing page Architecture/Chat.md"])
-        XCTAssertEqual(ticket.label, "LAZYAGENTS-283 · Native Chat")
     }
 
     func testLinkCitationsSkipsCodeAndInlineCode() {
@@ -293,10 +281,6 @@ final class ChatTranscriptLogicTests: XCTestCase {
         ])
         XCTAssertEqual(ChatChoicesCard.choicePrompt("Option [A]"), "Going with: Option A")
         XCTAssertEqual(choices.chosenOption(nextMessageBody: "Going with: Option A"), "Option [A]")
-
-        XCTAssertEqual(ChatDispatchCard.planLine(stepsTotal: 4, stepsDone: 1, currentStep: "Write tests"), "Step 2 of 4 · Write tests")
-        XCTAssertTrue(ChatDispatchCard.runEnded("completed"))
-        XCTAssertFalse(ChatDispatchCard.runEnded("running"))
 
         XCTAssertEqual(ChatRecommendCard.videoEmbedURL(id: "dQw4w9WgXcQ"), "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0")
         XCTAssertNil(ChatRecommendCard.videoEmbedURL(id: "short"))
@@ -874,7 +858,7 @@ final class ChatTranscriptLogicTests: XCTestCase {
 
     func testParsedMessageCacheReusesEntriesAndEnforcesBound() {
         let cache = ChatParsedMessageCache(maxEntries: 2)
-        let body1 = "Check ticket:\n```dispatch\nLAZYAGENTS-1\n```"
+        let body1 = "Run workflow:\n```workflow-run\n01a1bc65-d1cf-748a-8632-82b3f8ba9c9c\nBuild map\n```"
         let body2 = "Plain reply with no cards."
         let body3 = "Canvas:\n```canvas\n01a1bc65-d1cf-748a-8632-82b3f8ba9c9d\n```"
 
@@ -882,13 +866,12 @@ final class ChatTranscriptLogicTests: XCTestCase {
         let second = cache.parsed(messageId: "m1", bodyMd: body1, extractSources: true, knownPersonaNames: ["Meow"])
         XCTAssertEqual(first, second)
         XCTAssertEqual(cache.count, 1)
-        XCTAssertTrue(first.hasDispatchSegment)
-        XCTAssertFalse(first.hasWorkflowRunSegment)
+        XCTAssertTrue(first.hasWorkflowRunSegment)
         XCTAssertFalse(first.hasCanvasSegment)
 
         let plain = cache.parsed(messageId: "m2", bodyMd: body2, extractSources: true, knownPersonaNames: ["Meow"])
         XCTAssertEqual(cache.count, 2)
-        XCTAssertFalse(plain.hasDispatchSegment)
+        XCTAssertFalse(plain.hasWorkflowRunSegment)
 
         // Adding a third distinct entry evicts the oldest so memory stays bounded.
         let canvas = cache.parsed(messageId: "m3", bodyMd: body3, extractSources: true, knownPersonaNames: ["Meow"])

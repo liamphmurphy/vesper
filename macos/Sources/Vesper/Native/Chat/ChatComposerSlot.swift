@@ -12,7 +12,6 @@ struct ChatComposerSlot: View {
     let harnesses: [API.HarnessActivity]
     let workflows: [API.Workflow]
     let repositories: [API.RepositoryEntry]
-    let activeTicketRuns: [API.ChatTicketRun]
 
     @Binding var selectedHarness: API.Harness?
     @Binding var selectedModel: String?
@@ -47,7 +46,6 @@ struct ChatComposerSlot: View {
             harnesses: harnesses,
             workflows: workflows,
             repositories: repositories,
-            activeTicketRuns: activeTicketRuns,
             selectedHarness: $selectedHarness,
             selectedModel: $selectedModel,
             selectedEffort: $selectedEffort,
