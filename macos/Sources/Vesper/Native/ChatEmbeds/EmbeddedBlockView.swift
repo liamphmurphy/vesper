@@ -375,8 +375,7 @@ struct DiagramEmbedView: View {
 // MARK: - Math
 
 /// Display math (`$$ … $$` on its own lines, or a ```math fence): centred, in the text's colour and
-/// size, through `MathRendering` (native first, render-once web path for the rest). The TeX shows
-/// while it draws and stays if it can't be drawn, as it did before.
+/// size, drawn natively through `MathRendering` (cached). TeX that doesn't parse shows as its source.
 struct MathBlockView: View {
     let tex: String
     let messageID: String
@@ -405,11 +404,7 @@ struct MathBlockView: View {
         }
         .padding(.vertical, 4)
         .task(id: key) {
-            if let hit = EmbedRenderer.shared.cached(key) {
-                rendered = hit
-            } else {
-                rendered = await MathRendering.shared.render(request, messageID: messageID)
-            }
+            rendered = MathRendering.render(request, messageID: messageID)
             drawnFor = request
         }
     }

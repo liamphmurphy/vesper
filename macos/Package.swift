@@ -14,7 +14,7 @@ let package = Package(
         // Logic with no AppKit UI, unit-tested.
         .target(
             name: "VesperCore",
-            dependencies: ["cmark-gfm", "cmark-gfm-extensions"],
+            dependencies: ["cmark-gfm", "cmark-gfm-extensions", "SwiftMath"],
             path: "Sources/VesperCore",
             // Shiki for code blocks, built by scripts/build-shiki-bundle.mjs (Markdown/CodeHighlighter.swift);
             // mermaid and KaTeX for chat embeds, built by scripts/build-embeds-bundle.mjs (ChatEmbeds/);

@@ -99,7 +99,7 @@ struct MarkdownView: View {
         return "\(request.color)@\(request.fontSize)"
     }
 
-    /// `$$` math through the chat embeds' `MathRendering` (render once, cached), in the text's colour and
+    /// `$$` math through the chat embeds' `MathRendering` (drawn natively, cached), in the text's colour and
     /// size. What can't be drawn keeps showing its TeX.
     private func drawMath(_ expressions: [MarkdownMath]) async {
         let style = mathStyleKey
@@ -109,7 +109,7 @@ struct MarkdownView: View {
         }
         for expression in expressions where math[expression] == nil {
             let request = MathBlockView.request(tex: expression.tex, display: expression.display, theme: theme, textStyle: textStyle, textColor: textColor)
-            guard let drawn = await MathRendering.shared.render(request, messageID: ""),
+            guard let drawn = MathRendering.render(request, messageID: ""),
                   let image = EmbedImages.image(drawn, key: request.cacheKey()) else { continue }
             if Task.isCancelled { return }
             math[expression] = MarkdownMathImage(image: image, ascent: drawn.ascent ?? drawn.height)
