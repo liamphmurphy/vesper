@@ -34,6 +34,8 @@ struct ChatEmbeddedBlockView: View {
             interactiveAppCard
         case .math:
             mathCard
+        case .mockup:
+            mockupCard
         }
     }
 
@@ -232,6 +234,24 @@ struct ChatEmbeddedBlockView: View {
         guard let drawn = NativeMath.render(request) else { return nil }
         EmbedRenderCache.shared.insert(drawn, for: key, cost: drawn.pdf.count)
         return drawn
+    }
+
+    // MARK: - Mockup
+
+    /// A mockup a persona made in the chat. Reviewing needs the Mac's native editor and snapshot, so
+    /// the companion names it and points there rather than offering a review it can't record.
+    private var mockupCard: some View {
+        let card = ChatMockupCard.parse(source)
+        return VStack(alignment: .leading, spacing: 6) {
+            Label(card.map { $0.title.isEmpty ? "Mockup" : $0.title } ?? "Mockup", systemImage: "rectangle.on.rectangle")
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+            Text(card == nil ? "This mockup card couldn\u{2019}t be read." : "Review this mockup in Vesper on your Mac.")
+                .font(.callout)
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(10)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
     }
 
     // MARK: - Chrome Helpers
