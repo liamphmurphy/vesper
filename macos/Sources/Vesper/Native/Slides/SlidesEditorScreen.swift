@@ -63,9 +63,14 @@ struct SlidesEditorView: View {
     private func canvasRequest(chatId: String, seq: Int? = nil) -> APIRequest<API.ChatCanvas> { API.getChatCanvas(id: chatId, canvasId: canvasId, seq: seq) }
     private var savedThemesRequest: APIRequest<API.ListSlideThemesResponse> { API.listSlideThemes() }
 
+    private func clampedSlideIndex(_ index: Int, in deck: SlideDeck) -> Int {
+        guard !deck.slides.isEmpty else { return 0 }
+        return min(max(0, index), deck.slides.count - 1)
+    }
+
     private var currentSlide: Slide? {
         guard let deck, !deck.slides.isEmpty else { return nil }
-        return deck.slides[min(max(0, activeSlideIndex), deck.slides.count - 1)]
+        return deck.slides[clampedSlideIndex(activeSlideIndex, in: deck)]
     }
 
     var body: some View {
@@ -137,6 +142,7 @@ struct SlidesEditorView: View {
                             self.savedSeq = c.seq
                             self.conflictDeck = nil
                             self.saveState = .saved
+                            self.activeSlideIndex = clampedSlideIndex(activeSlideIndex, in: c.deck)
                         }.buttonStyle(.vesper(.outline))
                         Button("Keep mine") {
                             self.savedSeq = c.seq
@@ -167,8 +173,9 @@ struct SlidesEditorView: View {
                             editingTextId: $editingTextId,
                             onCommitSlide: { updatedSlide in
                                 mutateDeck(chatId: chatId) { d in
-                                    guard activeSlideIndex < d.slides.count else { return }
-                                    d.slides[activeSlideIndex] = updatedSlide
+                                    guard !d.slides.isEmpty else { return }
+                                    let idx = clampedSlideIndex(activeSlideIndex, in: d)
+                                    d.slides[idx] = updatedSlide
                                 }
                             },
                             onUploadImageForSlot: { slotEl in
@@ -189,8 +196,9 @@ struct SlidesEditorView: View {
                                     get: { slide.notes ?? "" },
                                     set: { val in
                                         mutateDeck(chatId: chatId) { d in
-                                            guard activeSlideIndex < d.slides.count else { return }
-                                            d.slides[activeSlideIndex].notes = val.isEmpty ? nil : val
+                                            guard !d.slides.isEmpty else { return }
+                                            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+                                            d.slides[idx].notes = val.isEmpty ? nil : val
                                         }
                                     }
                                 ))
@@ -228,7 +236,11 @@ struct SlidesEditorView: View {
             }
         }
         .task(id: canvasId) {
-            activeSlideIndex = initialSlideIndex
+            if let deck {
+                activeSlideIndex = clampedSlideIndex(initialSlideIndex, in: deck)
+            } else {
+                activeSlideIndex = max(0, initialSlideIndex)
+            }
             context.store.observe(refRequest)
             context.store.load(refRequest)
             context.store.load(savedThemesRequest)
@@ -364,8 +376,9 @@ struct SlidesEditorView: View {
                         ForEach(SlideLayoutKind.allCases, id: \.self) { layout in
                             Button {
                                 mutateDeck(chatId: chatId) { d in
-                                    guard activeSlideIndex < d.slides.count else { return }
-                                    d.slides[activeSlideIndex] = SlideSchema.relayout(d.slides[activeSlideIndex], to: layout)
+                                    guard !d.slides.isEmpty else { return }
+                                    let idx = clampedSlideIndex(activeSlideIndex, in: d)
+                                    d.slides[idx] = SlideSchema.relayout(d.slides[idx], to: layout)
                                 }
                             } label: {
                                 if slide.layout == layout { Label(layout.label, systemImage: "checkmark") }
@@ -430,7 +443,9 @@ struct SlidesEditorView: View {
                                     Button("\(sz) pt") { updateSelectedRuns(chatId: chatId) { $0.size = Double(sz) } }
                                 }
                             } label: {
-                                Text("\(Int(single?.textBox?.paragraphs.first?.runs.first?.size ?? 44))").font(.system(size: 11, design: .monospaced))
+                                let rawSize = single?.textBox?.paragraphs.first?.runs.first?.size ?? 44
+                                let safeSize = rawSize.isFinite ? Int(min(max(rawSize, 1), 999).rounded()) : 44
+                                Text("\(safeSize)").font(.system(size: 11, design: .monospaced))
                             }
                             .menuStyle(.borderlessButton)
                             Menu {
@@ -609,9 +624,9 @@ struct SlidesEditorView: View {
             Divider().overlay(p.border)
 
             ScrollView {
-                VStack(spacing: 8) {
-                    ForEach(Array(deck.slides.enumerated()), id: \.element.id) { idx, s in
-                        let isActive = idx == activeSlideIndex
+                LazyVStack(spacing: 8) {
+                    ForEach(Array(deck.slides.enumerated()), id: \.offset) { idx, s in
+                        let isActive = idx == clampedSlideIndex(activeSlideIndex, in: deck)
                         VStack(alignment: .leading, spacing: 3) {
                             HStack(spacing: 4) {
                                 Text("\(idx + 1)")
@@ -643,6 +658,7 @@ struct SlidesEditorView: View {
                                 Button("Duplicate slide") { duplicateSlide(at: idx, chatId: chatId) }
                                 Button(s.hidden == true ? "Show in presentation" : "Hide in presentation") {
                                     mutateDeck(chatId: chatId) { d in
+                                        guard d.slides.indices.contains(idx) else { return }
                                         let was = d.slides[idx].hidden ?? false
                                         d.slides[idx].hidden = was ? nil : true
                                     }
@@ -787,6 +803,7 @@ struct SlidesEditorView: View {
             savedDeck = parsed
             savedSeq = head.seq
             saveState = .unsaved
+            activeSlideIndex = clampedSlideIndex(activeSlideIndex, in: merged)
         } else {
             conflictDeck = (parsed, head.seq)
             saveState = .conflict
@@ -858,6 +875,7 @@ struct SlidesEditorView: View {
                     deck = merged
                     savedDeck = theirs
                     savedSeq = fresh.seq
+                    activeSlideIndex = clampedSlideIndex(activeSlideIndex, in: merged)
                     await saveNow(chatId: chatId, forceSeq: fresh.seq)
                     return
                 }
@@ -874,7 +892,7 @@ struct SlidesEditorView: View {
     private func addSlide(layout: SlideLayoutKind, chatId: String) {
         let s = SlideSchema.newSlide(layout: layout)
         mutateDeck(chatId: chatId) { d in
-            let at = min(activeSlideIndex + 1, d.slides.count)
+            let at = min(max(0, activeSlideIndex + 1), d.slides.count)
             d.slides.insert(s, at: at)
             activeSlideIndex = at
         }
@@ -883,7 +901,7 @@ struct SlidesEditorView: View {
 
     private func duplicateSlide(at idx: Int, chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            guard idx < d.slides.count else { return }
+            guard d.slides.indices.contains(idx) else { return }
             var copy = d.slides[idx]
             copy.id = SlideSchema.newId(prefix: "s")
             copy.elements = SlideArrangeLogic.duplicate(copy.elements, ids: Set(copy.elements.map(\.id)), offset: 0).elements.suffix(copy.elements.count).map { $0 }
@@ -894,7 +912,7 @@ struct SlidesEditorView: View {
 
     private func moveSlide(from: Int, to: Int, chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            guard from < d.slides.count, to >= 0, to < d.slides.count else { return }
+            guard d.slides.indices.contains(from), d.slides.indices.contains(to) else { return }
             let s = d.slides.remove(at: from)
             d.slides.insert(s, at: to)
             activeSlideIndex = to
@@ -903,7 +921,7 @@ struct SlidesEditorView: View {
 
     private func deleteSlide(at idx: Int, chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            guard d.slides.count > 1, idx < d.slides.count else { return }
+            guard d.slides.count > 1, d.slides.indices.contains(idx) else { return }
             d.slides.remove(at: idx)
             activeSlideIndex = min(activeSlideIndex, d.slides.count - 1)
         }
@@ -917,7 +935,10 @@ struct SlidesEditorView: View {
             paragraphs: [SlideParagraph(runs: [SlideRun(text: "Text", size: 48, color: "text", font: "body")])],
             valign: "top"
         ))
-        mutateDeck(chatId: chatId) { $0.slides[activeSlideIndex].elements.append(el) }
+        mutateDeck(chatId: chatId) { d in
+            guard !d.slides.isEmpty else { return }
+            d.slides[clampedSlideIndex(activeSlideIndex, in: d)].elements.append(el)
+        }
         selectedIds = [el.id]
         editingTextId = el.id
     }
@@ -930,7 +951,10 @@ struct SlidesEditorView: View {
             fill: .solid("accent"),
             radius: kind == .roundRect ? 24 : nil
         ))
-        mutateDeck(chatId: chatId) { $0.slides[activeSlideIndex].elements.append(el) }
+        mutateDeck(chatId: chatId) { d in
+            guard !d.slides.isEmpty else { return }
+            d.slides[clampedSlideIndex(activeSlideIndex, in: d)].elements.append(el)
+        }
         selectedIds = [el.id]
     }
 
@@ -942,7 +966,10 @@ struct SlidesEditorView: View {
             strokeWidth: 6,
             endArrow: true
         ))
-        mutateDeck(chatId: chatId) { $0.slides[activeSlideIndex].elements.append(el) }
+        mutateDeck(chatId: chatId) { d in
+            guard !d.slides.isEmpty else { return }
+            d.slides[clampedSlideIndex(activeSlideIndex, in: d)].elements.append(el)
+        }
         selectedIds = [el.id]
     }
 
@@ -968,11 +995,13 @@ struct SlidesEditorView: View {
                     asset: asset.id
                 ))
                 mutateDeck(chatId: chatId) { d in
+                    guard !d.slides.isEmpty else { return }
+                    let slideIdx = clampedSlideIndex(activeSlideIndex, in: d)
                     d.assets[asset.id] = SlideAsset(mime: asset.mime.rawValue, w: asset.w, h: asset.h)
-                    if let slot, let idx = d.slides[activeSlideIndex].elements.firstIndex(where: { $0.id == slot.id }) {
-                        d.slides[activeSlideIndex].elements[idx] = imgEl
+                    if let slot, let idx = d.slides[slideIdx].elements.firstIndex(where: { $0.id == slot.id }) {
+                        d.slides[slideIdx].elements[idx] = imgEl
                     } else {
-                        d.slides[activeSlideIndex].elements.append(imgEl)
+                        d.slides[slideIdx].elements.append(imgEl)
                     }
                 }
                 selectedIds = [imgEl.id]
@@ -984,7 +1013,9 @@ struct SlidesEditorView: View {
 
     private func updateSelectedElements(chatId: String, _ fn: (SlideElement) -> SlideElement) {
         mutateDeck(chatId: chatId) { d in
-            d.slides[activeSlideIndex].elements = SlideArrangeLogic.mapDeep(d.slides[activeSlideIndex].elements, ids: selectedIds, fn)
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            d.slides[idx].elements = SlideArrangeLogic.mapDeep(d.slides[idx].elements, ids: selectedIds, fn)
         }
     }
 
@@ -1014,19 +1045,26 @@ struct SlidesEditorView: View {
 
     private func reorderSelected(_ op: SlideZOrder, chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            d.slides[activeSlideIndex].elements = SlideArrangeLogic.reorder(d.slides[activeSlideIndex].elements, ids: selectedIds, op: op)
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            d.slides[idx].elements = SlideArrangeLogic.reorder(d.slides[idx].elements, ids: selectedIds, op: op)
         }
     }
 
     private func alignSelected(_ op: SlideAlignOp, chatId: String) {
         guard let slide = currentSlide, let deck else { return }
-        let frames = Dictionary(uniqueKeysWithValues: slide.elements.filter { selectedIds.contains($0.id) }.map { ($0.id, $0.frame) })
+        let frames = Dictionary(
+            slide.elements.filter { selectedIds.contains($0.id) }.map { ($0.id, $0.frame) },
+            uniquingKeysWith: { _, latest in latest }
+        )
         let target: SlideBox = frames.count >= 2
             ? (SlideArrangeLogic.unionBox(Array(frames.values)) ?? SlideBox(l: 0, t: 0, r: deck.size.w, b: deck.size.h))
             : SlideBox(l: 0, t: 0, r: deck.size.w, b: deck.size.h)
         let aligned = SlideArrangeLogic.align(frames, op: op, to: target)
         mutateDeck(chatId: chatId) { d in
-            d.slides[activeSlideIndex].elements = d.slides[activeSlideIndex].elements.map { el in
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            d.slides[idx].elements = d.slides[idx].elements.map { el in
                 aligned[el.id].map { SlideArrangeLogic.withFrame(el, frame: $0) } ?? el
             }
         }
@@ -1034,10 +1072,15 @@ struct SlidesEditorView: View {
 
     private func distributeSelected(horizontal: Bool, chatId: String) {
         guard let slide = currentSlide else { return }
-        let frames = Dictionary(uniqueKeysWithValues: slide.elements.filter { selectedIds.contains($0.id) }.map { ($0.id, $0.frame) })
+        let frames = Dictionary(
+            slide.elements.filter { selectedIds.contains($0.id) }.map { ($0.id, $0.frame) },
+            uniquingKeysWith: { _, latest in latest }
+        )
         let dist = SlideArrangeLogic.distribute(frames, horizontal: horizontal)
         mutateDeck(chatId: chatId) { d in
-            d.slides[activeSlideIndex].elements = d.slides[activeSlideIndex].elements.map { el in
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            d.slides[idx].elements = d.slides[idx].elements.map { el in
                 dist[el.id].map { SlideArrangeLogic.withFrame(el, frame: $0) } ?? el
             }
         }
@@ -1045,8 +1088,10 @@ struct SlidesEditorView: View {
 
     private func groupSelected(chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            if let res = SlideArrangeLogic.groupElements(d.slides[activeSlideIndex].elements, ids: selectedIds) {
-                d.slides[activeSlideIndex].elements = res.elements
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            if let res = SlideArrangeLogic.groupElements(d.slides[idx].elements, ids: selectedIds) {
+                d.slides[idx].elements = res.elements
                 selectedIds = [res.id]
             }
         }
@@ -1054,23 +1099,29 @@ struct SlidesEditorView: View {
 
     private func ungroupSelected(chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            let res = SlideArrangeLogic.ungroupElements(d.slides[activeSlideIndex].elements, ids: selectedIds)
-            d.slides[activeSlideIndex].elements = res.elements
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            let res = SlideArrangeLogic.ungroupElements(d.slides[idx].elements, ids: selectedIds)
+            d.slides[idx].elements = res.elements
             if !res.ids.isEmpty { selectedIds = Set(res.ids) }
         }
     }
 
     private func duplicateSelected(chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            let res = SlideArrangeLogic.duplicate(d.slides[activeSlideIndex].elements, ids: selectedIds)
-            d.slides[activeSlideIndex].elements = res.elements
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            let res = SlideArrangeLogic.duplicate(d.slides[idx].elements, ids: selectedIds)
+            d.slides[idx].elements = res.elements
             if !res.ids.isEmpty { selectedIds = Set(res.ids) }
         }
     }
 
     private func deleteSelected(chatId: String) {
         mutateDeck(chatId: chatId) { d in
-            d.slides[activeSlideIndex].elements = SlideArrangeLogic.removeDeep(d.slides[activeSlideIndex].elements, ids: selectedIds)
+            guard !d.slides.isEmpty else { return }
+            let idx = clampedSlideIndex(activeSlideIndex, in: d)
+            d.slides[idx].elements = SlideArrangeLogic.removeDeep(d.slides[idx].elements, ids: selectedIds)
         }
         selectedIds = []
     }
@@ -1127,6 +1178,7 @@ struct SlidesEditorView: View {
                     self.deck = resolved
                     self.savedDeck = resolved
                     self.savedSeq = v.seq
+                    self.activeSlideIndex = clampedSlideIndex(activeSlideIndex, in: resolved)
                 }
                 reviewDecisions = [:]
                 _ = await context.store.refetch(refRequest)
@@ -1432,6 +1484,7 @@ struct SlidesPresentScreen: View {
             if let deck { assetCache.ensureLoaded(canvasId: canvasId, assetIds: Array(deck.assets.keys), client: context.store.client) }
         }
         .onAppear {
+            if let m = keyMonitor { NSEvent.removeMonitor(m) }
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
                 handleKey(ev, deck: deck, shown: shown, clamped: clamped)
             }
@@ -1453,7 +1506,7 @@ struct SlidesPresentScreen: View {
             return ev
         }
         showControls = true
-        if let chars = ev.charactersIgnoringModifiers, chars.count == 1, chars.first!.isNumber {
+        if let chars = ev.charactersIgnoringModifiers, chars.count == 1, let ch = chars.first, ch.isNumber {
             digitBuffer = String((digitBuffer + chars).suffix(3))
             return nil
         }
