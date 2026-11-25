@@ -4,7 +4,7 @@ import WebKit
 
 /// Renders `.embedded(kind, source, info, index)` blocks on iOS:
 /// - `.svgImage` & `.svgSteps`: drawn natively by VesperCore's mockup renderer (plus step controls & captions)
-/// - `.mermaid`: Mermaid diagram via `WKWebView` (with source toggle)
+/// - `.mermaid`: laid out natively by `NativeMermaid` and drawn like an SVG (with source toggle)
 /// - `.app`: sandboxed interactive HTML/JS mini-app via `WKWebView` (with Preview/Code toggle & fullscreen),
 ///   the one block that stays web content
 /// - `.math`: display math, typeset natively (`NativeMath`)
@@ -135,7 +135,12 @@ struct ChatEmbeddedBlockView: View {
 
     /// The palette's surface behind a themed SVG; white behind one that brings its own colours.
     private func svgBackground(_ svg: String) -> Color {
-        guard ChatSVG.isThemed(svg), let c = RGBA(hex: vizPalette.surface) else { return .white }
+        ChatSVG.isThemed(svg) ? surfaceColor : .white
+    }
+
+    /// The palette's surface, which diagrams laid out in the palette (mermaid) sit on.
+    private var surfaceColor: Color {
+        guard let c = RGBA(hex: vizPalette.surface) else { return .white }
         return Color(.sRGB, red: c.red, green: c.green, blue: c.blue, opacity: c.alpha)
     }
 
@@ -148,22 +153,35 @@ struct ChatEmbeddedBlockView: View {
     // MARK: - Mermaid
 
     private var mermaidCard: some View {
-        let html = Self.mermaidHTML(source, dark: colorScheme == .dark)
+        let frame = mermaidFrame
         return VStack(alignment: .leading, spacing: 8) {
-            cardHeader(icon: "point.3.connected.trianglepath.dotted", title: "Mermaid Diagram", canExpand: true)
-            if showCode {
+            cardHeader(icon: "point.3.connected.trianglepath.dotted", title: "Mermaid Diagram", canExpand: frame != nil)
+            if showCode || frame == nil {
+                if frame == nil {
+                    Text("This diagram couldn\u{2019}t be drawn. Its source is below.")
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                }
                 codeScroll(source)
-            } else {
-                SandboxedHTMLView(html: html, allowCDN: true)
-                    .frame(height: 260)
+            } else if let frame {
+                NativeSVGView(document: frame.document, background: surfaceColor)
+                    .frame(maxHeight: 360)
                     .clipShape(RoundedRectangle(cornerRadius: 8))
             }
         }
         .padding(10)
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
         .sheet(isPresented: $showFullscreen) {
-            fullscreenSheet(title: "Mermaid Diagram", html: html, allowCDN: true)
+            if let frame { fullscreenSheet(title: "Mermaid Diagram", frame: frame, background: surfaceColor) }
         }
+    }
+
+    /// The fence laid out natively (cached), nil for a type, syntax or size `NativeMermaid` refuses.
+    private var mermaidFrame: ChatSVGFrame? {
+        let key = EmbedCacheKey(kind: .mermaid, messageID: "ios", theme: vizPalette.fingerprint, source: source)
+        if let hit = ChatSVGNative.documents.value(for: key) { return hit }
+        guard let svg = try? NativeMermaid.svg(source, palette: vizPalette) else { return nil }
+        return ChatSVGNative.frame(key, source: svg)
     }
 
     // MARK: - Interactive App
@@ -325,23 +343,6 @@ struct ChatEmbeddedBlockView: View {
                     }
                 }
         }
-    }
-
-    private static func mermaidHTML(_ code: String, dark: Bool) -> String {
-        let bg = dark ? "#1c1c1e" : "#ffffff"
-        let fg = dark ? "#f2f2f7" : "#1c1c1e"
-        let theme = dark ? "dark" : "default"
-        let escaped = code
-            .replacingOccurrences(of: "&", with: "&amp;")
-            .replacingOccurrences(of: "<", with: "&lt;")
-            .replacingOccurrences(of: ">", with: "&gt;")
-        return """
-        <!doctype html><html><head><meta name="viewport" content="width=device-width,initial-scale=1">
-        <style>html,body{margin:0;padding:10px;background:\(bg);color:\(fg);font-family:-apple-system,sans-serif;}pre.mermaid{margin:0;font-size:12px;white-space:pre-wrap;}</style>
-        <script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
-        <script>window.addEventListener('DOMContentLoaded',function(){if(window.mermaid){mermaid.initialize({startOnLoad:true,theme:'\(theme)',securityLevel:'strict'});}});</script>
-        </head><body><pre class="mermaid">\(escaped)</pre></body></html>
-        """
     }
 }
 
