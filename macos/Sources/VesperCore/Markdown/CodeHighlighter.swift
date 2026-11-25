@@ -26,7 +26,15 @@ public actor CodeHighlighter {
     public private(set) var loadError: String?
     private var cache: [Key: [[CodeToken]]] = [:]
     private var cacheOrder: [Key] = []
+    private var cacheBytes = 0
     private static let cacheLimit = 200
+    private static let maxCacheBytes = 4 * 1024 * 1024
+
+    /// Safety caps to keep Shiki's JavaScriptCore regex engine fast and bounded on large diffs
+    /// and minified files; inputs beyond these limits fall back cleanly to plain monospace text.
+    public static let maxHighlightBytes = 128 * 1024
+    public static let maxHighlightLines = 2_500
+    public static let maxLineLength = 4_000
 
     private struct Key: Hashable {
         var code: String
@@ -37,11 +45,30 @@ public actor CodeHighlighter {
         self.scriptURL = scriptURL
     }
 
+    /// Returns false for empty, oversized, or minified inputs that could stall or OOM JavaScriptCore.
+    public static func canHighlight(_ code: String) -> Bool {
+        guard !code.isEmpty, code.utf8.count <= maxHighlightBytes else { return false }
+        var lines = 1
+        var currentLineBytes = 0
+        for byte in code.utf8 {
+            if byte == 0x0A {
+                lines += 1
+                if lines > maxHighlightLines { return false }
+                currentLineBytes = 0
+            } else {
+                currentLineBytes += 1
+                if currentLineBytes > maxLineLength { return false }
+            }
+        }
+        return true
+    }
+
     /// Tokens for each line of `code` (lines split on "\n", highlighted as one snippet so
     /// multi-line strings and comments work), or nil for a language the web doesn't highlight or
     /// when the script can't run. Results are cached per (code, language); both themes' colours
     /// come back at once, so the mode needs no key.
     public func highlight(_ code: String, language: String) -> [[CodeToken]]? {
+        guard Self.canHighlight(code) else { return nil }
         let key = Key(code: code, language: language)
         if let hit = cache[key] { return hit }
         guard let context = loadedContext(),
@@ -66,9 +93,16 @@ public actor CodeHighlighter {
     }
 
     private func remember(_ key: Key, _ tokens: [[CodeToken]]) {
+        if cache[key] == nil {
+            cacheOrder.append(key)
+            cacheBytes += key.code.utf8.count
+        }
         cache[key] = tokens
-        cacheOrder.append(key)
-        if cacheOrder.count > Self.cacheLimit { cache[cacheOrder.removeFirst()] = nil }
+        while cacheOrder.count > Self.cacheLimit || (cacheBytes > Self.maxCacheBytes && cacheOrder.count > 1) {
+            let evicted = cacheOrder.removeFirst()
+            cache[evicted] = nil
+            cacheBytes = max(0, cacheBytes - evicted.code.utf8.count)
+        }
     }
 
     /// Loads the script on first use (about a quarter of a second); a failure leaves code plain
@@ -144,7 +178,7 @@ public struct CodePalette: Sendable, Equatable {
         let (h, s, l) = Self.hsl(rgba)
         if s < 0.2 { return l < 0.65 ? muted : ink }
         let slot = h < 15 || h >= 345 ? 7 : h < 45 ? 1 : h < 75 ? 3 : h < 160 ? 2 : h < 195 ? 5 : h < 255 ? 0 : h < 290 ? 6 : 4
-        return series[slot]
+        return slot < series.count ? series[slot] : ink
     }
 
     /// lib/persona-ui.ts `hexToHsl`.
@@ -154,7 +188,8 @@ public struct CodePalette: Sendable, Equatable {
         let l = (maxC + minC) / 2
         let d = maxC - minC
         if d == 0 { return (0, 0, l) }
-        let s = d / (1 - abs(2 * l - 1))
+        let denom = 1 - abs(2 * l - 1)
+        let s = denom > 0 ? d / denom : 0
         var h: Double
         if maxC == c.red { h = ((c.green - c.blue) / d).truncatingRemainder(dividingBy: 6) }
         else if maxC == c.green { h = (c.blue - c.red) / d + 2 }

@@ -18,10 +18,39 @@ struct ChatCodeInspectorView: View {
     @State private var editingKey: String?
     @State private var editingDraft = ""
     @State private var showCommitsPopover = false
+    @State private var highlightedDetailKey = ""
     @State private var highlightedLines: [String: [[CodeToken]]] = [:]
+    @State private var parseCache = ParsedCodeDetailCache()
     @State private var sendingReview = false
     @State private var sendError: String?
     @State private var watchedKeys: [QueryKey] = []
+
+    @MainActor
+    private final class ParsedCodeDetailCache {
+        private var diffKey = ""
+        private var diffHunks: [RunFilesLogic.DiffHunk] = []
+        private var diffItems: [ChatCodeReviewLogic.DiffDisplayItem] = []
+
+        private var fileKey = ""
+        private var fileLines: [String] = []
+
+        func diff(key: String, patch: String) -> (hunks: [RunFilesLogic.DiffHunk], items: [ChatCodeReviewLogic.DiffDisplayItem]) {
+            if diffKey != key {
+                diffKey = key
+                diffHunks = RunFilesLogic.parseHunks(patch)
+                diffItems = ChatCodeReviewLogic.flattenHunks(diffHunks)
+            }
+            return (diffHunks, diffItems)
+        }
+
+        func lines(key: String, content: String) -> [String] {
+            if fileKey != key {
+                fileKey = key
+                fileLines = content.components(separatedBy: "\n")
+            }
+            return fileLines
+        }
+    }
 
     private var codeReviewRequest: APIRequest<API.CodeReviewList> {
         API.getChatCodeReview(id: chatId)
@@ -39,7 +68,9 @@ struct ChatCodeInspectorView: View {
         let p = theme.palette
         let reviews = context.store.entry(codeReviewRequest).data?.repositories ?? []
         let chat = context.store.entry(chatRequest).data
-        let messages = context.store.entry(messagesRequest).data?.messages ?? []
+        // Only track messagesRequest in `.turn` mode so active-chat 1.5s polling does not force
+        // full diff re-renders while inspecting branch changes.
+        let messages = mode == .turn ? (context.store.entry(messagesRequest).data?.messages ?? []) : []
         let review: API.CodeReview? = reviews.first(where: { $0.repository == selectedRepo })
             ?? reviews.first(where: { $0.repository == chat?.repoUrl })
             ?? reviews.first
@@ -65,12 +96,14 @@ struct ChatCodeInspectorView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
         }
-        .task(id: chatId) {
+        .task(id: "\(chatId):\(mode.rawValue)") {
             syncWatches()
         }
         .onDisappear {
             for key in watchedKeys { context.store.stopObserving(key) }
             watchedKeys = []
+            highlightedDetailKey = ""
+            highlightedLines = [:]
         }
     }
 
@@ -108,7 +141,7 @@ struct ChatCodeInspectorView: View {
                 HStack(spacing: 6) {
                     if reviews.count > 1 {
                         Menu {
-                            ForEach(reviews, id: \.repository) { item in
+                            ForEach(Array(reviews.enumerated()), id: \.offset) { _, item in
                                 Button {
                                     selectedRepo = item.repository
                                 } label: {
@@ -306,7 +339,7 @@ struct ChatCodeInspectorView: View {
                             .padding(.horizontal, 8)
                             .padding(.top, 4)
                     }
-                    ForEach(group.files, id: \.path) { file in
+                    ForEach(Array(group.files.enumerated()), id: \.offset) { _, file in
                         let commentCount = comments.values.filter { $0.path == file.path && !$0.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }.count
                         let isSelected = file.path == selectedPath
                         Button {
@@ -356,7 +389,7 @@ struct ChatCodeInspectorView: View {
                         .foregroundStyle(p.tertiaryText)
                         .padding(.horizontal, 8)
                         .padding(.top, 8)
-                    ForEach(unchangedTree, id: \.path) { tf in
+                    ForEach(Array(unchangedTree.enumerated()), id: \.offset) { _, tf in
                         let isSelected = tf.path == selectedPath
                         Button {
                             selectedPathByRepo[repoKey] = tf.path
@@ -425,8 +458,11 @@ struct ChatCodeInspectorView: View {
 
                 Divider()
 
+                let detailKey = "\(path):\(ChatCodeReviewLogic.contentFingerprint(change?.patch)):\(ChatCodeReviewLogic.contentFingerprint(treeFile?.content))"
+                let activeHighlights = highlightedDetailKey == detailKey ? highlightedLines : [:]
+
                 ScrollView([.vertical, .horizontal]) {
-                    VStack(alignment: .leading, spacing: 0) {
+                    LazyVStack(alignment: .leading, spacing: 0) {
                         if let change {
                             if change.binary {
                                 Text("Binary file — no diff preview.")
@@ -434,16 +470,32 @@ struct ChatCodeInspectorView: View {
                                     .foregroundStyle(p.tertiaryText)
                                     .padding(14)
                             } else if let patch = change.patch, !patch.isEmpty {
-                                let hunks = RunFilesLogic.parseHunks(patch)
-                                ForEach(hunks) { hunk in
-                                    hunkView(
-                                        hunk: hunk,
-                                        path: path,
-                                        repoKey: repoKey,
-                                        comments: comments,
-                                        palette: palette,
-                                        p: p
-                                    )
+                                let parsed = parseCache.diff(key: detailKey, patch: patch)
+                                ForEach(parsed.items) { item in
+                                    switch item {
+                                    case .hunkHeader(_, let header):
+                                        Text(header)
+                                            .font(.system(size: theme.pointSize(.mono), design: .monospaced))
+                                            .foregroundStyle(p.tertiaryText)
+                                            .padding(.horizontal, 8)
+                                            .padding(.vertical, 4)
+                                            .frame(maxWidth: .infinity, alignment: .leading)
+                                            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+                                    case .row(let hunkId, let row, let tokenIndex):
+                                        let tokenLines = activeHighlights["hunk:\(hunkId)"]
+                                        let tokens = tokenIndex.flatMap { idx in
+                                            tokenLines.flatMap { idx < $0.count ? $0[idx] : nil }
+                                        }
+                                        diffItemRow(
+                                            row: row,
+                                            tokens: tokens,
+                                            path: path,
+                                            repoKey: repoKey,
+                                            comments: comments,
+                                            palette: palette,
+                                            p: p
+                                        )
+                                    }
                                 }
                                 if change.truncated {
                                     Text("Diff truncated to stay within review limits.")
@@ -464,10 +516,11 @@ struct ChatCodeInspectorView: View {
                                     .foregroundStyle(p.tertiaryText)
                                     .padding(14)
                             } else if let content = treeFile.content {
-                                let lines = content.components(separatedBy: "\n")
-                                let tokenLines = highlightedLines["file:\(path)"]
-                                ForEach(Array(lines.enumerated()), id: \.offset) { idx, line in
-                                    let tokens = tokenLines != nil && idx < tokenLines!.count ? tokenLines![idx] : nil
+                                let lines = parseCache.lines(key: detailKey, content: content)
+                                let tokenLines = activeHighlights["file"]
+                                ForEach(lines.indices, id: \.self) { idx in
+                                    let line = lines[idx]
+                                    let tokens = tokenLines.flatMap { idx < $0.count ? $0[idx] : nil }
                                     HStack(alignment: .top, spacing: 0) {
                                         Text("\(idx + 1)")
                                             .font(.system(size: theme.pointSize(.mono), design: .monospaced))
@@ -475,7 +528,6 @@ struct ChatCodeInspectorView: View {
                                             .frame(width: 40, alignment: .trailing)
                                             .padding(.trailing, 10)
                                         highlightedText(line: line, tokens: tokens, palette: palette)
-                                            .textSelection(.enabled)
                                             .frame(maxWidth: .infinity, alignment: .leading)
                                     }
                                     .padding(.horizontal, 8)
@@ -489,10 +541,11 @@ struct ChatCodeInspectorView: View {
                             }
                         }
                     }
+                    .textSelection(.enabled)
                     .frame(minWidth: 360, alignment: .leading)
                 }
-                .task(id: "\(path):\(change?.patch?.count ?? 0):\(treeFile?.content?.count ?? 0)") {
-                    await highlight(path: path, change: change, treeFile: treeFile)
+                .task(id: detailKey) {
+                    await highlight(detailKey: detailKey, path: path, change: change, treeFile: treeFile)
                 }
             }
         } else {
@@ -503,84 +556,68 @@ struct ChatCodeInspectorView: View {
         }
     }
 
-    private func hunkView(
-        hunk: RunFilesLogic.DiffHunk,
+    @ViewBuilder
+    private func diffItemRow(
+        row: RunFilesLogic.DiffRow,
+        tokens: [CodeToken]?,
         path: String,
         repoKey: String,
         comments: [String: ChatCodeReviewLogic.LineComment],
         palette: CodePalette,
         p: NativePalette
     ) -> some View {
-        let tokenKey = "hunk:\(path):\(hunk.id)"
-        let tokenLines = highlightedLines[tokenKey]
-        let codeRows = hunk.rows.filter { $0.kind != .hunk && $0.kind != .meta }
-        let rowToTokenIdx = Dictionary(uniqueKeysWithValues: codeRows.enumerated().map { ($0.element.id, $0.offset) })
+        let side: ChatCodeReviewLogic.CommentSide = row.newLine == nil ? .old : .new
+        let lineNumber = row.newLine ?? row.oldLine ?? 0
+        let cKey = ChatCodeReviewLogic.commentKey(path: path, line: lineNumber, side: side)
+        let existingComment = comments[cKey]
+        let isEditing = editingKey == "\(repoKey)::\(cKey)"
 
-        return VStack(alignment: .leading, spacing: 0) {
-            Text(hunk.header)
-                .font(.system(size: theme.pointSize(.mono), design: .monospaced))
-                .foregroundStyle(p.tertiaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+        VStack(alignment: .leading, spacing: 0) {
+            diffRow(row: row, tokens: tokens, palette: palette, p: p, hasComment: existingComment != nil) {
+                guard lineNumber > 0, row.kind != .meta, row.kind != .hunk else { return }
+                editingKey = "\(repoKey)::\(cKey)"
+                editingDraft = existingComment?.body ?? ""
+            }
 
-            ForEach(hunk.rows) { row in
-                let tokens = rowToTokenIdx[row.id].flatMap { idx in
-                    tokenLines != nil && idx < tokenLines!.count ? tokenLines![idx] : nil
-                }
-                let side: ChatCodeReviewLogic.CommentSide = row.newLine == nil ? .old : .new
-                let lineNumber = row.newLine ?? row.oldLine ?? 0
-                let cKey = ChatCodeReviewLogic.commentKey(path: path, line: lineNumber, side: side)
-                let existingComment = comments[cKey]
-                let isEditing = editingKey == "\(repoKey)::\(cKey)"
-
-                diffRow(row: row, tokens: tokens, palette: palette, p: p, hasComment: existingComment != nil) {
-                    guard lineNumber > 0, row.kind != .meta, row.kind != .hunk else { return }
-                    editingKey = "\(repoKey)::\(cKey)"
-                    editingDraft = existingComment?.body ?? ""
-                }
-
-                if isEditing {
-                    inlineCommentEditor(
-                        path: path,
-                        line: lineNumber,
-                        side: side,
-                        code: row.text,
-                        repoKey: repoKey,
-                        cKey: cKey,
-                        p: p
-                    )
-                } else if let existingComment, !existingComment.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                    HStack(alignment: .top, spacing: 8) {
-                        Image(systemName: "text.bubble.fill")
-                            .font(.system(size: 11))
-                            .foregroundStyle(p.accent)
-                            .padding(.top, 2)
-                        Text(existingComment.body)
-                            .font(.system(size: 12))
-                            .foregroundStyle(p.text)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                        Button("Edit") {
-                            editingKey = "\(repoKey)::\(cKey)"
-                            editingDraft = existingComment.body
-                        }
-                        .buttonStyle(.borderless)
+            if isEditing {
+                inlineCommentEditor(
+                    path: path,
+                    line: lineNumber,
+                    side: side,
+                    code: row.text,
+                    repoKey: repoKey,
+                    cKey: cKey,
+                    p: p
+                )
+            } else if let existingComment, !existingComment.body.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "text.bubble.fill")
                         .font(.system(size: 11))
-                        Button {
-                            commentsByRepo[repoKey]?.removeValue(forKey: cKey)
-                        } label: {
-                            Image(systemName: "trash")
-                                .font(.system(size: 11))
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                        .buttonStyle(.plain)
+                        .foregroundStyle(p.accent)
+                        .padding(.top, 2)
+                    Text(existingComment.body)
+                        .font(.system(size: 12))
+                        .foregroundStyle(p.text)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button("Edit") {
+                        editingKey = "\(repoKey)::\(cKey)"
+                        editingDraft = existingComment.body
                     }
-                    .padding(8)
-                    .background(p.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 4)
+                    .buttonStyle(.borderless)
+                    .font(.system(size: 11))
+                    Button {
+                        commentsByRepo[repoKey]?.removeValue(forKey: cKey)
+                    } label: {
+                        Image(systemName: "trash")
+                            .font(.system(size: 11))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
                 }
+                .padding(8)
+                .background(p.accent.opacity(0.08), in: RoundedRectangle(cornerRadius: 6))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 4)
             }
         }
     }
@@ -685,7 +722,6 @@ struct ChatCodeInspectorView: View {
                 .frame(width: 16, alignment: .center)
                 .foregroundStyle(gutterFg)
             highlightedText(line: row.text, tokens: tokens, palette: palette)
-                .textSelection(.enabled)
                 .frame(maxWidth: .infinity, alignment: .leading)
         }
         .font(.system(size: theme.pointSize(.mono), design: .monospaced))
@@ -700,7 +736,7 @@ struct ChatCodeInspectorView: View {
                 Text("Commits on branch")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(p.text)
-                ForEach(commits, id: \.sha) { commit in
+                ForEach(Array(commits.enumerated()), id: \.offset) { _, commit in
                     HStack(alignment: .top, spacing: 8) {
                         Text(String(commit.sha.prefix(7)))
                             .font(.system(size: 11, design: .monospaced))
@@ -740,26 +776,41 @@ struct ChatCodeInspectorView: View {
             .font(.system(size: theme.pointSize(.mono), design: .monospaced))
     }
 
-    private func highlight(path: String, change: API.ChatCodeChange?, treeFile: API.CodeReviewFile?) async {
+    private func highlight(detailKey: String, path: String, change: API.ChatCodeChange?, treeFile: API.CodeReviewFile?) async {
+        if highlightedDetailKey == detailKey && !highlightedLines.isEmpty { return }
+        highlightedDetailKey = detailKey
+        highlightedLines = [:]
         guard let language = RunFilesLogic.language(forPath: path) else { return }
+
         if let patch = change?.patch, !patch.isEmpty {
-            let hunks = RunFilesLogic.parseHunks(patch)
+            let hunks = parseCache.diff(key: detailKey, patch: patch).hunks
+            var collected: [String: [[CodeToken]]] = [:]
+            var pending = 0
             for hunk in hunks {
-                let key = "hunk:\(path):\(hunk.id)"
-                if highlightedLines[key] != nil { continue }
+                guard !Task.isCancelled else { return }
                 let code = hunk.rows
                     .filter { $0.kind != .hunk && $0.kind != .meta }
                     .map(\.text)
                     .joined(separator: "\n")
                 if let tokens = await CodeHighlighter.shared.highlight(code, language: language) {
-                    highlightedLines[key] = tokens
+                    guard !Task.isCancelled else { return }
+                    collected["hunk:\(hunk.id)"] = tokens
+                    pending += 1
+                    if pending >= 8 {
+                        highlightedLines = collected
+                        pending = 0
+                    }
                 }
             }
+            guard !Task.isCancelled else { return }
+            if !collected.isEmpty {
+                highlightedLines = collected
+            }
         } else if let content = treeFile?.content {
-            let key = "file:\(path)"
-            if highlightedLines[key] != nil { return }
+            guard !Task.isCancelled else { return }
             if let tokens = await CodeHighlighter.shared.highlight(content, language: language) {
-                highlightedLines[key] = tokens
+                guard !Task.isCancelled else { return }
+                highlightedLines = ["file": tokens]
             }
         }
     }
@@ -827,6 +878,8 @@ struct ChatCodeInspectorView: View {
 
         watch(codeReviewRequest)
         watch(chatRequest)
-        watch(messagesRequest)
+        if mode == .turn {
+            watch(messagesRequest)
+        }
     }
 }

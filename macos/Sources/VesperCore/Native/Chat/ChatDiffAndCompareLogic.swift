@@ -575,7 +575,7 @@ public struct ChatCompareSpec: Sendable, Equatable, Hashable {
 
     /// Computes live weighted totals per option ID given optional user-adjusted weight overrides.
     public func weightedTotals(weights: [Int: Double] = [:]) -> [String: Double] {
-        var totals: [String: Double] = Dictionary(uniqueKeysWithValues: options.map { ($0.id, 0.0) })
+        var totals: [String: Double] = Dictionary(options.map { ($0.id, 0.0) }, uniquingKeysWith: { _, latest in latest })
         var weightSum = 0.0
         for c in criteria where !c.scores.isEmpty {
             let w = max(0, weights[c.id] ?? c.weight ?? 1.0)
