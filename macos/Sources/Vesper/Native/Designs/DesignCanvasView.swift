@@ -529,8 +529,6 @@ private struct DesignVectorCanvasLayer: View {
     }
 
     private func drawDotGrid(in ctx: CGContext, size: CGSize, camera: DesignCamera, backdrop: CanvasBackdropColor) {
-        let step = 20.0 * camera.z
-        guard step >= 8 else { return }
         let dotColor: CGColor = switch backdrop {
         case .explicitHex(let hex):
             CanvasBackdropLogic.isHexDark(hex) ? CGColor(gray: 1, alpha: 0.14) : CGColor(gray: 0, alpha: 0.10)
@@ -541,20 +539,7 @@ private struct DesignVectorCanvasLayer: View {
                 theme.mode == .dark ? CGColor(gray: 1, alpha: 0.14) : CGColor(gray: 0, alpha: 0.10)
             }
         }
-        ctx.setFillColor(dotColor)
-        let rawOffX = (-camera.x * camera.z).truncatingRemainder(dividingBy: step)
-        let rawOffY = (-camera.y * camera.z).truncatingRemainder(dividingBy: step)
-        let offX = rawOffX < 0 ? rawOffX + step : rawOffX
-        let offY = rawOffY < 0 ? rawOffY + step : rawOffY
-        var x = offX
-        while x < size.width {
-            var y = offY
-            while y < size.height {
-                ctx.fill(CGRect(x: x, y: y, width: 1.5, height: 1.5))
-                y += step
-            }
-            x += step
-        }
+        DesignCGDrawer.drawDotGrid(in: ctx, size: size, camera: camera, dotColor: dotColor)
     }
 
     private func drawPrototypeWires(in ctx: CGContext, laid: DesignLaidPage, camera: DesignCamera) {

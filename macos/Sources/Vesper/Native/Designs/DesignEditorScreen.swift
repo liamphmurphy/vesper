@@ -221,7 +221,7 @@ struct DesignEditorView: View {
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .background(p.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .padding(.top, 12)
@@ -254,7 +254,7 @@ struct DesignEditorView: View {
                                 .help("Add image")
                             }
                             .padding(4)
-                            .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .background(p.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
                             .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
 
@@ -1011,7 +1011,7 @@ private struct DesignZoomPillView: View {
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .background(p.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
         .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
     }
 }

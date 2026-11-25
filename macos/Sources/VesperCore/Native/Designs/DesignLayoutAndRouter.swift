@@ -1118,6 +1118,67 @@ public enum DesignCGDrawer {
     private static let lineCache = OSAllocatedUnfairLock<[TextLineCacheKey: SendableLineBox]>(initialState: [:])
     private static let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
 
+    /// Draws the infinite-canvas dot grid using a single tiled `CGPattern` fill rather than
+    /// thousands of individual `CGContext.fill(CGRect)` calls per frame.
+    public static func drawDotGrid(
+        in ctx: CGContext,
+        size: CGSize,
+        camera: DesignCamera,
+        dotColor: CGColor
+    ) {
+        let step = 20.0 * camera.z
+        guard step.isFinite, step >= 8, size.width > 0, size.height > 0 else { return }
+        let rawOffX = (-camera.x * camera.z).truncatingRemainder(dividingBy: step)
+        let rawOffY = (-camera.y * camera.z).truncatingRemainder(dividingBy: step)
+        let offX = rawOffX < 0 ? rawOffX + step : rawOffX
+        let offY = rawOffY < 0 ? rawOffY + step : rawOffY
+
+        var callbacks = CGPatternCallbacks(
+            version: 0,
+            drawPattern: { _, patternCtx in
+                patternCtx.fill(CGRect(x: 0, y: 0, width: 1.5, height: 1.5))
+            },
+            releaseInfo: nil
+        )
+        let patternMatrix = ctx.ctm.translatedBy(x: offX, y: offY)
+        let rgb = dotColor.converted(to: rgbColorSpace, intent: .defaultIntent, options: nil) ?? dotColor
+        guard let components = rgb.components,
+              let baseSpace = rgb.colorSpace,
+              let patternSpace = CGColorSpace(patternBaseSpace: baseSpace),
+              let pattern = CGPattern(
+                info: nil,
+                bounds: CGRect(x: 0, y: 0, width: step, height: step),
+                matrix: patternMatrix,
+                xStep: step,
+                yStep: step,
+                tiling: .constantSpacingMinimalDistortion,
+                isColored: false,
+                callbacks: &callbacks
+              ) else {
+            var rects: [CGRect] = []
+            var x = offX
+            while x < size.width {
+                var y = offY
+                while y < size.height {
+                    rects.append(CGRect(x: x, y: y, width: 1.5, height: 1.5))
+                    y += step
+                }
+                x += step
+            }
+            ctx.saveGState()
+            ctx.setFillColor(dotColor)
+            ctx.fill(rects)
+            ctx.restoreGState()
+            return
+        }
+
+        ctx.saveGState()
+        ctx.setFillColorSpace(patternSpace)
+        ctx.setFillPattern(pattern, colorComponents: components)
+        ctx.fill(CGRect(origin: .zero, size: size))
+        ctx.restoreGState()
+    }
+
     /// Computes a conservative world-space bounding rect for a single leaf draw operation.
     /// Returns `nil` for gstate/transform directives (`.clip`, `.unclip`, `.rotate`, `.unrotate`).
     public static func opBounds(_ op: DesignDrawOp) -> CGRect? {

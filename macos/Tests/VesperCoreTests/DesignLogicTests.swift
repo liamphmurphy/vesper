@@ -211,4 +211,48 @@ struct DesignLogicTests {
         let nanAlpha = SlideCGDrawer.cgColor("#3B6FE080", alpha: .nan)
         #expect(nanAlpha.alpha > 0.45 && nanAlpha.alpha < 0.55)
     }
+
+    @Test func tiledDotGridPlacesDotsAtExactWorldAlignedPositionsInFlippedRetinaContext() {
+        let widthPt = 60, heightPt = 60, scale = 2
+        let widthPx = widthPt * scale, heightPx = heightPt * scale
+        var pixels = [UInt8](repeating: 0, count: widthPx * heightPx * 4)
+        let space = CGColorSpaceCreateDeviceRGB()
+        // Camera at (-5, -7) with z=1 => dots at x = 5, 25, 45 and y = 7, 27, 47.
+        let camera = DesignCamera(x: -5, y: -7, z: 1.0)
+        pixels.withUnsafeMutableBytes { buf in
+            let ctx = CGContext(
+                data: buf.baseAddress,
+                width: widthPx,
+                height: heightPx,
+                bitsPerComponent: 8,
+                bytesPerRow: widthPx * 4,
+                space: space,
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+            )!
+            ctx.scaleBy(x: CGFloat(scale), y: CGFloat(scale))
+            ctx.translateBy(x: 0, y: CGFloat(heightPt))
+            ctx.scaleBy(x: 1, y: -1)
+            DesignCGDrawer.drawDotGrid(
+                in: ctx,
+                size: CGSize(width: widthPt, height: heightPt),
+                camera: camera,
+                dotColor: CGColor(gray: 1, alpha: 1)
+            )
+        }
+
+        func alphaAt(ptX: Int, ptY: Int) -> UInt8 {
+            let px = ptX * scale
+            let py = ptY * scale
+            return pixels[(py * widthPx + px) * 4 + 3]
+        }
+
+        // Expected dot locations have opaque pixels; midpoints between dots are empty.
+        for x in [5, 25, 45] {
+            for y in [7, 27, 47] {
+                #expect(alphaAt(ptX: x, ptY: y) > 200)
+            }
+        }
+        #expect(alphaAt(ptX: 15, ptY: 17) == 0)
+        #expect(alphaAt(ptX: 35, ptY: 37) == 0)
+    }
 }
