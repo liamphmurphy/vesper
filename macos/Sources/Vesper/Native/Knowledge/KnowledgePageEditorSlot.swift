@@ -69,11 +69,10 @@ struct KnowledgePageEditorSlot: View {
                     context.find.searcher = nil
                 }
             }
-        case .hostedPage(let hostedPath):
+        case .hostedPage:
             if page.kind == .document, let canvasId = page.canvasId, !canvasId.isEmpty {
-                let docPath = hostedPath.hasPrefix("/apps/docs/") ? hostedPath : "/apps/docs/\(canvasId)"
-                HostedWebPageView(path: docPath)
-                    .id(docPath)
+                DocEditorView(canvasId: canvasId, embedded: true)
+                    .id(canvasId)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 KnowledgeEditorView(
