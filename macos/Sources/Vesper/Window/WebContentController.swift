@@ -284,6 +284,10 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         state.native = nil
         state.nativeSidebar = nil
         state.nativeInspectorView = nil
+        // This often runs inside the old screen's own SwiftUI update (a redirect from `onAppear` or
+        // `onChange`) or mid-event; freeing its NSHostingView there is a use-after-free. Let it go
+        // on the next main-queue turn instead.
+        DispatchQueue.main.async { withExtendedLifetime(host) {} }
     }
 
     func teardown() {
