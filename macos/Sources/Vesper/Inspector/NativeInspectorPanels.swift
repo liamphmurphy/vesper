@@ -683,7 +683,7 @@ private struct ChatCanvasDetailPanelView: View {
             if let canvas {
                 switch canvas.kind {
                 case .deck:
-                    HostedWebPageView(path: "/apps/slides/\(canvas.id)")
+                    SlidesEditorView(canvasId: canvas.id, embedded: true)
                         .id(canvas.id)
                 case .design:
                     HostedWebPageView(path: "/apps/designs/\(canvas.id)")

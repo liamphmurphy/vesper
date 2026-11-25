@@ -24,7 +24,11 @@ struct KnowledgePageEditorSlot: View {
     var body: some View {
         let target = KnowledgeShellLogic.editorTarget(for: page, query: query)
         switch target {
-        case .deck(_, let hostedPath), .design(_, let hostedPath):
+        case .deck(let canvasId, _):
+            SlidesEditorView(canvasId: canvasId, embedded: true)
+                .id(canvasId)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .design(_, let hostedPath):
             HostedWebPageView(path: hostedPath)
                 .id(hostedPath)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)

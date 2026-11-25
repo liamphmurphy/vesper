@@ -38,6 +38,8 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case artifactReview
     case agentDetail
     case docEditor
+    case slidesEditor
+    case slidesPresent
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -54,7 +56,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         switch self {
         case .chat, .chatDetail, .rootLanding: .chat
         case .spacesHome, .spaceNew, .spaceDetail: .spaces
-        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor: .knowledge
+        case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .slidesPresent: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
         case .inbox, .pdf, .setup, .agentDetail, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
@@ -151,6 +153,8 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/apps/docs", .appsRedirect),
         NativeRoute("/apps/docs/:id", .docEditor),
         NativeRoute("/apps/slides", .appsRedirect),
+        NativeRoute("/apps/slides/:id", .slidesEditor),
+        NativeRoute("/present/slides/:id", .slidesPresent),
         NativeRoute("/apps/designs", .appsRedirect),
     ]
 
