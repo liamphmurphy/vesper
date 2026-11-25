@@ -127,6 +127,124 @@ func (s *Service) CreateMockup(ctx context.Context, c Caller, key, title, svg, n
 	return out, err
 }
 
+// ChatMockup is a mockup a persona drafts, or revises, in a chat with a person.
+type ChatMockup struct {
+	ChatID uuid.UUID
+	// ProjectKey is a new mockup's project; empty takes the ticket's.
+	ProjectKey string
+	// TicketKey, when set, attaches the mockup to that ticket, so it can
+	// satisfy the ticket's mockup gate once approved.
+	TicketKey        string
+	Title, SVG, Note string
+	// MockupID revises a mockup made in this chat instead of creating one.
+	MockupID *uuid.UUID
+}
+
+// CreateChatMockup saves a chat persona's mockup through the same profile
+// normalization and validation as a run's. The mockup remembers its chat, so
+// a review of it is told there (ReviewMockup). Nothing waits for the review:
+// the chat shows the mockup as a card the person decides on in place.
+func (s *Service) CreateChatMockup(ctx context.Context, c Caller, in ChatMockup) (MockupOutcome, error) {
+	var out MockupOutcome
+	by := artifacts.Actor{Type: "agent", ID: c.Agent.ID}
+	ws := c.Agent.WorkspaceID
+	viewer := pageview.From(ctx).UserID
+	err := s.tx(ctx, func(q *store.Queries) error {
+		projectKey := strings.ToUpper(strings.TrimSpace(in.ProjectKey))
+		var a store.Artifact
+		if in.MockupID != nil {
+			var err error
+			a, err = q.LockArtifact(ctx, store.LockArtifactParams{ID: *in.MockupID, WorkspaceID: ws, Viewer: viewer})
+			if err != nil && !errors.Is(err, pgx.ErrNoRows) {
+				return err
+			}
+			if err != nil || a.Type != "mockup" || a.ChatSessionID == nil || *a.ChatSessionID != in.ChatID {
+				return apperr.Invalid("mockup_id", "not a mockup made in this chat")
+			}
+			if a.ProjectID != nil {
+				p, err := q.GetProject(ctx, store.GetProjectParams{ID: *a.ProjectID, WorkspaceID: ws})
+				if err != nil {
+					return err
+				}
+				if projectKey != "" && projectKey != p.Key {
+					return apperr.Invalid("project", "the mockup is in %s", p.Key)
+				}
+				projectKey = p.Key
+			}
+		}
+		if in.TicketKey != "" {
+			t, err := tracker.Get(ctx, q, ws, strings.ToUpper(strings.TrimSpace(in.TicketKey)))
+			if err != nil {
+				return err
+			}
+			p, err := q.GetProject(ctx, store.GetProjectParams{ID: t.ProjectID, WorkspaceID: ws})
+			if err != nil {
+				return err
+			}
+			if projectKey != "" && projectKey != p.Key {
+				return apperr.Invalid("ticket", "%s is in %s, not %s", t.Key, p.Key, projectKey)
+			}
+			projectKey = p.Key
+		}
+		if in.MockupID != nil {
+			r, err := artifacts.Mockup(in.SVG)
+			if err != nil {
+				return err
+			}
+			if out.Version, err = artifacts.AddVersionTx(ctx, q, a, r, by, artifacts.NewVersion{Note: in.Note}); err != nil {
+				return err
+			}
+		} else {
+			if projectKey == "" {
+				return apperr.Invalid("project", "is required: this chat has no default project")
+			}
+			var err error
+			if a, err = s.Artifacts.CreateMockupTx(ctx, q, ws, by, projectKey, in.Title, nil, in.SVG); err != nil {
+				return err
+			}
+			if err := q.SetArtifactChat(ctx, store.SetArtifactChatParams{ChatID: &in.ChatID, ID: a.ID, WorkspaceID: ws}); err != nil {
+				return err
+			}
+		}
+		if in.TicketKey != "" {
+			if err := tracker.AttachArtifactInTx(ctx, q, ws, agentActor(c), strings.ToUpper(strings.TrimSpace(in.TicketKey)), a.ID, "generated"); err != nil {
+				return err
+			}
+		}
+		var err error
+		if out.Artifact, err = q.GetArtifact(ctx, store.GetArtifactParams{ID: a.ID, WorkspaceID: ws, Viewer: viewer}); err != nil {
+			return err
+		}
+		if in.MockupID == nil {
+			out.Version, err = q.GetArtifactVersion(ctx, store.GetArtifactVersionParams{ID: *out.Artifact.CurrentVersionID, ArtifactID: a.ID, WorkspaceID: ws, Viewer: viewer})
+		}
+		return err
+	})
+	return out, err
+}
+
+// mockupReviewNotice is what a chat is told when a person decides on a
+// mockup a persona made there. It's a system message the person sees in the
+// transcript; its artifact ref puts it in the next turn's prompt
+// (runner.ChatTurnContext). It starts no turn, like design review feedback.
+func mockupReviewNotice(ctx context.Context, q *store.Queries, ws, chatID uuid.UUID, a store.Artifact, label, decision, note string) error {
+	if _, err := q.LockChatSession(ctx, store.LockChatSessionParams{ID: chatID, WorkspaceID: ws}); err != nil {
+		return err
+	}
+	body := fmt.Sprintf("Mockup %q %s approved.", a.Title, label)
+	if decision == artifacts.ReviewChangesRequested {
+		body = fmt.Sprintf("Changes requested on mockup %q %s:\n%s", a.Title, label, note)
+	} else if note != "" {
+		body += "\nNote: " + note
+	}
+	refs, err := json.Marshal([]ChatContextRef{{Kind: "artifact", ID: &a.ID}})
+	if err != nil {
+		return err
+	}
+	_, err = q.AppendChatMessage(ctx, store.AppendChatMessageParams{SessionID: chatID, Role: "system", BodyMd: body, ContextRefs: refs, Citations: []byte("[]")})
+	return err
+}
+
 // ReviewMockup records a person's decision on a mockup's current version and
 // wakes the runs it was gating. snap, when set, is the picture the decision
 // was made on; it replaces any earlier snapshot of the version, and a review
@@ -234,6 +352,11 @@ func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, vers
 			}
 			// The turn trigger is "approval": a person's decision resumes the run.
 			if err := resume(ctx, q, run, "approval", msg); err != nil {
+				return err
+			}
+		}
+		if a.ChatSessionID != nil {
+			if err := mockupReviewNotice(ctx, q, ws, *a.ChatSessionID, a, v.Label, decision, note); err != nil {
 				return err
 			}
 		}

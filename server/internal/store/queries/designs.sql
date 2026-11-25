@@ -134,6 +134,14 @@ WHERE session_id = @session_id AND role = 'system' AND seq > @after_seq AND seq 
   AND context_refs @> '[{"kind": "canvas"}]'::jsonb
 ORDER BY seq;
 
+-- name: MockupFeedbackBetween :many
+-- The mockup review notices (system messages that carry an artifact ref)
+-- posted after one user message and before another, for the later one's turn.
+SELECT * FROM chat_messages
+WHERE session_id = @session_id AND role = 'system' AND seq > @after_seq AND seq < @before_seq
+  AND context_refs @> '[{"kind": "artifact"}]'::jsonb
+ORDER BY seq;
+
 -- name: CountDesignProposalsByCanvas :many
 SELECT canvas_id, count(*)::int AS pending FROM design_proposals
 WHERE canvas_id = ANY(@ids::uuid[]) AND status = 'pending' GROUP BY canvas_id;

@@ -24,7 +24,7 @@ var (
 		"Read before letting the person try a web UI or API you built (start_playground, playground_status, stop_playground, set_playground_openapi) or mapping an app's API: processes, routes, the playground card and checking your work in it.",
 		assistantPlaygroundSection)
 	SkillCanvases = assistantSkill("vesper-canvases",
-		"Read before creating or changing a canvas or design (canvas_create, canvas_patch, canvas_comment, design_create, design_patch): drafts the person revises with you, mockups, wireframes, flows and diagrams, and answering their comments.",
+		"Read before creating or changing a canvas, design or mockup (canvas_create, canvas_patch, canvas_comment, design_create, design_patch, create_mockup): drafts the person revises with you, mockups for them to approve, wireframes, flows and diagrams, and answering their comments.",
 		AssistantCanvasSection)
 	SkillCustomApps = assistantSkill("vesper-custom-apps",
 		"Read before building, changing or querying a Custom App, a persistent app at /apps/<slug> with its own SQLite database (list_custom_apps, get_custom_app, create_custom_app, update_custom_app, custom_app_sql, delete_custom_app).",

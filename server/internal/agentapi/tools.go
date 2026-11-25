@@ -506,10 +506,11 @@ func (in NewTicketIn) estimate() (*int, *string, error) {
 }
 
 type MockupIn struct {
-	TicketArg
+	Ticket   string `json:"ticket,omitempty" jsonschema:"Ticket key, e.g. PAY-214. In a run: optional when you have one live run. In a chat: optional; attaches the mockup to that ticket (in its project)."`
+	Project  string `json:"project,omitempty" jsonschema:"Chats only: the project key for a new mockup. Defaults to the chat's project (or the ticket's); required when the chat has none."`
 	Title    string `json:"title,omitempty" jsonschema:"Mockup title, e.g. Checkout screen. Required for a new mockup."`
 	SVG      string `json:"svg" jsonschema:"The complete SVG document at the screen's real size, with a viewBox. Mockup SVG profile v1: shapes (rect, circle, ellipse, line, polyline, polygon, path), g, text/tspan (one x, y, dx, dy each), image (data: URIs), use/symbol, gradients, clipPath, mask, pattern, marker; styled with presentation attributes (fill, stroke, font-size…). No style or class, filters, animation, foreignObject, textPath, nested svg, scripts or external links. Simple <style> rules (type, .class, #id) are converted; anything else is refused with what to change."`
-	MockupID string `json:"mockup_id,omitempty" jsonschema:"Revise this existing mockup (id from get_ticket) instead of creating a new one"`
+	MockupID string `json:"mockup_id,omitempty" jsonschema:"Revise this existing mockup (id from get_ticket, or in a chat one made in this chat) instead of creating a new one"`
 	Note     string `json:"note,omitempty" jsonschema:"One line on what changed in this revision"`
 }
 
@@ -1170,7 +1171,8 @@ var Tools = []Tool{
 			}
 			return ok(map[string]any{"ticket": nt.Key}), nil
 		}),
-	define("create_mockup", "Draft or revise a UI mockup as SVG in mockup SVG profile v1 (see the svg field), wireframed at the screen's real size. The person reviews exactly what the Mac app draws.",
+	define("create_mockup", "Draft or revise a UI mockup as SVG in mockup SVG profile v1 (see the svg field), wireframed at the screen's real size. The person reviews exactly what the Mac app draws. "+
+		"In a chat, it's saved to a project (the chat's unless you pass project or ticket; required when the chat has none) and returns a card: a ```mockup fence to put in your reply, where the person approves or requests changes in place; their decision reaches you with their next message.",
 		func(ctx context.Context, d Deps, c agents.Caller, in MockupIn) (any, error) {
 			var id *uuid.UUID
 			if strings.TrimSpace(in.MockupID) != "" {
@@ -1181,6 +1183,16 @@ var Tools = []Tool{
 				id = &u
 			} else if strings.TrimSpace(in.Title) == "" {
 				return nil, apperr.Invalid("title", "is required for a new mockup")
+			}
+			scope, err := chatScopeFor(ctx, d, c)
+			if err != nil {
+				return nil, err
+			}
+			if scope != nil {
+				return createChatMockup(ctx, d, c, scope, in, id)
+			}
+			if err := chatOnlyMockupArgs(in); err != nil {
+				return nil, err
 			}
 			out, err := d.Runs.CreateMockup(ctx, c, in.Ticket, strings.TrimSpace(in.Title), in.SVG, strings.TrimSpace(in.Note), id)
 			if err != nil {

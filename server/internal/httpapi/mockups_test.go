@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"image"
 	"image/png"
 	"mime/multipart"
@@ -12,6 +13,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/google/uuid"
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/api"
@@ -245,6 +248,9 @@ func TestMockupAgentTools(t *testing.T) {
 	if code, out := call("complete_run", map[string]any{"ticket": "PAY-214", "outcome": "done"}); code == 200 {
 		t.Fatalf("complete_run before approval: %v", out)
 	}
+	if code, out := call("create_mockup", map[string]any{"ticket": "PAY-214", "title": "Elsewhere", "svg": httpSVG, "project": "PAY"}); code != http.StatusUnprocessableEntity || !strings.HasPrefix(out["message"].(string), "project:") {
+		t.Fatalf("a run passed project: %d %v", code, out)
+	}
 	if code, out := call("create_mockup", map[string]any{"ticket": "PAY-214", "title": "Evil", "svg": `<svg onload="x()"/>`}); code == 200 {
 		t.Fatalf("unsafe svg accepted: %v", out)
 	}
@@ -403,5 +409,75 @@ func TestMockupReviewSnapshotHTTP(t *testing.T) {
 	rec = do("GET", base+"/review-snapshot", nil)
 	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || !bytes.Equal(rec.Body.Bytes(), pngBuf.Bytes()) {
 		t.Fatalf("served snapshot: %d %q %d bytes", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Len())
+	}
+}
+
+// In a chat, create_mockup saves the mockup in the chat's project (or the
+// ticket's), remembers the chat, and returns a ```mockup card; only that chat
+// revises it, and the person's review is posted into it.
+func TestChatCreateMockupCardAndReview(t *testing.T) {
+	e := newChatEnv(t)
+	ctx := t.Context()
+	ws := e.me.WorkspaceID
+	chat := uuid.MustParse(e.newChat(nil)["id"].(string))
+	token := e.canvasToken(chat)
+
+	if code, out := e.tool(token, "create_mockup", map[string]any{"title": "Evil", "svg": `<svg onload="x()"/>`}); code != http.StatusUnprocessableEntity {
+		t.Fatalf("unsafe svg: %d %v", code, out)
+	}
+	e.toolInvalid(token, "create_mockup", map[string]any{"title": "Elsewhere", "svg": httpSVG, "project": "PAY", "ticket": e.otherTk}, "ticket")
+
+	code, out := e.tool(token, "create_mockup", map[string]any{"title": "Checkout", "svg": httpSVG, "ticket": e.payKey})
+	if code != 200 || out["state"] != "created" || out["version"] != "v1" || out["review_state"] != "pending" {
+		t.Fatalf("create_mockup = %d %v", code, out)
+	}
+	id, vid := uuid.MustParse(out["artifact_id"].(string)), uuid.MustParse(out["version_id"].(string))
+	if want := fmt.Sprintf("```mockup\n{\"artifact_id\":%q,\"version_id\":%q,\"title\":\"Checkout\"}\n```", id, vid); out["card"] != want {
+		t.Fatalf("card = %q, want %q", out["card"], want)
+	}
+	a, err := e.q.GetArtifact(ctx, store.GetArtifactParams{ID: id, WorkspaceID: ws})
+	if err != nil || a.ChatSessionID == nil || *a.ChatSessionID != chat || a.Type != "mockup" {
+		t.Fatalf("artifact: %+v %v", a, err)
+	}
+	pay, _ := e.q.GetProjectByKey(ctx, store.GetProjectByKeyParams{WorkspaceID: ws, Key: "PAY"})
+	if a.ProjectID == nil || *a.ProjectID != pay.ID {
+		t.Fatalf("project = %v, want PAY", a.ProjectID)
+	}
+	tk, _ := tracker.Get(ctx, e.q, ws, e.payKey)
+	if g, _ := artifacts.MockupGate(ctx, e.q, tk); len(g.Mockups) != 1 || g.Mockups[0].ID != id {
+		t.Fatalf("the ticket's gate = %+v", g)
+	}
+
+	// Revising makes v2; a mockup this chat didn't make can't be revised here.
+	code, out = e.tool(token, "create_mockup", map[string]any{"mockup_id": id.String(), "svg": httpSVG + "<!-- r2 -->", "note": "bigger button"})
+	if code != 200 || out["version"] != "v2" || out["artifact_id"] != id.String() {
+		t.Fatalf("revise = %d %v", code, out)
+	}
+	v2 := out["version_id"].(string)
+	other, err := e.runs.Artifacts.Create(ctx, ws, artifacts.Actor{Type: "user", ID: e.me.ID}, artifacts.NewArtifact{ProjectKey: "PAY", Type: "mockup", Title: "Not this chat's", Content: artifacts.Content{BodyMD: ptr(httpSVG)}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.toolInvalid(token, "create_mockup", map[string]any{"mockup_id": other.ID.String(), "svg": httpSVG}, "mockup_id")
+
+	// The person's decision lands in the chat as a system message naming the mockup.
+	e.want("POST", fmt.Sprintf("/artifacts/%s/versions/%s/review", id, v2), map[string]any{"decision": "changes_requested", "note": "Make the button bigger"}, http.StatusOK)
+	msgs, err := e.q.ListChatMessages(ctx, store.ListChatMessagesParams{SessionID: chat, Limit: 50})
+	if err != nil || len(msgs) == 0 {
+		t.Fatalf("messages: %v", err)
+	}
+	last := msgs[len(msgs)-1]
+	var refs []runs.ChatContextRef
+	_ = json.Unmarshal(last.ContextRefs, &refs)
+	if last.Role != "system" || last.BodyMd != "Changes requested on mockup \"Checkout\" v2:\nMake the button bigger" || len(refs) != 1 || refs[0].Kind != "artifact" || *refs[0].ID != id {
+		t.Fatalf("review notice: %s %q %v", last.Role, last.BodyMd, refs)
+	}
+
+	// A chat with no project must name one.
+	bare := uuid.MustParse(e.newChat(map[string]any{"project": ""})["id"].(string))
+	bareToken := e.canvasToken(bare)
+	e.toolInvalid(bareToken, "create_mockup", map[string]any{"title": "Checkout", "svg": httpSVG}, "project")
+	if code, out := e.tool(bareToken, "create_mockup", map[string]any{"title": "Checkout", "svg": httpSVG, "project": "pay"}); code != 200 {
+		t.Fatalf("with a project: %d %v", code, out)
 	}
 }

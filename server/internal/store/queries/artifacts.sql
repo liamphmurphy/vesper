@@ -169,6 +169,11 @@ WHERE ar.type = 'mockup' AND ar.workspace_id = sqlc.arg(workspace_id)
        OR (sqlc.narg(epic_id)::uuid IS NOT NULL AND ar.epic_id = sqlc.narg(epic_id)))
 ORDER BY v.reviewed_at, v.id;
 
+-- name: SetArtifactChat :exec
+-- The chat a persona made the artifact in (a mockup posted as a chat card):
+-- reviews of it are told to that chat.
+UPDATE artifacts SET chat_session_id = sqlc.arg(chat_id) WHERE id = sqlc.arg(id) AND workspace_id = sqlc.arg(workspace_id);
+
 -- name: SetPageAudience :one
 -- Person-only service; the lock above serializes edits with audience changes.
 UPDATE artifacts SET audience=sqlc.arg(audience), owner_user_id=sqlc.narg(owner_user_id)
