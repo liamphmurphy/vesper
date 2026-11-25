@@ -123,7 +123,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .prompt(let requestId, let title, let body, let label, let value, let placeholder, let confirmLabel, let cancelLabel, let maxLength):
             Task { [weak self] in
                 guard let self else { return }
-                let entered = await Self.promptSheet(
+                let entered = await NativeDialogs.promptSheet(
                     title: title, body: body, label: label, value: value, placeholder: placeholder,
                     confirmLabel: confirmLabel, cancelLabel: cancelLabel, maxLength: maxLength, window: self.webView?.window
                 )
@@ -150,70 +150,7 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
 
     /// The page's confirmAction as a sheet on its window: Return confirms, Esc cancels.
     private func confirmSheet(title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool) async -> Bool {
-        await Self.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive, window: webView?.window)
-    }
-
-    static func confirmSheet(title: String, body: String?, confirmLabel: String, cancelLabel: String?, destructive: Bool, window: NSWindow?) async -> Bool {
-        let alert = NSAlert()
-        alert.alertStyle = destructive ? .warning : .informational
-        alert.messageText = title
-        alert.informativeText = body ?? ""
-        let confirm = alert.addButton(withTitle: confirmLabel)
-        confirm.hasDestructiveAction = destructive
-        // NSAlert only gives Esc to a button titled "Cancel"; the page may name it "Keep editing".
-        alert.addButton(withTitle: cancelLabel ?? "Cancel").keyEquivalent = "\u{1b}"
-        guard let window else { return alert.runModal() == .alertFirstButtonReturn }
-        // A sheet already up (another confirm, the unsaved-changes alert) would make this one queue
-        // invisibly; answer no instead, as the in-app dialog does when replaced.
-        guard window.attachedSheet == nil else { return false }
-        return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
-    }
-
-    static func promptSheet(
-        title: String,
-        body: String?,
-        label: String?,
-        value: String?,
-        placeholder: String?,
-        confirmLabel: String,
-        cancelLabel: String?,
-        maxLength: Int?,
-        window: NSWindow?
-    ) async -> String? {
-        let alert = NSAlert()
-        alert.alertStyle = .informational
-        alert.messageText = title
-        alert.informativeText = body ?? label ?? ""
-        let confirm = alert.addButton(withTitle: confirmLabel)
-        alert.addButton(withTitle: cancelLabel ?? "Cancel").keyEquivalent = "\u{1b}"
-
-        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 300, height: 24))
-        field.usesSingleLineMode = true
-        field.lineBreakMode = .byTruncatingHead
-        field.placeholderString = placeholder ?? label
-        if let value {
-            field.stringValue = maxLength.map { String(value.prefix($0)) } ?? value
-        }
-        let delegate = PromptFieldDelegate(confirmButton: confirm, maxLength: maxLength)
-        field.delegate = delegate
-        confirm.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        alert.accessoryView = field
-        alert.window.initialFirstResponder = field
-        alert.layout()
-
-        let accepted: Bool
-        if let window {
-            guard window.attachedSheet == nil else { return nil }
-            Task { @MainActor in
-                field.selectText(nil)
-            }
-            accepted = await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
-        } else {
-            field.selectText(nil)
-            accepted = alert.runModal() == .alertFirstButtonReturn
-        }
-        withExtendedLifetime(delegate) {}
-        return accepted ? field.stringValue : nil
+        await NativeDialogs.confirmSheet(title: title, body: body, confirmLabel: confirmLabel, cancelLabel: cancelLabel, destructive: destructive, window: webView?.window)
     }
 
     private func showContextMenu(requestId: String, items: [MenuItem], x: Double, y: Double) {
@@ -296,127 +233,5 @@ final class ShellBridge: NSObject, WKScriptMessageHandler {
         case .quickLook(let items, let idx): "quickLook \(items.count) items index=\(idx.map(String.init) ?? "nil")"
         case .openCustomAppWindow(let slug): "openCustomAppWindow \(slug)"
         }
-    }
-}
-
-/// Builds an NSMenu from the protocol's MenuItem tree (the enum itself lives in System/MenuBuilder.swift).
-@MainActor
-extension MenuBuilder {
-    static func menu(from items: [MenuItem], onSelect: @escaping (String) -> Void) -> NSMenu {
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        for item in items {
-            if item.separator == true { menu.addItem(.separator()); continue }
-            let mi = ClosureMenuItem(title: item.label ?? "", handler: onSelect, id: item.id)
-            mi.isEnabled = item.disabled != true
-            if item.checked == true { mi.state = .on }
-            if let icon = item.icon { mi.image = SidebarIcons.image(icon) }
-            if item.destructive == true {
-                mi.attributedTitle = NSAttributedString(string: item.label ?? "", attributes: [.foregroundColor: NSColor.systemRed])
-            }
-            if let children = item.children, !children.isEmpty {
-                mi.submenu = Self.menu(from: children, onSelect: onSelect)
-                mi.target = nil
-                mi.action = nil
-            }
-            menu.addItem(mi)
-        }
-        return menu
-    }
-}
-
-@MainActor
-final class ClosureMenuItem: NSMenuItem {
-    private let handler: (String) -> Void
-    private let itemId: String
-
-    init(title: String, handler: @escaping (String) -> Void, id: String) {
-        self.handler = handler
-        self.itemId = id
-        super.init(title: title, action: #selector(fire), keyEquivalent: "")
-        target = self
-    }
-
-    required init(coder: NSCoder) { fatalError("not used") }
-
-    @objc private func fire() { handler(itemId) }
-}
-
-@MainActor
-private final class PromptFieldDelegate: NSObject, NSTextFieldDelegate {
-    weak var confirmButton: NSButton?
-    let maxLength: Int?
-
-    init(confirmButton: NSButton, maxLength: Int?) {
-        self.confirmButton = confirmButton
-        self.maxLength = maxLength
-    }
-
-    func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSTextField else { return }
-        if let maxLength, field.stringValue.count > maxLength {
-            field.stringValue = String(field.stringValue.prefix(maxLength))
-        }
-        confirmButton?.isEnabled = !field.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-    }
-}
-
-/// Watches macOS's accent colour and light/dark setting and calls `onChange` when either may have changed.
-@MainActor
-final class AppearanceMonitor: NSObject {
-    private var observation: NSKeyValueObservation?
-    private var tokens: [NSObjectProtocol] = []
-    private var distributed: [NSObjectProtocol] = []
-    private let onChange: () -> Void
-    private var last = ""
-
-    init(onChange: @escaping () -> Void) {
-        self.onChange = onChange
-        super.init()
-        observation = NSApp?.observe(\.effectiveAppearance, options: []) { [weak self] _, _ in
-            Task { @MainActor in self?.fire() }
-        }
-        tokens.append(NotificationCenter.default.addObserver(forName: NSColor.systemColorsDidChangeNotification, object: nil, queue: .main) { [weak self] _ in
-            Task { @MainActor in self?.fire() }
-        })
-        for name in ["AppleColorPreferencesChangedNotification", "AppleInterfaceThemeChangedNotification"] {
-            distributed.append(DistributedNotificationCenter.default().addObserver(forName: Notification.Name(name), object: nil, queue: .main) { [weak self] _ in
-                Task { @MainActor in self?.fire() }
-            })
-        }
-        last = Self.signature()
-    }
-
-    /// Called when the window closes.
-    func stop() {
-        observation = nil
-        for t in tokens { NotificationCenter.default.removeObserver(t) }
-        for t in distributed { DistributedNotificationCenter.default().removeObserver(t) }
-        tokens = []; distributed = []
-    }
-
-    private func fire() {
-        let now = Self.signature()
-        guard now != last else { return }
-        last = now
-        onChange()
-    }
-
-    private static func signature() -> String {
-        let (accent, mode) = current()
-        return "\(accent)/\(mode.rawValue)"
-    }
-
-    /// The system accent as "#RRGGBB" (resolved for the effective appearance) and the app's effective mode.
-    static func current() -> (accent: String, mode: ColorMode) {
-        let appearance = NSApp?.effectiveAppearance ?? NSAppearance.currentDrawing()
-        let mode: ColorMode = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
-        var hex = "#0A84FF"
-        appearance.performAsCurrentDrawingAppearance {
-            if let c = NSColor.controlAccentColor.usingColorSpace(.sRGB) {
-                hex = String(format: "#%02X%02X%02X", Int((c.redComponent * 255).rounded()), Int((c.greenComponent * 255).rounded()), Int((c.blueComponent * 255).rounded()))
-            }
-        }
-        return (hex, mode)
     }
 }
