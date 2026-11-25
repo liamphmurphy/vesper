@@ -36,6 +36,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case spaceDetail
     case artifactDetail
     case artifactReview
+    case agentDetail
 
     /// Screens sharing one SwiftUI root host so navigating between them preserves sidebar & chrome state.
     public var hostGroup: NativeScreen {
@@ -55,7 +56,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         case .knowledge, .knowledgeGraph, .knowledgePage: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect: .apps
-        case .inbox, .pdf, .setup, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
+        case .inbox, .pdf, .setup, .agentDetail, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
     }
 }
@@ -140,6 +141,8 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/spaces", .spacesHome),
         NativeRoute("/spaces/new", .spaceNew),
         NativeRoute("/spaces/:id", .spaceDetail),
+        // Persona work definition & overrides editor.
+        NativeRoute("/agents/:handle", .agentDetail),
         // Root landing, onboarding setup, Custom Apps home, and legacy /apps/docs|slides|designs redirects.
         NativeRoute("/", .rootLanding),
         NativeRoute("/setup", .setup),
