@@ -47,6 +47,8 @@ public enum NativeMermaid {
             return try MermaidFlowchart.parse(doc).draw(theme, title: doc.title)
         case "sequenceDiagram":
             return try MermaidSequence.parse(doc).draw(theme)
+        case "pie":
+            return try MermaidPie.parse(doc).draw(theme)
         default:
             throw .unsupportedDiagram(doc.keyword)
         }
