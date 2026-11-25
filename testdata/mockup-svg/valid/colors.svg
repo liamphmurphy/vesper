@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 40">
+  <rect x="0" width="40" height="40" fill="#abc"/>
+  <rect x="40" width="40" height="40" fill="#abcd"/>
+  <rect x="80" width="40" height="40" fill="#A1B2C3"/>
+  <rect x="120" width="40" height="40" fill="#A1B2C380"/>
+  <rect x="160" width="40" height="40" fill="rgba(10, 20, 30, 0.5)"/>
+  <rect x="200" width="40" height="40" fill="rgb(10 20 30 / 50%)"/>
+  <rect x="240" width="40" height="40" fill="hsl(210, 50%, 40%)"/>
+  <rect x="280" width="40" height="40" fill="hsla(210 50% 40% / 0.3)"/>
+  <rect x="320" width="40" height="40" fill="rebeccapurple" stroke="transparent"/>
+  <rect x="360" width="40" height="40" fill="CornflowerBlue"/>
+</svg>

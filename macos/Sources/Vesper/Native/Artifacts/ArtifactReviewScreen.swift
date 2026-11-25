@@ -20,6 +20,10 @@ struct ArtifactReviewScreen: View {
         let image: NSImage
         let size: ArtifactDetailLogic.MockupSize
         let label: String
+        let versionId: String
+        /// What drew it, for the snapshot a decision records.
+        let drawing: MockupRendering.Drawing?
+        let source: String?
     }
 
     @State private var primaryVersionId: String?
@@ -246,6 +250,9 @@ struct ArtifactReviewScreen: View {
     private func topCompareBar(artifact: API.Artifact, primary: API.ArtifactVersion, compare: API.ArtifactVersion?) -> some View {
         let others = artifact.versions.filter { $0.id != primary.id }
         return HStack(spacing: 12) {
+            if primaryDrawing?.drawing?.isLegacy == true {
+                MockupLegacyLabel()
+            }
             Picker("Version", selection: Binding(
                 get: { primary.id },
                 set: { next in
@@ -704,15 +711,18 @@ struct ArtifactReviewScreen: View {
         defer { deciding = false }
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         do {
-            _ = try await client.send(API.reviewArtifactVersion(
-                id: artifact.id,
+            // The snapshot is the drawing on screen when it's of the version being decided.
+            let shown = primaryDrawing?.versionId == artifact.currentVersion.id ? primaryDrawing : nil
+            _ = try await MockupRendering.review(
+                client: client,
+                artifactId: artifact.id,
                 versionId: artifact.currentVersion.id,
-                body: API.ReviewArtifactVersionBody(
-                    decision: decision,
-                    note: trimmed.isEmpty ? nil : trimmed,
-                    pins: draftPins.isEmpty ? nil : draftPins
-                )
-            ))
+                source: shown?.source ?? artifact.bodyMd,
+                drawing: shown?.drawing,
+                decision: decision,
+                note: trimmed.isEmpty ? nil : trimmed,
+                pins: draftPins.isEmpty ? nil : draftPins
+            )
             note = ""
             draftPins = []
             savedDecision = decision
@@ -739,17 +749,12 @@ struct ArtifactReviewScreen: View {
         }
         guard let source, !source.isEmpty else { return nil }
         let parsed = ArtifactDetailLogic.svgSize(source)
-        let key = EmbedCacheKey(kind: .svgImage, messageID: "review-\(artifact.id)-\(version.id)", theme: "light", source: source)
-        if let rendered = await EmbedRenderer.shared.render(key, .svg(source, background: "#ffffff")),
-           let image = NSImage(data: rendered.pdf) {
-            let size = ArtifactDetailLogic.MockupSize(
-                width: rendered.width > 0 ? rendered.width : parsed.width,
-                height: rendered.height > 0 ? rendered.height : parsed.height
-            )
-            return RenderedMockup(image: image, size: size, label: version.label)
+        if let drawing = await MockupRendering.draw(source: source, cacheID: "review-\(artifact.id)-\(version.id)") {
+            return RenderedMockup(image: drawing.image, size: drawing.size, label: version.label, versionId: version.id,
+                                  drawing: drawing, source: source)
         }
         if let image = NSImage(data: Data(source.utf8)) {
-            return RenderedMockup(image: image, size: parsed, label: version.label)
+            return RenderedMockup(image: image, size: parsed, label: version.label, versionId: version.id, drawing: nil, source: source)
         }
         return nil
     }

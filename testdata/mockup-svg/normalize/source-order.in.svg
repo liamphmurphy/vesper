@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <style>
+    .a { fill: red; stroke: blue }
+    .b { fill: green }
+    .a { stroke: black }
+  </style>
+  <rect class="b a" x="10" y="10" width="80" height="40"/>
+</svg>

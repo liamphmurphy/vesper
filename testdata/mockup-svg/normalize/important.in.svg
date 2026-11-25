@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <style>
+    rect { fill: #00AA00 !important; stroke: #AAAAAA !important }
+    #box { fill: #0000AA }
+  </style>
+  <rect id="box" x="10" y="10" width="80" height="40" style="fill: #AA0000; stroke: #333333 ! important"/>
+</svg>

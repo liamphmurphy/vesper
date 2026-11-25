@@ -1,0 +1,15 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <defs>
+    <marker id="dot" markerWidth="4" markerHeight="4" refX="2" refY="2">
+      <circle cx="2" cy="2" r="2" fill="#111827"/>
+    </marker>
+    <marker id="arrow" markerWidth="6" markerHeight="6" refX="3" refY="3" orient="auto">
+      <path d="M0 0 L6 3 L0 6 Z" fill="#111827"/>
+    </marker>
+  </defs>
+  <style>
+    .flow { marker: url(#dot); stroke: #111827; fill: none }
+    .flow.end { marker-end: url(#arrow) }
+  </style>
+  <polyline class="flow end" points="10,50 100,20 190,50"/>
+</svg>

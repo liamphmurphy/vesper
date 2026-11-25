@@ -1,11 +1,13 @@
 import AppKit
 import SwiftUI
 import VesperCore
-import WebKit
 
-/// Native SwiftUI SVG mockup editor (`/artifacts/:id?edit=1`), replacing the web React MockupEditor
-/// and `HostedWebPageView`. Supports Visual (offline sanitized SVG DOM canvas), Source, and Split
-/// modes, Undo/Redo, zoom, version note, Save version, and Save & approve.
+/// Native SwiftUI SVG mockup editor (`/artifacts/:id?edit=1`): Visual (the native canvas), Source
+/// and Split modes, Undo/Redo, zoom, version note, Save version, and Save & approve.
+///
+/// The canvas draws with the same renderer as the viewer and review screens, and only edits
+/// mockups that conform to profile v1 (docs/dev/mockup-svg-profile.md). A legacy version opens
+/// in Source mode with the problems listed, so the person can bring it into the profile.
 struct MockupEditorView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -31,6 +33,7 @@ struct MockupEditorView: View {
     @State private var note = ""
     @State private var saving = false
     @State private var errorMessage: String?
+    @State private var canvas = MockupCanvasModel()
 
     init(artifact: API.Artifact, onDone: @escaping () -> Void) {
         self.artifact = artifact
@@ -38,114 +41,44 @@ struct MockupEditorView: View {
         let initial = artifact.bodyMd ?? ""
         _baseline = State(initialValue: initial)
         _history = State(initialValue: MockupEditorLogic.SourceHistory(initial: initial))
-        _mode = State(initialValue: MockupEditorLogic.svgValidationError(initial) == nil ? .visual : .source)
+        _mode = State(initialValue: MockupSVGProfile.conforms(initial) ? .visual : .source)
     }
 
     private var source: String { history.current }
-    private var validationError: String? { MockupEditorLogic.svgValidationError(source) }
+    private var violations: [MockupSVGViolation] { canvas.violations }
     private var isDirty: Bool { source != baseline }
-    private var canSave: Bool { validationError == nil && isDirty && !saving }
+    private var canSave: Bool { violations.isEmpty && isDirty && !saving }
+    private var selection: String? { canvas.selection.flatMap { $0.isEmpty ? nil : $0 } }
 
     var body: some View {
         let p = theme.palette
         VStack(spacing: 0) {
-            // Editor toolbar
-            HStack(spacing: 10) {
-                Picker("Mode", selection: $mode) {
-                    ForEach(Mode.allCases, id: \.self) { m in
-                        Text(m.label).tag(m)
-                    }
-                }
-                .pickerStyle(.segmented)
-                .labelsHidden()
-                .frame(width: 210)
-
-                HStack(spacing: 4) {
-                    Button { _ = history.undo() } label: { Image(systemName: "arrow.uturn.backward") }
-                        .buttonStyle(.vesper(.outline))
-                        .disabled(!history.canUndo)
-                        .help("Undo")
-                    Button { _ = history.redo() } label: { Image(systemName: "arrow.uturn.forward") }
-                        .buttonStyle(.vesper(.outline))
-                        .disabled(!history.canRedo)
-                        .help("Redo")
-                }
-
-                if mode != .source {
-                    Picker("Zoom", selection: $zoom) {
-                        ForEach(ArtifactDetailLogic.MockupZoomMode.allCases, id: \.self) { z in
-                            Text(z.label).tag(z)
-                        }
-                    }
-                    .pickerStyle(.segmented)
-                    .labelsHidden()
-                    .frame(width: 168)
-                }
-
-                TextField("Version note (optional)", text: $note)
-                    .textFieldStyle(.roundedBorder)
-                    .frame(maxWidth: 240)
-
-                Spacer(minLength: 8)
-
-                Button("Cancel") { handleCancel() }
-                    .buttonStyle(.vesper(.outline))
-
-                Button("Save version") { Task { await save(approve: false) } }
-                    .buttonStyle(.vesper(.outline))
-                    .disabled(!canSave)
-
-                Button("Save & approve") { Task { await save(approve: true) } }
-                    .buttonStyle(.vesper(.primary))
-                    .disabled(!canSave)
-            }
-            .padding(.horizontal, 14)
-            .padding(.vertical, 9)
-            .background(p.surface)
+            toolbar
+                .padding(.horizontal, 14)
+                .padding(.vertical, 9)
+                .background(p.surface)
 
             Divider().overlay(p.border)
 
-            if let errorMessage {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.triangle.fill")
-                        .foregroundStyle(Color.red)
-                    Text(errorMessage)
-                        .font(.system(size: 12))
-                        .foregroundStyle(p.text)
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.red.opacity(0.08))
-                Divider().overlay(p.border)
-            } else if let validationError {
-                HStack(spacing: 8) {
-                    Image(systemName: "exclamationmark.circle")
-                        .foregroundStyle(Color.orange)
-                    Text(validationError)
-                        .font(.system(size: 12))
-                        .foregroundStyle(p.text)
-                    Spacer()
-                }
-                .padding(.horizontal, 14)
-                .padding(.vertical, 7)
-                .background(Color.orange.opacity(0.08))
+            if mode != .source {
+                shapeBar
+                    .padding(.horizontal, 14)
+                    .padding(.vertical, 6)
+                    .background(p.surface)
                 Divider().overlay(p.border)
             }
 
-            // Content area
+            if let errorMessage {
+                banner(icon: "exclamationmark.triangle.fill", tint: .red, text: errorMessage)
+            } else if !violations.isEmpty {
+                banner(icon: "exclamationmark.circle", tint: .orange, text: violationSummary)
+            }
+
             GeometryReader { geo in
                 HStack(spacing: 0) {
                     if mode == .visual || mode == .split {
-                        MockupCanvasWebView(
-                            source: source,
-                            zoom: zoom,
-                            dark: theme.mode == .dark,
-                            onCommit: { next, key in
-                                history.commit(next, key: key)
-                            }
-                        )
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        visualCanvas
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
                     if mode == .split {
                         Divider().overlay(p.border)
@@ -156,13 +89,165 @@ struct MockupEditorView: View {
                             set: { history.commit($0, key: "source") }
                         ))
                         .font(.system(size: theme.pointSize(.mono), design: .monospaced))
-                        .frame(width: mode == .split ? max(320, geo.size.width * 0.42) : nil)
+                        .frame(width: mode == .split ? max(320, geo.size.width * 0.38) : nil)
                         .frame(maxWidth: mode == .source ? .infinity : nil, maxHeight: .infinity)
                     }
                 }
             }
         }
         .background(p.background)
+        .onAppear { canvas.update(source: source) }
+        .onChange(of: history.current) { _, next in canvas.update(source: next) }
+    }
+
+    private var toolbar: some View {
+        HStack(spacing: 10) {
+            Picker("Mode", selection: $mode) {
+                ForEach(Mode.allCases, id: \.self) { m in Text(m.label).tag(m) }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .frame(width: 210)
+
+            HStack(spacing: 4) {
+                Button { undo() } label: { Image(systemName: "arrow.uturn.backward") }
+                    .buttonStyle(.vesper(.outline))
+                    .disabled(!history.canUndo)
+                    .keyboardShortcut("z", modifiers: .command)
+                    .help("Undo")
+                Button { redo() } label: { Image(systemName: "arrow.uturn.forward") }
+                    .buttonStyle(.vesper(.outline))
+                    .disabled(!history.canRedo)
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .help("Redo")
+            }
+
+            if mode != .source {
+                Picker("Zoom", selection: $zoom) {
+                    ForEach(ArtifactDetailLogic.MockupZoomMode.allCases, id: \.self) { z in Text(z.label).tag(z) }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .frame(width: 168)
+            }
+
+            TextField("Version note (optional)", text: $note)
+                .textFieldStyle(.roundedBorder)
+                .frame(maxWidth: 240)
+
+            Spacer(minLength: 8)
+
+            Button("Cancel") { handleCancel() }
+                .buttonStyle(.vesper(.outline))
+            Button("Save version") { Task { await save(approve: false) } }
+                .buttonStyle(.vesper(.outline))
+                .disabled(!canSave)
+            Button("Save & approve") { Task { await save(approve: true) } }
+                .buttonStyle(.vesper(.primary))
+                .disabled(!canSave)
+        }
+    }
+
+    private var shapeBar: some View {
+        HStack(spacing: 6) {
+            ForEach(MockupSVGShapeKind.allCases, id: \.self) { kind in
+                Button("+ \(kind.rawValue.capitalized)") { apply(MockupSVGEditing.insert(source, kind: kind, center: nil)) }
+                    .buttonStyle(.vesper(.outline))
+                    .controlSize(.small)
+            }
+            Divider().frame(height: 16)
+            Button("Duplicate") { applySelected(MockupSVGEditing.duplicate) }
+                .keyboardShortcut("d", modifiers: .command)
+            Button("Forward") { applySelected(MockupSVGEditing.bringForward) }
+                .keyboardShortcut("]", modifiers: .command)
+            Button("Backward") { applySelected(MockupSVGEditing.sendBackward) }
+                .keyboardShortcut("[", modifiers: .command)
+            Button("Delete") { applySelected(MockupSVGEditing.delete) }
+            Spacer()
+            Text("Click to select · Drag to move · Handles resize · Double-click text to edit · Arrows nudge")
+                .font(.system(size: 11))
+                .foregroundStyle(theme.palette.tertiaryText)
+        }
+        .buttonStyle(.vesper(.outline))
+        .controlSize(.small)
+        .disabled(!canvas.canEdit)
+        .environment(\.isEnabled, canvas.canEdit)
+    }
+
+    @ViewBuilder
+    private var visualCanvas: some View {
+        if canvas.document == nil {
+            VStack(spacing: 8) {
+                Image(systemName: "square.dashed")
+                    .font(.system(size: 28))
+                    .foregroundStyle(theme.palette.tertiaryText)
+                Text("This SVG uses features the native editor can\u{2019}t draw. Fix the problems above in Source to edit it visually.")
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.palette.secondaryText)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 360)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .background(theme.swiftUIColor("surface-sunken", fallback: theme.palette.background))
+        } else {
+            HStack(spacing: 0) {
+                MockupCanvasView(model: canvas, zoom: zoom) { result, key in apply(result, key: key) }
+                    .allowsHitTesting(canvas.canEdit)
+                    .opacity(canvas.isStale ? 0.55 : 1)
+                Divider().overlay(theme.palette.border)
+                MockupInspectorView(model: canvas) { result, key in apply(result, key: key) }
+            }
+        }
+    }
+
+    private func banner(icon: String, tint: Color, text: String) -> some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .top, spacing: 8) {
+                Image(systemName: icon).foregroundStyle(tint)
+                Text(text)
+                    .font(.system(size: 12))
+                    .foregroundStyle(theme.palette.text)
+                    .textSelection(.enabled)
+                Spacer()
+            }
+            .padding(.horizontal, 14)
+            .padding(.vertical, 7)
+            .background(tint.opacity(0.08))
+            Divider().overlay(theme.palette.border)
+        }
+    }
+
+    private var violationSummary: String {
+        let shown = violations.prefix(3).map(\.message)
+        let more = violations.count > 3 ? " (and \(violations.count - 3) more)" : ""
+        let lead = source == baseline && !MockupSVGProfile.conforms(baseline)
+            ? "This is a legacy mockup: it uses SVG the native renderer doesn\u{2019}t draw. "
+            : ""
+        return lead + shown.joined(separator: " · ") + more
+    }
+
+    // MARK: Edits
+
+    private func apply(_ result: MockupSVGEditResult?, key: String? = nil) {
+        guard let result else { return }
+        history.commit(result.source, key: key)
+        canvas.update(source: result.source)
+        canvas.selection = result.selection
+    }
+
+    private func applySelected(_ op: (String, String) -> MockupSVGEditResult?) {
+        guard let selection else { return }
+        apply(op(source, selection))
+    }
+
+    private func undo() {
+        _ = history.undo()
+        canvas.update(source: history.current)
+    }
+
+    private func redo() {
+        _ = history.redo()
+        canvas.update(source: history.current)
     }
 
     private func handleCancel() {
@@ -203,11 +288,15 @@ struct MockupEditorView: View {
 
         if approve {
             do {
-                _ = try await client.send(API.reviewArtifactVersion(
-                    id: artifact.id,
+                // The server may have normalized the source; snapshot what it stored.
+                _ = try await MockupRendering.review(
+                    client: client,
+                    artifactId: artifact.id,
                     versionId: saved.currentVersion.id,
-                    body: API.ReviewArtifactVersionBody(decision: .approved, note: nil)
-                ))
+                    source: saved.bodyMd ?? source,
+                    decision: .approved,
+                    note: nil
+                )
                 context.store.invalidate(QueryInvalidation(resources: ["artifacts"]))
             } catch {
                 errorMessage = "Saved as \(saved.currentVersion.label), but approving failed: \((error as? APIError)?.userMessage ?? error.localizedDescription)"
@@ -217,102 +306,5 @@ struct MockupEditorView: View {
 
         await context.store.refetch(API.getArtifact(id: artifact.id))
         onDone()
-    }
-}
-
-// MARK: - Offline SVG Canvas WKWebView
-
-private struct MockupCanvasWebView: NSViewRepresentable {
-    let source: String
-    let zoom: ArtifactDetailLogic.MockupZoomMode
-    let dark: Bool
-    let onCommit: (String, String?) -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(onCommit: onCommit)
-    }
-
-    func makeNSView(context: Context) -> WKWebView {
-        let cfg = WKWebViewConfiguration()
-        cfg.websiteDataStore = .nonPersistent()
-        cfg.userContentController.add(context.coordinator, name: "vesperMockup")
-        let wv = WKWebView(frame: .zero, configuration: cfg)
-        wv.setValue(false, forKey: "drawsBackground")
-        context.coordinator.webView = wv
-        context.coordinator.pendingSource = source
-        context.coordinator.pendingZoom = zoomArg(zoom)
-        context.coordinator.pendingDark = dark
-        wv.loadHTMLString(MockupEditorLogic.visualCanvasHTML(dark: dark), baseURL: nil)
-        return wv
-    }
-
-    func updateNSView(_ wv: WKWebView, context: Context) {
-        let c = context.coordinator
-        c.onCommit = onCommit
-        c.sync(source: source, zoom: zoomArg(zoom), dark: dark)
-    }
-
-    static func dismantleNSView(_ nsView: WKWebView, coordinator: Coordinator) {
-        nsView.configuration.userContentController.removeScriptMessageHandler(forName: "vesperMockup")
-    }
-
-    private func zoomArg(_ z: ArtifactDetailLogic.MockupZoomMode) -> String {
-        switch z {
-        case .fit: "fit"
-        case .actual: "100"
-        case .double: "200"
-        }
-    }
-
-    @MainActor
-    final class Coordinator: NSObject, WKScriptMessageHandler {
-        weak var webView: WKWebView?
-        var onCommit: (String, String?) -> Void
-        var ready = false
-        var pendingSource = ""
-        var pendingZoom = "fit"
-        var pendingDark = false
-        var lastPushedSource = ""
-        var lastPushedZoom = ""
-        var lastPushedDark: Bool?
-
-        init(onCommit: @escaping (String, String?) -> Void) {
-            self.onCommit = onCommit
-        }
-
-        func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
-            guard let body = message.body as? [String: Any], let type = body["type"] as? String else { return }
-            if type == "ready" {
-                ready = true
-                pushAll()
-            } else if type == "commit", let src = body["source"] as? String {
-                lastPushedSource = src
-                let key = body["key"] as? String
-                onCommit(src, key)
-            }
-        }
-
-        func sync(source: String, zoom: String, dark: Bool) {
-            pendingSource = source
-            pendingZoom = zoom
-            pendingDark = dark
-            if ready { pushAll() }
-        }
-
-        private func pushAll() {
-            guard let wv = webView else { return }
-            if lastPushedDark != pendingDark {
-                lastPushedDark = pendingDark
-                wv.callAsyncJavaScript("window.__vesperSetTheme(dark)", arguments: ["dark": pendingDark], in: nil, in: .page, completionHandler: nil)
-            }
-            if lastPushedSource != pendingSource {
-                lastPushedSource = pendingSource
-                wv.callAsyncJavaScript("window.__vesperSetSource(src)", arguments: ["src": pendingSource], in: nil, in: .page, completionHandler: nil)
-            }
-            if lastPushedZoom != pendingZoom {
-                lastPushedZoom = pendingZoom
-                wv.callAsyncJavaScript("window.__vesperSetZoom(z)", arguments: ["z": pendingZoom], in: nil, in: .page, completionHandler: nil)
-            }
-        }
     }
 }

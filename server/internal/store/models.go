@@ -150,31 +150,34 @@ type ArtifactSection struct {
 }
 
 type ArtifactVersion struct {
-	ID                    uuid.UUID
-	ArtifactID            uuid.UUID
-	Seq                   int32
-	Label                 string
-	BodyMd                *string
-	BlobKey               *string
-	Filename              *string
-	ContentType           string
-	SizeBytes             int64
-	Note                  string
-	CreatedByType         string
-	CreatedByID           uuid.UUID
-	CreatedAt             time.Time
-	State                 string
-	BasedOnVersionID      *uuid.UUID
-	DecidedByID           *uuid.UUID
-	DecidedAt             *time.Time
-	ReviewState           *string
-	ReviewedByUserID      *uuid.UUID
-	ReviewedAt            *time.Time
-	ReviewNote            string
-	ReviewPins            json.RawMessage
-	Properties            json.RawMessage
-	Changes               json.RawMessage
-	SourceCanvasVersionID *uuid.UUID
+	ID                     uuid.UUID
+	ArtifactID             uuid.UUID
+	Seq                    int32
+	Label                  string
+	BodyMd                 *string
+	BlobKey                *string
+	Filename               *string
+	ContentType            string
+	SizeBytes              int64
+	Note                   string
+	CreatedByType          string
+	CreatedByID            uuid.UUID
+	CreatedAt              time.Time
+	State                  string
+	BasedOnVersionID       *uuid.UUID
+	DecidedByID            *uuid.UUID
+	DecidedAt              *time.Time
+	ReviewState            *string
+	ReviewedByUserID       *uuid.UUID
+	ReviewedAt             *time.Time
+	ReviewNote             string
+	ReviewPins             json.RawMessage
+	Properties             json.RawMessage
+	Changes                json.RawMessage
+	SourceCanvasVersionID  *uuid.UUID
+	ReviewSnapshotKey      *string
+	ReviewSnapshotRenderer *string
+	ReviewSnapshotSha256   *string
 }
 
 type BackupEncryption struct {

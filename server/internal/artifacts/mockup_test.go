@@ -96,8 +96,11 @@ func TestCreateMockup(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if v.BodyMd == nil || *v.BodyMd != wireframe || v.ContentType != "image/svg+xml" {
-		t.Fatalf("stored %v %q", v.BodyMd != nil, v.ContentType)
+	// The style attribute is rewritten into presentation attributes (profile
+	// v1); nothing else about the source changes.
+	normalized := strings.Replace(wireframe, ` style="fill:#fff"`, "", 1)
+	if v.BodyMd == nil || *v.BodyMd != normalized || v.ContentType != "image/svg+xml" {
+		t.Fatalf("stored %v %q: %v", v.BodyMd != nil, v.ContentType, deref(v.BodyMd))
 	}
 	if v.ReviewState == nil || *v.ReviewState != "pending" {
 		t.Fatalf("review state = %v", v.ReviewState)
@@ -134,6 +137,26 @@ func TestCreateMockup(t *testing.T) {
 	}
 	if _, err := f.svc.AddVersion(ctx, f.ws, f.maya, a.ID, artifacts.NewVersion{Content: md("# markdown")}); err == nil {
 		t.Error("markdown accepted as a mockup version")
+	}
+	// Safe SVG outside profile v1 is refused with what to change.
+	blurred := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10"><rect width="10" height="10" filter="url(#f)"/></svg>`
+	if _, err := f.svc.AddVersion(ctx, f.ws, f.maya, a.ID, artifacts.NewVersion{Content: md(blurred)}); err == nil || !strings.Contains(err.Error(), "attribute filter isn't allowed") {
+		t.Errorf("filter accepted as a mockup version: %v", err)
+	}
+	// Simple CSS is stored as presentation attributes.
+	styled := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <style>.card { fill: #EEF2FF; stroke: #4F46E5 }</style>
+  <rect class="card" width="10" height="10"/>
+</svg>`
+	if _, err := f.svc.AddVersion(ctx, f.ws, f.maya, a.ID, artifacts.NewVersion{Content: md(styled)}); err != nil {
+		t.Fatal(err)
+	}
+	a, _ = f.q.GetArtifact(ctx, store.GetArtifactParams{ID: a.ID, WorkspaceID: f.ws, Viewer: pageview.From(ctx).UserID})
+	v2, _ := f.q.GetArtifactVersion(ctx, store.GetArtifactVersionParams{ID: *a.CurrentVersionID, ArtifactID: a.ID, WorkspaceID: f.ws, Viewer: pageview.From(ctx).UserID})
+	if want := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 10 10">
+  <rect width="10" height="10" fill="#EEF2FF" stroke="#4F46E5"/>
+</svg>`; deref(v2.BodyMd) != want {
+		t.Errorf("stored %q, want %q", deref(v2.BodyMd), want)
 	}
 	// An .svg design stays a blob.
 	d, err := f.svc.Create(ctx, f.ws, f.maya, artifacts.NewArtifact{ProjectKey: "PAY", Type: "design", Title: "Icon", Content: artifacts.Content{File: &artifacts.File{Name: "i.svg", ContentType: "image/svg+xml", Size: 5, Body: strings.NewReader("<svg>")}}})

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <style>
+    .btn { cursor: pointer; pointer-events: all; user-select: none; transition: fill 0.2s; transition-duration: 1s; -webkit-tap-highlight-color: transparent; -moz-user-select: none; fill: #2563EB }
+  </style>
+  <rect class="btn" x="10" y="10" width="80" height="40" style="cursor: default"/>
+  <rect class="ghost" x="110" y="10" width="80" height="40"/>
+</svg>

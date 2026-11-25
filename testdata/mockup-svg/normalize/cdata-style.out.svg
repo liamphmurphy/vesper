@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <defs>
+  </defs>
+  <rect x="10" y="10" width="180" height="80" rx="8" fill="#FFFFFF" stroke="#E5E7EB"/>
+  <text x="24" y="40" fill="#111827" font-family="&quot;Inter&quot;, sans-serif">Total &lt; $10</text>
+</svg>

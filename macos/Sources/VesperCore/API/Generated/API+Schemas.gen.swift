@@ -15228,19 +15228,54 @@ extension API {
         public var pins: [MockupPin]
         public var reviewedAt: Swift.String?
         public var reviewedBy: UserRef?
+        /// The picture this decision was made on (GET …/review-snapshot)
+        public var snapshot: Snapshot?
         public var state: MockupReviewState
+
+        /// The picture this decision was made on (GET …/review-snapshot)
+        public struct Snapshot: Codable, Sendable, Equatable {
+            public var renderer: Swift.String
+            public var sourceSha256: Swift.String
+
+            public init(
+                renderer: Swift.String,
+                sourceSha256: Swift.String
+            ) {
+                self.renderer = renderer
+                self.sourceSha256 = sourceSha256
+            }
+
+            enum CodingKeys: Swift.String, CodingKey {
+                case renderer
+                case sourceSha256 = "source_sha256"
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                self.renderer = try c.decode(Swift.String.self, forKey: .renderer)
+                self.sourceSha256 = try c.decode(Swift.String.self, forKey: .sourceSha256)
+            }
+
+            public func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(renderer, forKey: .renderer)
+                try c.encode(sourceSha256, forKey: .sourceSha256)
+            }
+        }
 
         public init(
             note: Swift.String,
             pins: [MockupPin],
             reviewedAt: Swift.String? = nil,
             reviewedBy: UserRef? = nil,
+            snapshot: Snapshot? = nil,
             state: MockupReviewState
         ) {
             self.note = note
             self.pins = pins
             self.reviewedAt = reviewedAt
             self.reviewedBy = reviewedBy
+            self.snapshot = snapshot
             self.state = state
         }
 
@@ -15249,6 +15284,7 @@ extension API {
             case pins
             case reviewedAt = "reviewed_at"
             case reviewedBy = "reviewed_by"
+            case snapshot
             case state
         }
 
@@ -15258,6 +15294,7 @@ extension API {
             self.pins = try c.decodeIfPresent([MockupPin].self, forKey: .pins) ?? []
             self.reviewedAt = try c.decodeIfPresent(Swift.String.self, forKey: .reviewedAt)
             self.reviewedBy = try c.decodeIfPresent(UserRef.self, forKey: .reviewedBy)
+            self.snapshot = try c.decodeIfPresent(Snapshot.self, forKey: .snapshot)
             self.state = try c.decode(MockupReviewState.self, forKey: .state)
         }
 
@@ -15267,6 +15304,7 @@ extension API {
             try c.encode(pins, forKey: .pins)
             try c.encodeIfPresent(reviewedAt, forKey: .reviewedAt)
             try c.encodeIfPresent(reviewedBy, forKey: .reviewedBy)
+            try c.encodeIfPresent(snapshot, forKey: .snapshot)
             try c.encode(state, forKey: .state)
         }
     }
@@ -26572,6 +26610,8 @@ extension API {
         public var note: Swift.String?
         /// Comments pinned on the drawing. They're saved with the review and appended to its note as a numbered list.
         public var pins: [MockupPin]?
+        /// The PNG the reviewer saw. Runs get it beside the SVG. It replaces the version's earlier snapshot; a review without one clears it.
+        public var snapshot: Snapshot?
 
         public struct Decision: APIStringEnum {
             public let rawValue: Swift.String
@@ -26581,20 +26621,63 @@ extension API {
             public static let allKnown: [Decision] = [approved, changesRequested]
         }
 
+        /// The PNG the reviewer saw. Runs get it beside the SVG. It replaces the version's earlier snapshot; a review without one clears it.
+        public struct Snapshot: Codable, Sendable, Equatable {
+            /// Base64 PNG, at most 12 MB and 8192 pixels a side
+            public var pngBase64: Swift.String
+            /// What drew it: vesper-native/1 or webkit
+            public var renderer: Swift.String
+            /// Hex SHA-256 of the version's SVG source; must match
+            public var sourceSha256: Swift.String
+
+            public init(
+                pngBase64: Swift.String,
+                renderer: Swift.String,
+                sourceSha256: Swift.String
+            ) {
+                self.pngBase64 = pngBase64
+                self.renderer = renderer
+                self.sourceSha256 = sourceSha256
+            }
+
+            enum CodingKeys: Swift.String, CodingKey {
+                case pngBase64 = "png_base64"
+                case renderer
+                case sourceSha256 = "source_sha256"
+            }
+
+            public init(from decoder: any Decoder) throws {
+                let c = try decoder.container(keyedBy: CodingKeys.self)
+                self.pngBase64 = try c.decode(Swift.String.self, forKey: .pngBase64)
+                self.renderer = try c.decode(Swift.String.self, forKey: .renderer)
+                self.sourceSha256 = try c.decode(Swift.String.self, forKey: .sourceSha256)
+            }
+
+            public func encode(to encoder: any Encoder) throws {
+                var c = encoder.container(keyedBy: CodingKeys.self)
+                try c.encode(pngBase64, forKey: .pngBase64)
+                try c.encode(renderer, forKey: .renderer)
+                try c.encode(sourceSha256, forKey: .sourceSha256)
+            }
+        }
+
         public init(
             decision: Decision,
             note: Swift.String? = nil,
-            pins: [MockupPin]? = nil
+            pins: [MockupPin]? = nil,
+            snapshot: Snapshot? = nil
         ) {
             self.decision = decision
             self.note = note
             self.pins = pins
+            self.snapshot = snapshot
         }
 
         enum CodingKeys: Swift.String, CodingKey {
             case decision
             case note
             case pins
+            case snapshot
         }
 
         public init(from decoder: any Decoder) throws {
@@ -26602,6 +26685,7 @@ extension API {
             self.decision = try c.decode(Decision.self, forKey: .decision)
             self.note = try c.decodeIfPresent(Swift.String.self, forKey: .note)
             self.pins = try c.decodeIfPresent([MockupPin].self, forKey: .pins)
+            self.snapshot = try c.decodeIfPresent(Snapshot.self, forKey: .snapshot)
         }
 
         public func encode(to encoder: any Encoder) throws {
@@ -26609,6 +26693,7 @@ extension API {
             try c.encode(decision, forKey: .decision)
             try c.encodeIfPresent(note, forKey: .note)
             try c.encodeIfPresent(pins, forKey: .pins)
+            try c.encodeIfPresent(snapshot, forKey: .snapshot)
         }
     }
 

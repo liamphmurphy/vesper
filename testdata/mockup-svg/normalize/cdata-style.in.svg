@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <defs>
+    <style type="text/css"><![CDATA[
+      /* card chrome */
+      .card { fill: #FFFFFF; stroke: #E5E7EB }
+      text { font-family: "Inter", sans-serif; fill: #111827 } /* body text */
+    ]]></style>
+  </defs>
+  <rect class="card" x="10" y="10" width="180" height="80" rx="8"/>
+  <text x="24" y="40">Total &lt; $10</text>
+</svg>

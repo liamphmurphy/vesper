@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200">
+  <defs>
+    <linearGradient id="rep" x1="0" x2="0.25" spreadMethod="repeat">
+      <stop offset="0" stop-color="#F59E0B"/>
+      <stop offset="1" stop-color="#7C3AED"/>
+    </linearGradient>
+    <linearGradient id="ref" href="#rep" spreadMethod="reflect"/>
+    <radialGradient id="focal" cx="0.5" cy="0.5" r="0.5" fx="0.25" fy="0.25">
+      <stop offset="0" stop-color="#FFFFFF"/>
+      <stop offset="0.6" stop-color="#22C55E"/>
+      <stop offset="1" stop-color="#14532D"/>
+    </radialGradient>
+    <linearGradient id="user" gradientUnits="userSpaceOnUse" x1="0" y1="150" x2="300" y2="150" gradientTransform="rotate(10 150 150)">
+      <stop offset="0" stop-color="#0EA5E9" stop-opacity="0.2"/>
+      <stop offset="1" stop-color="#0EA5E9"/>
+    </linearGradient>
+  </defs>
+  <rect x="10" y="10" width="135" height="80" fill="url(#rep)"/>
+  <rect x="155" y="10" width="135" height="80" fill="url(#ref)"/>
+  <circle cx="60" cy="150" r="40" fill="url(#focal)"/>
+  <rect x="120" y="110" width="170" height="80" fill="url(#user)" stroke="url(#rep)" stroke-width="6"/>
+</svg>

@@ -893,12 +893,39 @@ paths:
                   maxItems: 50
                   description: Comments pinned on the drawing. They're saved with the review and appended to its note as a numbered list.
                   items: { $ref: "#/components/schemas/MockupPin" }
+                snapshot:
+                  type: object
+                  description: The PNG the reviewer saw. Runs get it beside the SVG. It replaces the version's earlier snapshot; a review without one clears it.
+                  required: [png_base64, renderer, source_sha256]
+                  properties:
+                    png_base64: { type: string, description: "Base64 PNG, at most 12 MB and 8192 pixels a side" }
+                    renderer: { type: string, maxLength: 64, description: "What drew it: vesper-native/1 or webkit" }
+                    source_sha256: { type: string, pattern: "^[0-9a-f]{64}$", description: Hex SHA-256 of the version's SVG source; must match }
       responses:
         "200":
           description: The reviewed mockup
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Artifact" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /artifacts/{id}/versions/{versionId}/review-snapshot:
+    parameters:
+      - $ref: "#/components/parameters/ArtifactId"
+      - name: versionId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    get:
+      operationId: getArtifactReviewSnapshot
+      summary: The PNG the reviewer saw when they last reviewed this mockup version; 404 when the review sent none
+      tags: [artifacts]
+      responses:
+        "200":
+          description: PNG bytes
+          content:
+            image/png:
+              schema: { type: string, format: binary }
         default: { $ref: "#/components/responses/Error" }
 
   /artifacts/{id}/versions/{versionId}/content:
@@ -8204,6 +8231,13 @@ components:
           items: { $ref: "#/components/schemas/MockupPin" }
         reviewed_by: { $ref: "#/components/schemas/UserRef" }
         reviewed_at: { type: string, format: date-time }
+        snapshot:
+          type: object
+          description: The picture this decision was made on (GET …/review-snapshot)
+          required: [renderer, source_sha256]
+          properties:
+            renderer: { type: string }
+            source_sha256: { type: string }
     ChatCanvasSave:
       type: object
       required: [base_seq, body]
