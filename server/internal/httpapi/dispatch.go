@@ -280,6 +280,9 @@ func (s *Server) GetDispatchPreview(ctx context.Context, req api.GetDispatchPrev
 	if err != nil {
 		return nil, err
 	}
+	if s.Blobs != nil {
+		files = append(files, runner.MockupSnapshotFiles(ctx, s.Q, s.Blobs, s.ArtifactBucket, t, files)...)
+	}
 	for _, f := range files {
 		title, kind := f.Path, "artifact"
 		if a, err := s.Q.GetArtifact(ctx, store.GetArtifactParams{ID: f.ArtifactID, WorkspaceID: ws, Viewer: pageview.From(ctx).UserID}); err == nil {

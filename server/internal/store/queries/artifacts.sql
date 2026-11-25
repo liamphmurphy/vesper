@@ -36,7 +36,7 @@ WHERE artifact_visible(a.audience, a.owner_user_id, sqlc.narg(viewer)::uuid) AND
 
 -- name: ListArtifactVersions :many
 SELECT id, artifact_id, seq, label, filename, content_type, size_bytes, note, created_by_type, created_by_id, created_at,
-  review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins
+  review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins, review_snapshot_key, review_snapshot_renderer, review_snapshot_sha256
 FROM artifact_versions WHERE artifact_id = $1 AND EXISTS (SELECT 1 FROM artifacts a WHERE a.id = artifact_id AND artifact_visible(a.audience, a.owner_user_id, sqlc.narg(viewer)::uuid)) AND state = 'published' AND label <> 'suggestion' ORDER BY seq DESC;
 
 -- name: CountPublishedVersions :one
@@ -135,7 +135,9 @@ ORDER BY t.updated_at DESC;
 SELECT * FROM artifacts WHERE artifact_visible(audience, owner_user_id, sqlc.narg(viewer)::uuid) AND workspace_id = $1 AND type = 'adr' AND number = $2;
 
 -- name: ReviewArtifactVersion :one
-UPDATE artifact_versions SET review_state = $2, reviewed_by_user_id = $3, reviewed_at = now(), review_note = $4, review_pins = $5
+-- The snapshot columns belong to the latest decision: a review without one clears them.
+UPDATE artifact_versions SET review_state = $2, reviewed_by_user_id = $3, reviewed_at = now(), review_note = $4, review_pins = $5,
+  review_snapshot_key = sqlc.narg(snapshot_key), review_snapshot_renderer = sqlc.narg(snapshot_renderer), review_snapshot_sha256 = sqlc.narg(snapshot_sha256)
 WHERE id = $1 RETURNING *;
 
 -- name: MockupGateCandidates :many

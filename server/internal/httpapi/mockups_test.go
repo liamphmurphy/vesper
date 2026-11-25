@@ -3,7 +3,10 @@ package httpapi
 import (
 	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/png"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -13,6 +16,8 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
+	"github.com/liamphmurphy/vesper/server/internal/blob"
+	"github.com/liamphmurphy/vesper/server/internal/config"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/seed"
 	"github.com/liamphmurphy/vesper/server/internal/store"
@@ -259,7 +264,7 @@ func TestMockupAgentTools(t *testing.T) {
 		t.Fatalf("gate = %+v", g)
 	}
 	m := g.Mockups[0]
-	if _, err := rs.ReviewMockup(ctx, ws, me.ID, m.ID, m.VersionID, "approved", "", nil); err != nil {
+	if _, err := rs.ReviewMockup(ctx, ws, me.ID, m.ID, m.VersionID, "approved", "", nil, nil); err != nil {
 		t.Fatal(err)
 	}
 	if code, out := call("read_artifact", map[string]any{"ticket": "PAY-214", "artifact": artifactID}); code != 200 || out["svg"] != httpSVG || out["review_state"] != "approved" || out["markdown"] != nil {
@@ -326,5 +331,77 @@ func TestCreateArtifactWithTicketKey(t *testing.T) {
 	}
 	if count() != before {
 		t.Fatal("failed create left an artifact behind")
+	}
+}
+
+// A review can carry the PNG the reviewer saw; it's served back, named on the
+// version, and refused when it's of other source.
+func TestMockupReviewSnapshotHTTP(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	blobs := blob.New(config.Blob{Dir: t.TempDir(), Buckets: []string{"artifacts"}})
+	if err := blobs.EnsureBuckets(ctx); err != nil {
+		t.Fatal(err)
+	}
+	arts := &artifacts.Service{Pool: pool, Blobs: blobs, Bucket: "artifacts"}
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: arts}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	tr := &tracker.Service{Pool: pool}
+	srv := &Server{AnonymousAPI: true, Pool: pool, Q: q, Tracker: tr, Runs: &runs.Service{Pool: pool, Tracker: tr, Artifacts: arts},
+		Artifacts: arts, Blobs: blobs, ArtifactBucket: "artifacts"}
+	h := srv.Handler()
+	do := func(method, path string, body any) *httptest.ResponseRecorder {
+		var rd bytes.Buffer
+		if body != nil {
+			_ = json.NewEncoder(&rd).Encode(body)
+		}
+		req := httptest.NewRequest(method, "/api/v1"+path, &rd)
+		req.Header.Set("Content-Type", "application/json")
+		w := httptest.NewRecorder()
+		h.ServeHTTP(w, req)
+		return w
+	}
+	var buf bytes.Buffer
+	mw := multipart.NewWriter(&buf)
+	for k, v := range map[string]string{"project_key": "PAY", "type": "mockup", "title": "Login", "body_md": httpSVG} {
+		_ = mw.WriteField(k, v)
+	}
+	_ = mw.Close()
+	req := httptest.NewRequest("POST", "/api/v1/artifacts", &buf)
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+	if rec.Code != 201 {
+		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+	}
+	var art api.Artifact
+	_ = json.Unmarshal(rec.Body.Bytes(), &art)
+	base := "/artifacts/" + art.Id.String() + "/versions/" + art.CurrentVersion.Id.String()
+
+	if rec := do("GET", base+"/review-snapshot", nil); rec.Code != 404 {
+		t.Fatalf("snapshot before any review: %d", rec.Code)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, 640, 400))
+	var pngBuf bytes.Buffer
+	_ = png.Encode(&pngBuf, img)
+	snap := map[string]any{"png_base64": base64.StdEncoding.EncodeToString(pngBuf.Bytes()), "renderer": "vesper-native/1",
+		"source_sha256": artifacts.SourceSHA256(httpSVG + "x")}
+	if rec := do("POST", base+"/review", map[string]any{"decision": "approved", "snapshot": snap}); rec.Code != 422 {
+		t.Fatalf("snapshot of other source: %d %s", rec.Code, rec.Body.String())
+	}
+	snap["source_sha256"] = artifacts.SourceSHA256(httpSVG)
+	rec = do("POST", base+"/review", map[string]any{"decision": "approved", "snapshot": snap})
+	if rec.Code != 200 {
+		t.Fatalf("review: %d %s", rec.Code, rec.Body.String())
+	}
+	_ = json.Unmarshal(rec.Body.Bytes(), &art)
+	if r := art.CurrentVersion.Review; r == nil || r.Snapshot == nil || r.Snapshot.Renderer != "vesper-native/1" || r.Snapshot.SourceSha256 != artifacts.SourceSHA256(httpSVG) {
+		t.Fatalf("review = %+v", r)
+	}
+	rec = do("GET", base+"/review-snapshot", nil)
+	if rec.Code != 200 || rec.Header().Get("Content-Type") != "image/png" || !bytes.Equal(rec.Body.Bytes(), pngBuf.Bytes()) {
+		t.Fatalf("served snapshot: %d %q %d bytes", rec.Code, rec.Header().Get("Content-Type"), rec.Body.Len())
 	}
 }

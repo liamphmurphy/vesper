@@ -128,8 +128,10 @@ func (s *Service) CreateMockup(ctx context.Context, c Caller, key, title, svg, n
 }
 
 // ReviewMockup records a person's decision on a mockup's current version and
-// wakes the runs it was gating.
-func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, versionID uuid.UUID, decision, note string, pins []artifacts.ReviewPin) (store.Artifact, error) {
+// wakes the runs it was gating. snap, when set, is the picture the decision
+// was made on; it replaces any earlier snapshot of the version, and a review
+// without one clears it, so a snapshot always belongs to the latest decision.
+func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, versionID uuid.UUID, decision, note string, pins []artifacts.ReviewPin, snap *artifacts.ReviewSnapshot) (store.Artifact, error) {
 	note = strings.TrimSpace(note)
 	pins, err := artifacts.CleanReviewPins(pins)
 	if err != nil {
@@ -139,6 +141,21 @@ func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, vers
 	if err != nil {
 		return store.Artifact{}, err
 	}
+	// The blob is written before the transaction (a store can't join it) and
+	// removed again if the review doesn't commit.
+	var snapKey, snapRenderer, snapSHA *string
+	cleanup := func() {}
+	if snap != nil {
+		if s.Artifacts == nil {
+			return store.Artifact{}, errors.New("runs: no artifact store for review snapshots")
+		}
+		key, undo, err := s.Artifacts.PutReviewSnapshot(ctx, ws, versionID, snap)
+		if err != nil {
+			return store.Artifact{}, err
+		}
+		snapKey, snapRenderer, snapSHA, cleanup = &key, &snap.Renderer, &snap.SourceSHA256, undo
+	}
+	var replacedKey string
 	var out store.Artifact
 	err = s.tx(ctx, func(q *store.Queries) error {
 		a, err := q.LockArtifact(ctx, store.LockArtifactParams{ID: artifactID, WorkspaceID: ws, Viewer: pageview.From(ctx).UserID})
@@ -159,8 +176,17 @@ func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, vers
 		if a.CurrentVersionID == nil || *a.CurrentVersionID != versionID {
 			return apperr.Conflict("a newer version exists; review that one")
 		}
+		prev, err := q.GetArtifactVersion(ctx, store.GetArtifactVersionParams{ID: versionID, ArtifactID: a.ID, WorkspaceID: ws, Viewer: pageview.From(ctx).UserID})
+		if err != nil {
+			return err
+		}
+		if snap != nil && artifacts.SourceSHA256(deref(prev.BodyMd)) != snap.SourceSHA256 {
+			return apperr.Invalid("snapshot", "is of a different version of this mockup")
+		}
+		replacedKey = deref(prev.ReviewSnapshotKey)
 		note := artifacts.GatherReviewNote(note, pins)
-		v, err := q.ReviewArtifactVersion(ctx, store.ReviewArtifactVersionParams{ID: versionID, ReviewState: &decision, ReviewedByUserID: &userID, ReviewNote: note, ReviewPins: pinsJSON})
+		v, err := q.ReviewArtifactVersion(ctx, store.ReviewArtifactVersionParams{ID: versionID, ReviewState: &decision, ReviewedByUserID: &userID, ReviewNote: note, ReviewPins: pinsJSON,
+			SnapshotKey: snapKey, SnapshotRenderer: snapRenderer, SnapshotSha256: snapSHA})
 		if err != nil {
 			return err
 		}
@@ -173,6 +199,9 @@ func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, vers
 			verb, msg = tracker.VerbMockupChangesRequested, fmt.Sprintf("Changes requested on mockup %s %s: %s%sRevise it with create_mockup (mockup_id %s).", a.Title, v.Label, note, sep, a.ID)
 		} else if note != "" {
 			msg += "\nNote from the reviewer: " + note
+		}
+		if snap != nil {
+			msg += "\nA PNG of exactly what the reviewer saw is beside the mockup's SVG in .lazyagents/context/."
 		}
 		tickets, err := q.ListTicketsGatedByMockup(ctx, store.ListTicketsGatedByMockupParams{WorkspaceID: ws, ArtifactID: a.ID, EpicID: a.EpicID})
 		if err != nil {
@@ -211,7 +240,14 @@ func (s *Service) ReviewMockup(ctx context.Context, ws, userID, artifactID, vers
 		out, err = q.GetArtifact(ctx, store.GetArtifactParams{ID: a.ID, WorkspaceID: ws, Viewer: pageview.From(ctx).UserID})
 		return err
 	})
-	return out, err
+	if err != nil {
+		cleanup()
+		return out, err
+	}
+	if replacedKey != "" && s.Artifacts != nil && (snapKey == nil || *snapKey != replacedKey) {
+		s.Artifacts.DeleteReviewSnapshot(ctx, replacedKey)
+	}
+	return out, nil
 }
 
 // ReleaseMockupWaiters re-evaluates the mockup gate of waiting runs after a

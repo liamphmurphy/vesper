@@ -299,6 +299,17 @@ extension API {
         )
     }
 
+    /// The PNG the reviewer saw when they last reviewed this mockup version; 404 when the review sent none
+    ///
+    /// `GET /artifacts/{id}/versions/{versionId}/review-snapshot`
+    public static func getArtifactReviewSnapshot(id: Swift.String, versionId: Swift.String) -> APIRequest<Foundation.Data> {
+        return APIRequest(
+            method: "GET", template: "/artifacts/{id}/versions/{versionId}/review-snapshot",
+            path: "/api/v1/artifacts/\(APIPath.escape(id))/versions/\(APIPath.escape(versionId))/review-snapshot",
+            query: [], headers: [:], body: nil, decode: .raw
+        )
+    }
+
     /// Everything the shell and pickers need in one call (`me` is the local user)
     ///
     /// `GET /bootstrap`

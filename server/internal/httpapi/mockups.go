@@ -3,9 +3,16 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"net/http"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
+	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/artifacts"
+	"github.com/liamphmurphy/vesper/server/internal/blob"
+	"github.com/liamphmurphy/vesper/server/internal/pageview"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -45,7 +52,14 @@ func (s *Server) ReviewArtifactVersion(ctx context.Context, req api.ReviewArtifa
 			pins = append(pins, artifacts.ReviewPin{X: p.X, Y: p.Y, Text: p.Text})
 		}
 	}
-	a, err := s.Runs.ReviewMockup(ctx, ws, u.ID, req.Id, req.VersionId, string(req.Body.Decision), deref(req.Body.Note), pins)
+	var snap *artifacts.ReviewSnapshot
+	if b := req.Body.Snapshot; b != nil {
+		var err error
+		if snap, err = artifacts.DecodeReviewSnapshot(b.PngBase64, b.Renderer, b.SourceSha256); err != nil {
+			return nil, err
+		}
+	}
+	a, err := s.Runs.ReviewMockup(ctx, ws, u.ID, req.Id, req.VersionId, string(req.Body.Decision), deref(req.Body.Note), pins, snap)
 	if err != nil {
 		return nil, err
 	}
@@ -87,4 +101,28 @@ func (s *Server) CreateEpicReview(ctx context.Context, req api.CreateEpicReviewR
 
 func toWorkTicket(t store.Ticket) api.WorkTicket {
 	return api.WorkTicket{Id: t.ID, Key: t.Key, Title: t.Title, Status: api.TicketStatus(t.Status), Priority: api.Priority(t.Priority)}
+}
+
+func (r contentResponse) VisitGetArtifactReviewSnapshotResponse(w http.ResponseWriter) error {
+	return r.write(w)
+}
+
+// GetArtifactReviewSnapshot serves the PNG a reviewer saw, scoped like the
+// version's content.
+func (s *Server) GetArtifactReviewSnapshot(ctx context.Context, req api.GetArtifactReviewSnapshotRequestObject) (api.GetArtifactReviewSnapshotResponseObject, error) {
+	_, _, ws := me(ctx)
+	v, err := s.Q.GetArtifactVersion(ctx, store.GetArtifactVersionParams{ID: req.VersionId, ArtifactID: req.Id, WorkspaceID: ws, Viewer: pageview.From(ctx).UserID})
+	if errors.Is(err, pgx.ErrNoRows) || err == nil && v.ReviewSnapshotKey == nil {
+		return nil, apperr.ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	o, err := s.Blobs.Get(ctx, s.ArtifactBucket, *v.ReviewSnapshotKey)
+	if errors.Is(err, blob.ErrNotFound) {
+		return nil, apperr.ErrNotFound
+	} else if err != nil {
+		return nil, err
+	}
+	return contentResponse{body: o.Body, closer: o.Body, contentType: "image/png", length: o.ContentLength,
+		filename: "review-" + v.Label + ".png", inline: true, cache: "private, max-age=300"}, nil
 }

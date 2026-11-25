@@ -175,7 +175,7 @@ func (q *Queries) CreateArtifact(ctx context.Context, arg CreateArtifactParams) 
 const createArtifactVersion = `-- name: CreateArtifactVersion :one
 INSERT INTO artifact_versions (artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, note, created_by_type, created_by_id, state, based_on_version_id, review_state, properties)
 VALUES ($1, (SELECT coalesce(max(seq), 0) + 1 FROM artifact_versions WHERE artifact_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, coalesce($14::jsonb, '{}'::jsonb))
-RETURNING id, artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, note, created_by_type, created_by_id, created_at, state, based_on_version_id, decided_by_id, decided_at, review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins, properties, changes, source_canvas_version_id
+RETURNING id, artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, note, created_by_type, created_by_id, created_at, state, based_on_version_id, decided_by_id, decided_at, review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins, properties, changes, source_canvas_version_id, review_snapshot_key, review_snapshot_renderer, review_snapshot_sha256
 `
 
 type CreateArtifactVersionParams struct {
@@ -239,6 +239,9 @@ func (q *Queries) CreateArtifactVersion(ctx context.Context, arg CreateArtifactV
 		&i.Properties,
 		&i.Changes,
 		&i.SourceCanvasVersionID,
+		&i.ReviewSnapshotKey,
+		&i.ReviewSnapshotRenderer,
+		&i.ReviewSnapshotSha256,
 	)
 	return i, err
 }
@@ -341,7 +344,7 @@ func (q *Queries) GetArtifact(ctx context.Context, arg GetArtifactParams) (Artif
 }
 
 const getArtifactVersion = `-- name: GetArtifactVersion :one
-SELECT v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
+SELECT v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id, v.review_snapshot_key, v.review_snapshot_renderer, v.review_snapshot_sha256 FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
 WHERE artifact_visible(a.audience, a.owner_user_id, $4::uuid) AND v.id = $1 AND v.artifact_id = $2 AND a.workspace_id = $3
 `
 
@@ -386,6 +389,9 @@ func (q *Queries) GetArtifactVersion(ctx context.Context, arg GetArtifactVersion
 		&i.Properties,
 		&i.Changes,
 		&i.SourceCanvasVersionID,
+		&i.ReviewSnapshotKey,
+		&i.ReviewSnapshotRenderer,
+		&i.ReviewSnapshotSha256,
 	)
 	return i, err
 }
@@ -546,7 +552,7 @@ func (q *Queries) ListArtifactTickets(ctx context.Context, artifactID uuid.UUID)
 
 const listArtifactVersions = `-- name: ListArtifactVersions :many
 SELECT id, artifact_id, seq, label, filename, content_type, size_bytes, note, created_by_type, created_by_id, created_at,
-  review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins
+  review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins, review_snapshot_key, review_snapshot_renderer, review_snapshot_sha256
 FROM artifact_versions WHERE artifact_id = $1 AND EXISTS (SELECT 1 FROM artifacts a WHERE a.id = artifact_id AND artifact_visible(a.audience, a.owner_user_id, $2::uuid)) AND state = 'published' AND label <> 'suggestion' ORDER BY seq DESC
 `
 
@@ -556,22 +562,25 @@ type ListArtifactVersionsParams struct {
 }
 
 type ListArtifactVersionsRow struct {
-	ID               uuid.UUID
-	ArtifactID       uuid.UUID
-	Seq              int32
-	Label            string
-	Filename         *string
-	ContentType      string
-	SizeBytes        int64
-	Note             string
-	CreatedByType    string
-	CreatedByID      uuid.UUID
-	CreatedAt        time.Time
-	ReviewState      *string
-	ReviewedByUserID *uuid.UUID
-	ReviewedAt       *time.Time
-	ReviewNote       string
-	ReviewPins       json.RawMessage
+	ID                     uuid.UUID
+	ArtifactID             uuid.UUID
+	Seq                    int32
+	Label                  string
+	Filename               *string
+	ContentType            string
+	SizeBytes              int64
+	Note                   string
+	CreatedByType          string
+	CreatedByID            uuid.UUID
+	CreatedAt              time.Time
+	ReviewState            *string
+	ReviewedByUserID       *uuid.UUID
+	ReviewedAt             *time.Time
+	ReviewNote             string
+	ReviewPins             json.RawMessage
+	ReviewSnapshotKey      *string
+	ReviewSnapshotRenderer *string
+	ReviewSnapshotSha256   *string
 }
 
 func (q *Queries) ListArtifactVersions(ctx context.Context, arg ListArtifactVersionsParams) ([]ListArtifactVersionsRow, error) {
@@ -600,6 +609,9 @@ func (q *Queries) ListArtifactVersions(ctx context.Context, arg ListArtifactVers
 			&i.ReviewedAt,
 			&i.ReviewNote,
 			&i.ReviewPins,
+			&i.ReviewSnapshotKey,
+			&i.ReviewSnapshotRenderer,
+			&i.ReviewSnapshotSha256,
 		); err != nil {
 			return nil, err
 		}
@@ -1065,8 +1077,9 @@ func (q *Queries) NextADRNumber(ctx context.Context, workspaceID uuid.UUID) (int
 }
 
 const reviewArtifactVersion = `-- name: ReviewArtifactVersion :one
-UPDATE artifact_versions SET review_state = $2, reviewed_by_user_id = $3, reviewed_at = now(), review_note = $4, review_pins = $5
-WHERE id = $1 RETURNING id, artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, note, created_by_type, created_by_id, created_at, state, based_on_version_id, decided_by_id, decided_at, review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins, properties, changes, source_canvas_version_id
+UPDATE artifact_versions SET review_state = $2, reviewed_by_user_id = $3, reviewed_at = now(), review_note = $4, review_pins = $5,
+  review_snapshot_key = $6, review_snapshot_renderer = $7, review_snapshot_sha256 = $8
+WHERE id = $1 RETURNING id, artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, note, created_by_type, created_by_id, created_at, state, based_on_version_id, decided_by_id, decided_at, review_state, reviewed_by_user_id, reviewed_at, review_note, review_pins, properties, changes, source_canvas_version_id, review_snapshot_key, review_snapshot_renderer, review_snapshot_sha256
 `
 
 type ReviewArtifactVersionParams struct {
@@ -1075,8 +1088,12 @@ type ReviewArtifactVersionParams struct {
 	ReviewedByUserID *uuid.UUID
 	ReviewNote       string
 	ReviewPins       json.RawMessage
+	SnapshotKey      *string
+	SnapshotRenderer *string
+	SnapshotSha256   *string
 }
 
+// The snapshot columns belong to the latest decision: a review without one clears them.
 func (q *Queries) ReviewArtifactVersion(ctx context.Context, arg ReviewArtifactVersionParams) (ArtifactVersion, error) {
 	row := q.db.QueryRow(ctx, reviewArtifactVersion,
 		arg.ID,
@@ -1084,6 +1101,9 @@ func (q *Queries) ReviewArtifactVersion(ctx context.Context, arg ReviewArtifactV
 		arg.ReviewedByUserID,
 		arg.ReviewNote,
 		arg.ReviewPins,
+		arg.SnapshotKey,
+		arg.SnapshotRenderer,
+		arg.SnapshotSha256,
 	)
 	var i ArtifactVersion
 	err := row.Scan(
@@ -1112,6 +1132,9 @@ func (q *Queries) ReviewArtifactVersion(ctx context.Context, arg ReviewArtifactV
 		&i.Properties,
 		&i.Changes,
 		&i.SourceCanvasVersionID,
+		&i.ReviewSnapshotKey,
+		&i.ReviewSnapshotRenderer,
+		&i.ReviewSnapshotSha256,
 	)
 	return i, err
 }

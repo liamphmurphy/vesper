@@ -1749,6 +1749,9 @@ func (r *Runner) turn(ctx context.Context, turn store.RunTurn) {
 	if err != nil {
 		log.Warn("context files", "err", err)
 	}
+	if r.Attachments != nil {
+		ctxFiles = append(ctxFiles, MockupSnapshotFiles(ctx, q, r.Attachments, r.Cfg.AttachmentBucket, c.ticket, ctxFiles)...)
+	}
 	if c.run.Purpose == "ticket" && c.run.TicketID != nil {
 		// Linked design frames (ADR-designs §3.11); bounded so a slow renderer can't hold the turn.
 		dctx, cancel := context.WithTimeout(ctx, designContextTimeout)
