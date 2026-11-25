@@ -9,14 +9,11 @@ export const REDIRECTS: Rule[] = [
   { source: "/memory", destination: "/settings?section=memory" },
   { source: "/personas", destination: "/settings?section=personas" },
   // Agents sit beside Personas in Settings; /agents/:handle stays the editor.
-  { source: "/agents", destination: "/settings?section=personas&filter=tickets" },
-  // Board and Epics are layouts of Tickets; their filters (?project=, ?epic=) carry over.
-  { source: "/board", destination: "/tickets?layout=board" },
-  { source: "/epics", destination: "/tickets?layout=epics" },
+  { source: "/agents", destination: "/settings?section=personas" },
   { source: "/costs", destination: "/reports?tab=costs" },
   // Costs and Highlights moved from the Runs tabs to Reports; the rest of the query carries over.
   { source: "/runs", hasQuery: { key: "tab", value: /^(costs|highlights)$/ }, destination: "/reports" },
-  // The Dashboard re-summed the Inbox, Runs and Tickets; what needs you is in the Inbox.
+  // The Dashboard was replaced by the Inbox.
   { source: "/dashboard", destination: "/inbox" },
   // Artifacts are Library's "From projects"; /artifacts/:id stays the document page.
   { source: "/artifacts", destination: "/library?source=projects" },

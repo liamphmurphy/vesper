@@ -17,7 +17,7 @@ import {
 import { isTyping } from "./shortcuts";
 import { NavigatorPortal, type NativeNavigator } from "./navigator-slot";
 import { splitActions, type NativeAction, type NativeMenuEntry } from "@/lib/native-shell/actions";
-import { inspectorPublisher, toCompanionSubject } from "@/lib/native-shell/inspector-publisher";
+import { inspectorPublisher } from "@/lib/native-shell/inspector-publisher";
 import type {
   InspectorAction,
   InspectorModel,
@@ -28,7 +28,6 @@ import type {
 } from "@/lib/native-shell/protocol";
 import { setTopBarTitle } from "@/lib/native-shell/title";
 import { useNativeToolbar } from "@/lib/native-shell/use-native-toolbar";
-import type { WorkSubject } from "@/lib/work-context";
 import { usePathname, useRouter } from "next/navigation";
 import { CompanionPortal, RightRailPortal } from "./companion";
 
@@ -46,7 +45,6 @@ export type NativeDockTab =
     }
   | {
       kind: "companion";
-      subject?: WorkSubject;
       width?: InspectorWidth;
     }
   | {
@@ -417,7 +415,6 @@ export function Dock({
           ...(companionNative
             ? {
                 companion: {
-                  ...(companionNative.subject ? { subject: toCompanionSubject(companionNative.subject) } : {}),
                   path: pathname,
                 },
               }

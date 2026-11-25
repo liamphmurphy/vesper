@@ -24,7 +24,6 @@ struct ChatComposerView: View {
     let harnesses: [API.HarnessActivity]
     let workflows: [API.Workflow]
     let repositories: [API.RepositoryEntry]
-    let activeTicketRuns: [API.ChatTicketRun]
 
     @Binding var selectedHarness: API.Harness?
     @Binding var selectedModel: String?
@@ -112,13 +111,6 @@ struct ChatComposerView: View {
         let p = theme.palette
 
         VStack(alignment: .leading, spacing: 8) {
-            if !activeTicketRuns.isEmpty {
-                ChatRunningStatusStrip(
-                    activeTicketRuns: activeTicketRuns,
-                    onOpenRun: { runId in context.navigate("/runs/\(runId)") }
-                )
-            }
-
             if isRunning, let livePlanProgress {
                 ChatPinnedPlanChecklistBar(
                     progress: livePlanProgress,

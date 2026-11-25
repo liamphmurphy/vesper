@@ -5,17 +5,14 @@ import Foundation
 /// A searchable item type in the command palette: a filter chip (or More menu entry),
 /// an `is:` filter token, and the `/search` kinds it maps to.
 public enum CommandPaletteType: String, Codable, Sendable, CaseIterable, Hashable, Identifiable {
-    case ticket
     case page
     case chat
+    case space
     case people
-    case run
-    case epic
+    case workflow
     case memory
     case canvas
     case course
-    case space
-    case workflow
     case library
     case scheduled
     case artifact
@@ -24,19 +21,16 @@ public enum CommandPaletteType: String, Codable, Sendable, CaseIterable, Hashabl
     public var id: String { rawValue }
 
     /// Primary filter chips shown in the top bar (cycled with `Tab` / `⇧Tab`).
-    public static let chipTypes: [CommandPaletteType] = [.ticket, .page, .chat, .people, .run]
+    public static let chipTypes: [CommandPaletteType] = [.page, .chat, .space, .people, .workflow]
 
     /// Secondary types shown inside the `More +` popover.
     public static let moreTypes: [CommandPaletteType] = allCases.filter { !chipTypes.contains($0) }
 
     public var label: String {
         switch self {
-        case .ticket: "Tickets"
         case .page: "Pages"
         case .chat: "Chats"
         case .people: "People"
-        case .run: "Runs"
-        case .epic: "Epics"
         case .memory: "Memories"
         case .canvas: "Canvases"
         case .course: "Courses"
@@ -51,12 +45,9 @@ public enum CommandPaletteType: String, Codable, Sendable, CaseIterable, Hashabl
 
     public var singularLabel: String {
         switch self {
-        case .ticket: "Ticket"
         case .page: "Page"
         case .chat: "Chat"
         case .people: "Person"
-        case .run: "Run"
-        case .epic: "Epic"
         case .memory: "Memory"
         case .canvas: "Canvas"
         case .course: "Course"
@@ -72,12 +63,9 @@ public enum CommandPaletteType: String, Codable, Sendable, CaseIterable, Hashabl
     /// Plural noun for "+ N more …" and empty-state copy.
     public var noun: String {
         switch self {
-        case .ticket: "tickets"
         case .page: "pages"
         case .chat: "chats"
         case .people: "people"
-        case .run: "runs"
-        case .epic: "epics"
         case .memory: "memories"
         case .canvas: "canvases"
         case .course: "courses"
@@ -95,12 +83,9 @@ public enum CommandPaletteType: String, Codable, Sendable, CaseIterable, Hashabl
     /// The `/search` kind strings covered by this type.
     public var searchKinds: [String] {
         switch self {
-        case .ticket: ["ticket"]
         case .page: ["page"]
         case .chat: ["chat"]
         case .people: ["persona", "agent"]
-        case .run: ["run"]
-        case .epic: ["epic"]
         case .memory: ["memory"]
         case .canvas: ["canvas"]
         case .course: ["course"]
@@ -121,12 +106,9 @@ public enum CommandPaletteType: String, Codable, Sendable, CaseIterable, Hashabl
 
     public var sfSymbol: String {
         switch self {
-        case .ticket: "checklist"
         case .page: "doc.text"
         case .chat: "bubble.left"
         case .people: "person.2"
-        case .run: "play.circle"
-        case .epic: "square.stack.3d.up"
         case .memory: "bookmark"
         case .canvas: "pencil.and.outline"
         case .course: "graduationcap"
@@ -244,7 +226,6 @@ public enum CommandPaletteScopeTarget: Sendable, Equatable, Hashable {
 }
 
 public enum CommandPalettePageContext: Sendable, Equatable, Hashable {
-    case ticket(key: String)
     case artifact(id: String)
     case knowledge(id: String)
     case wiki(path: String)
@@ -349,12 +330,9 @@ public enum CommandPaletteLogic {
     public static let perGroupCap = 3
 
     private static let filterTypeAliases: [String: CommandPaletteType] = [
-        "ticket": .ticket, "tickets": .ticket,
         "page": .page, "pages": .page, "note": .page,
         "chat": .chat, "chats": .chat, "message": .chat,
         "people": .people, "person": .people, "persona": .people, "agent": .people,
-        "run": .run, "runs": .run,
-        "epic": .epic, "epics": .epic,
         "memory": .memory, "memories": .memory,
         "canvas": .canvas, "canvases": .canvas,
         "course": .course, "courses": .course, "learn": .course,
@@ -366,8 +344,8 @@ public enum CommandPaletteLogic {
         "app": .app, "apps": .app,
     ]
 
-    /// Splits `is:ticket status:done deploy` into filters and search text; unknown tokens remain text.
-    /// A leading `@` filters to people and `#` to tickets.
+    /// Splits `is:page status:done deploy` into filters and search text; unknown tokens remain text.
+    /// A leading `@` filters to people.
     public static func parseFilters(_ query: String) -> CommandPaletteFilters {
         var out = CommandPaletteFilters()
         var words: [String] = []
@@ -375,9 +353,6 @@ public enum CommandPaletteLogic {
 
         if rest.hasPrefix("@") {
             out.types.append(.people)
-            rest = String(rest.dropFirst()).trimmingCharacters(in: .whitespaces)
-        } else if rest.hasPrefix("#") {
-            out.types.append(.ticket)
             rest = String(rest.dropFirst()).trimmingCharacters(in: .whitespaces)
         }
 
@@ -485,10 +460,6 @@ public enum CommandPaletteLogic {
     private static let knowledgePrefixes = ["/knowledge", "/wiki", "/apps/docs", "/apps/slides", "/apps/designs"]
 
     private static let typeScopePrefixes: [(String, CommandPaletteType)] = [
-        ("/tickets", .ticket),
-        ("/board", .ticket),
-        ("/epics", .epic),
-        ("/runs", .run),
         ("/chat", .chat),
         ("/agents", .people),
         ("/workflows", .workflow),
@@ -513,17 +484,6 @@ public enum CommandPaletteLogic {
 
         if knowledgePrefixes.contains(where: { matchesPrefix(path, $0) }) {
             return .knowledge
-        }
-        if matchesPrefix(path, "/tickets"), queryItems["layout"] == "epics" {
-            return .type(.epic, label: CommandPaletteType.epic.label)
-        }
-        if matchesPrefix(path, "/work") {
-            let type: CommandPaletteType = switch queryItems["view"] {
-            case "tickets": .ticket
-            case "epics": .epic
-            default: .run
-            }
-            return .type(type, label: type.label)
         }
         if matchesPrefix(path, "/settings") {
             let section = queryItems["section"]
@@ -556,12 +516,6 @@ public enum CommandPaletteLogic {
 
     public static func pageContext(path rawPath: String) -> CommandPalettePageContext? {
         let path = rawPath.split(separator: "?", maxSplits: 1).first.map(String.init) ?? rawPath
-        if path.hasPrefix("/tickets/") {
-            let key = String(path.dropFirst("/tickets/".count))
-            if !key.contains("/"), let normalized = ticketKeyFrom(key) {
-                return .ticket(key: normalized)
-            }
-        }
         if path.hasPrefix("/artifacts/") {
             let id = String(path.dropFirst("/artifacts/".count))
             if isUUID(id) { return .artifact(id: id) }
@@ -599,9 +553,6 @@ public enum CommandPaletteLogic {
     }
 
     public static func projectFromRoute(path: String, search: String? = nil) -> String? {
-        if case .ticket(let key) = pageContext(path: path) {
-            return projectOfKey(key)
-        }
         let split = path.split(separator: "?", maxSplits: 1)
         let q = search ?? (split.count > 1 ? String(split[1]) : "")
         let items = parseQueryItems(q)
@@ -793,10 +744,7 @@ public enum CommandPaletteLogic {
 
     public static func typeOf(_ target: API.LinkTarget) -> CommandPaletteType {
         switch target.kind {
-        case .ticket: .ticket
         case .chat: .chat
-        case .run: .run
-        case .epic: .epic
         case .memory: .memory
         case .canvas: .canvas
         case .course: .course

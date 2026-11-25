@@ -14,139 +14,24 @@ public struct DockedChatStarter: Sendable, Equatable, Identifiable {
     }
 }
 
-/// Pure formatting, context-marker, pinning, and starter helpers for native Companion Chat
-/// (`app:work`) and Knowledge Chat (`app:knowledge` / `page:<id>`), matching `web/lib/work-context.ts`
-/// and `web/app/(app)/knowledge/_components/knowledge-dock.tsx`.
+/// Pure formatting, context-marker, and starter helpers for native Companion Chat
+/// (`app:work`) and Knowledge Chat (`app:knowledge` / `page:<id>`).
 public enum WorkCompanionLogic {
     /// Server cuts message text at this marker (`server/internal/runs/chat_personas.go`).
-    public static let workContextMarker = "\n\n<!-- vesper:work-context -->\n"
     public static let knowledgeContextMarker = "\n\n<!-- vesper:knowledge-context -->\n"
 
-    public static func workContextLine(_ subject: CompanionSubject, pinned: Bool = false) -> String {
-        let verb = pinned ? "Pinned" : "Viewing"
-        switch subject.kind {
-        case .ticket:
-            return "\(verb) ticket \(subject.id) (\u{201C}\(subject.title)\u{201D})."
-        case .run:
-            let agent = subject.agent ?? "agent"
-            let ticketSuffix = subject.ticketKey.map { " for ticket \($0)" } ?? ""
-            return "\(verb) run \(subject.id) (\u{201C}\(subject.title)\u{201D}) by \(agent)\(ticketSuffix)."
-        }
-    }
-
-    public static func sameSubject(_ a: CompanionSubject, _ b: CompanionSubject) -> Bool {
-        a.kind == b.kind && a.id == b.id
-    }
-
-    /// Appends the viewing/pinned work context after `workContextMarker` once.
-    public static func withWorkContext(
-        _ body: String,
-        viewing: CompanionSubject?,
-        pinned: CompanionSubject? = nil
-    ) -> String {
-        let same = pinned != nil && viewing != nil && sameSubject(pinned!, viewing!)
-        var lines: [String] = []
-        if let pinned, !same {
-            lines.append(workContextLine(pinned, pinned: true))
-        }
-        if let viewing {
-            lines.append(workContextLine(viewing, pinned: same))
-        }
-        guard !lines.isEmpty else { return body }
-        let suffix = "\(workContextMarker)\(lines.joined(separator: "\n"))"
-        return body.hasSuffix(suffix) ? body : "\(body)\(suffix)"
-    }
-
-    public static func workSubjectLabel(_ subject: CompanionSubject) -> String {
-        switch subject.kind {
-        case .ticket:
-            return "\(subject.id) \u{00B7} \(subject.title)"
-        case .run:
-            if let key = subject.ticketKey, !key.isEmpty {
-                return "\(key) \u{00B7} \(subject.title)"
-            }
-            return subject.title
-        }
-    }
-
-    public static func mergeWorkContextRefs(
-        existing: [API.ChatContextRef]?,
-        viewing: CompanionSubject?,
-        pinned: CompanionSubject?
-    ) -> [API.ChatContextRef]? {
-        var refs = existing ?? []
-        for subject in [pinned, viewing].compactMap({ $0 }) {
-            let key: String? = switch subject.kind {
-            case .ticket: subject.id
-            case .run: subject.ticketKey
-            }
-            if let key, !key.isEmpty, !refs.contains(where: { $0.kind == .ticket && $0.key == key }) {
-                refs.append(API.ChatContextRef(key: key, kind: .ticket))
-            }
-        }
-        return refs.isEmpty ? nil : refs
-    }
-
-    public static func workWelcome(for subject: CompanionSubject?) -> (whereText: String, intro: String, starters: [DockedChatStarter]) {
-        guard let subject else {
-            return (
-                "beside this page",
-                "One chat that follows you around Vesper. Pin a run or ticket from its page to keep it attached here.",
-                [
-                    DockedChatStarter(
-                        icon: "checkmark.circle",
-                        title: "What did my agents finish?",
-                        prompt: "What did my agents finish since yesterday, and what's waiting on me?"
-                    ),
-                    DockedChatStarter(
-                        icon: "magnifyingglass",
-                        title: "What needs me?",
-                        prompt: "What needs me right now, most urgent first?"
-                    ),
-                ]
-            )
-        }
-        switch subject.kind {
-        case .run:
-            return (
-                "beside the run",
-                "I can read this run, its ticket and its history, and talk it through with you. Replies to the agent go in the main pane.",
-                [
-                    DockedChatStarter(
-                        icon: "magnifyingglass",
-                        title: "What is it doing?",
-                        prompt: "Summarise what this run has done so far and what it's doing now."
-                    ),
-                    DockedChatStarter(
-                        icon: "checkmark.shield",
-                        title: "Is it safe to approve?",
-                        prompt: "Is it safe to approve what this run is asking for? What could go wrong?"
-                    ),
-                    DockedChatStarter(
-                        icon: "checkmark.circle",
-                        title: "Check the criteria",
-                        prompt: "Which of this ticket's acceptance criteria has the run met, and which are still open?"
-                    ),
-                ]
-            )
-        case .ticket:
-            return (
-                "beside \(subject.id)",
-                "I can read this ticket, its runs and its history, and talk it through with you. Replies to the agent go in the main pane.",
-                [
-                    DockedChatStarter(
-                        icon: "magnifyingglass",
-                        title: "Where does it stand?",
-                        prompt: "Summarise where this ticket stands: its runs, what's done and what's left."
-                    ),
-                    DockedChatStarter(
-                        icon: "pencil",
-                        title: "Tighten the criteria",
-                        prompt: "Suggest clearer acceptance criteria for this ticket."
-                    ),
-                ]
-            )
-        }
+    public static func companionWelcome() -> (whereText: String, intro: String, starters: [DockedChatStarter]) {
+        (
+            "beside this page",
+            "One chat that follows you around Vesper.",
+            [
+                DockedChatStarter(
+                    icon: "magnifyingglass",
+                    title: "What needs me?",
+                    prompt: "What needs me right now, most urgent first?"
+                ),
+            ]
+        )
     }
 
     public static func knowledgeContextBody(

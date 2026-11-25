@@ -8,7 +8,7 @@ const tabs = [
   { id: "chat", label: "Chat", icon: "msg", busy: true, unread: true },
 ];
 const review = { configured: true, requests: [], approved: 0, prefs: { direct: true, team: true }, counts: { direct: 0, team: 0 } };
-const base = { dock: [], pathname: "/work", review, needsYou: 0, settingsNeedYou: false };
+const base = { dock: [], pathname: "/spaces", review, needsYou: 0, settingsNeedYou: false };
 
 test("a dock's rail items: a tab each, the open one active, no fold control (the toolbar's)", () => {
   const items = dockRailItems(tabs, "chat", true);

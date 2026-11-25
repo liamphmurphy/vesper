@@ -1,14 +1,12 @@
 "use client";
 
-// Components, tokens, Inspect and Send to ticket in the editor (ADR-designs
-// §3.3, §3.5, §3.9, §3.11). Every change goes through onEdit, so it is one
+// Components, tokens and Inspect in the editor (ADR-designs
+// §3.3, §3.5, §3.9). Every change goes through onEdit, so it is one
 // undoable user version like any other edit.
 import { useMemo, useState } from "react";
-import { api, unwrap } from "@/lib/api/client";
-import { useTicket } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
 import { createComponent, detach, instantiate, overridable, setOverride } from "@/lib/designs/components";
-import { find, mapNode } from "@/lib/designs/edit";
+import { find } from "@/lib/designs/edit";
 import { INSPECT_TARGETS, inspect, type InspectTarget } from "@/lib/designs/inspect";
 import type { Design, DesignNode, InstanceNode } from "@/lib/designs/schema";
 import { DUSK, missingAfterSync, syncTokens, tokensChanged } from "@/lib/designs/tokens";
@@ -20,7 +18,6 @@ const section = "border-b border-border-subtle px-4 py-3";
 const label = "mb-2 text-11 font-semibold uppercase tracking-[0.08em] text-fg-tertiary";
 const field = "flex h-[28px] min-w-0 items-center gap-1.5 rounded-md border border-border bg-surface-sunken px-2 text-13 text-fg focus-within:border-accent";
 const small = "h-[28px] rounded-md border border-border px-2.5 text-13 text-fg hover:bg-hover disabled:opacity-50";
-const TICKET = /^[A-Z][A-Z0-9]{0,9}-[0-9]{1,9}$/;
 
 // ---------- components ----------
 
@@ -143,88 +140,6 @@ function InstanceSection({ design, node, readOnly, onEdit, onSelect }: { design:
           Detach instance
         </button>
       </div>
-    </section>
-  );
-}
-
-// ---------- Send to ticket ----------
-
-function TicketChip({ k, onRemove, readOnly }: { k: string; onRemove: () => void; readOnly: boolean }) {
-  const t = useTicket(k);
-  return (
-    <li className="flex items-center gap-2 text-13">
-      <a href={`/tickets/${k}`} className="font-mono text-12 text-accent hover:underline">{k}</a>
-      <span className="min-w-0 flex-1 truncate text-fg-secondary">{t.data?.title ?? (t.error ? "not found" : "")}</span>
-      {!readOnly && (
-        <button type="button" aria-label={`Unlink ${k}`} className="grid size-5 place-items-center rounded text-fg-tertiary hover:bg-hover" onClick={onRemove}>
-          ✕
-        </button>
-      )}
-    </li>
-  );
-}
-
-/** Send to ticket: links a frame to tickets (linked_tickets); their runs get the frame's PNG and Inspect output. */
-export function SendToTicket({ node, readOnly, onEdit }: { node: DesignNode; readOnly: boolean; onEdit: Edit }) {
-  const [key, setKey] = useState("");
-  const [error, setError] = useState<string>();
-  const [busy, setBusy] = useState(false);
-  if (node.type !== "frame" && node.type !== "component") return null;
-  const linked = node.linked_tickets ?? [];
-  const setLinks = (list: string[]) =>
-    onEdit((d) =>
-      mapNode(d, node.id, (n) => {
-        const out = { ...n } as DesignNode & { linked_tickets?: string[] };
-        if (list.length) out.linked_tickets = list;
-        else delete out.linked_tickets;
-        return out;
-      }),
-    );
-  const send = async () => {
-    const k = key.trim().toUpperCase();
-    if (!TICKET.test(k)) return setError("Use a ticket key like PAY-214.");
-    if (linked.includes(k)) return setError(`Already linked to ${k}.`);
-    if (linked.length >= 20) return setError("A frame can link at most 20 tickets.");
-    setBusy(true);
-    setError(undefined);
-    try {
-      await unwrap(api.GET("/tickets/{key}", { params: { path: { key: k } } }));
-      setLinks([...linked, k]);
-      setKey("");
-    } catch {
-      setError(`No ticket ${k} in this workspace.`);
-    } finally {
-      setBusy(false);
-    }
-  };
-  return (
-    <section className={section} aria-label="Send to ticket">
-      <h3 className={label}>Send to ticket</h3>
-      {linked.length > 0 && (
-        <ul className="mb-2 flex flex-col gap-1" aria-label="Linked tickets">
-          {linked.map((k) => (
-            <TicketChip key={k} k={k} readOnly={readOnly} onRemove={() => setLinks(linked.filter((x) => x !== k))} />
-          ))}
-        </ul>
-      )}
-      {!readOnly && (
-        <form
-          className="flex gap-1.5"
-          onSubmit={(e) => {
-            e.preventDefault();
-            void send();
-          }}
-        >
-          <label className={cx(field, "flex-1")}>
-            <input aria-label="Ticket key" className="w-full bg-transparent font-mono text-12 outline-none" placeholder="PAY-214" value={key} onChange={(e) => setKey(e.target.value)} />
-          </label>
-          <button type="submit" className={small} disabled={busy || !key.trim()}>
-            Send
-          </button>
-        </form>
-      )}
-      {error && <p role="alert" className="mt-1.5 text-12 text-pill-blocked-fg">{error}</p>}
-      <p className="mt-2 text-12 text-fg-tertiary">Runs on a linked ticket get this frame as a PNG and its Inspect output.</p>
     </section>
   );
 }

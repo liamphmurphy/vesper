@@ -533,11 +533,8 @@ public struct ChatContextChip: Codable, Sendable, Equatable, Hashable, Identifia
     public enum Kind: String, Codable, Sendable, Hashable {
         case artifact
         case section
-        case ticket
         case page
         case canvas
-        case workRun
-        case workTicket
         case knowledgePage
         case knowledgeFolder
     }
@@ -571,27 +568,13 @@ public struct ChatContextChip: Codable, Sendable, Equatable, Hashable, Identifia
         self.key = [kind.rawValue, refId ?? refKey ?? label, anchor ?? ""].joined(separator: ":")
     }
 
-    public var asWorkSubject: ChatWorkSubject? {
-        switch kind {
-        case .workTicket:
-            guard let refKey else { return nil }
-            return .ticket(key: refKey, title: label)
-        case .workRun:
-            guard let refId else { return nil }
-            return .run(id: refId, title: label, agent: agent ?? "agent", ticketKey: refKey)
-        default:
-            return nil
-        }
-    }
-
     public var asAPIContextRef: API.ChatContextRef? {
         switch kind {
         case .artifact: API.ChatContextRef(id: refId, kind: .artifact)
         case .section: API.ChatContextRef(anchor: anchor, id: refId, kind: .section)
-        case .ticket: API.ChatContextRef(key: refKey, kind: .ticket)
         case .page: API.ChatContextRef(id: refId, kind: .page)
         case .canvas: API.ChatContextRef(id: refId, kind: .canvas)
-        case .workRun, .workTicket, .knowledgePage, .knowledgeFolder: nil
+        case .knowledgePage, .knowledgeFolder: nil
         }
     }
 }
@@ -638,23 +621,19 @@ public enum ChatComposerContextLogic {
         return body.hasSuffix(suffix) ? body : body + suffix
     }
 
-    /// Appends work-context and knowledge-context markers from active chips onto `typed`.
+    /// Appends knowledge-context markers from active chips onto `typed`.
     public static func serializeBody(_ typed: String, chips: [ChatContextChip], passages: [ChatKnowledgePassage] = []) -> String {
-        let workViewing = chips.first(where: { !$0.pinned && ($0.kind == .workRun || $0.kind == .workTicket) })?.asWorkSubject
-        let workPinned = chips.first(where: { $0.pinned && ($0.kind == .workRun || $0.kind == .workTicket) })?.asWorkSubject
         let knowledgeViewing = chips.first(where: { $0.kind == .knowledgePage && $0.pinned })?.label
         let knowledgePages = chips.filter { $0.kind == .knowledgePage && !$0.pinned }.map(\.label)
         let knowledgeFolders = chips.filter { $0.kind == .knowledgeFolder }.map(\.label)
 
-        var body = ChatWorkSubject.withWorkContext(typed, viewing: workViewing, pinned: workPinned)
-        body = withKnowledgeContext(
-            body,
+        return withKnowledgeContext(
+            typed,
             viewingPagePath: knowledgeViewing,
             attachedPages: knowledgePages,
             attachedFolders: knowledgeFolders,
             passages: passages
         )
-        return body
     }
 }
 

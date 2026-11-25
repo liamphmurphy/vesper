@@ -108,7 +108,7 @@ test("redirectFor maps /customization, /memory, /personas, and /agents into /set
   assert.equal(redir("/memory"), "/settings?section=memory");
   assert.equal(redir("/memory?id=abc"), "/settings?section=memory&id=abc");
   assert.equal(redir("/personas"), "/settings?section=personas");
-  assert.equal(redir("/agents"), "/settings?section=personas&filter=tickets");
+  assert.equal(redir("/agents"), "/settings?section=personas");
 });
 
 test("matchesSettingsFilter matches labels and section keywords across multiple words", () => {

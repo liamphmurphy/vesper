@@ -14,7 +14,6 @@ import { AgentAvatar } from "@/components/domain/avatars";
 import { artifactTitle } from "@/components/domain/artifacts";
 import { NewVersionDialog } from "@/components/domain/artifact-dialogs";
 import { BacklinksPanel } from "@/components/domain/backlinks";
-import { StatusGlyph } from "@/components/domain/glyphs";
 import { DocTypeTag } from "@/components/domain/labels";
 import { Markdown } from "@/components/domain/markdown";
 import { PdfViewer } from "@/components/domain/pdf-viewer";
@@ -300,21 +299,6 @@ export function ArtifactScreen({ id }: { id: string }) {
             </section>
 
             <section className="flex flex-col gap-1">
-              <h2 className="text-13 text-fg-tertiary">Tickets</h2>
-              {a.tickets.length ? (
-                a.tickets.map((t) => (
-                  <Link key={t.key} href={`/tickets/${t.key}`} className="flex h-7 items-center gap-2 rounded-sm text-13 hover:bg-hover">
-                    <StatusGlyph state={t.status} size={12} surface="var(--bg-panel)" label={false} />
-                    <span className="w-16 font-mono text-12 text-fg-tertiary">{t.key}</span>
-                    <span className="flex-1 truncate">{t.title}</span>
-                  </Link>
-                ))
-              ) : (
-                <p className="text-12 text-fg-tertiary">Not attached to any ticket. Attach it from a ticket&apos;s Context artifacts.</p>
-              )}
-            </section>
-
-            <section className="flex flex-col gap-1">
               <h2 className="text-13 text-fg-tertiary">History</h2>
               <ol className="flex flex-col">
                 {a.versions.map((v) => {
@@ -343,7 +327,6 @@ export function ArtifactScreen({ id }: { id: string }) {
                 })}
               </ol>
             </section>
-            {(a.type === "prd" || a.type === "spec") && a.project && <ButtonLink variant="secondary" href={`/plans?artifact=${a.id}&project=${a.project.key}`}>Generate tickets</ButtonLink>}
           </aside>
         </div>
       )}

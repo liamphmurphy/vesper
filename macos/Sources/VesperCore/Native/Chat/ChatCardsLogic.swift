@@ -114,59 +114,6 @@ public struct ChatChoicesCard: Sendable, Equatable, Hashable {
     }
 }
 
-// MARK: - Dispatch Fence (`web/lib/chat-dispatch.ts`)
-
-public struct ChatDispatchCard: Sendable, Equatable, Hashable {
-    public static let maxKeys = 20
-    public static let endedRunStates: Set<String> = ["completed", "failed", "cancelled"]
-
-    public var ticketKeys: [String]
-
-    public init(ticketKeys: [String]) {
-        self.ticketKeys = ticketKeys
-    }
-
-    public static func isDispatchFence(_ info: String?) -> Bool {
-        ChatFenceParsers.firstWord(of: info) == "dispatch"
-    }
-
-    public static func isValidTicketKey(_ key: String) -> Bool {
-        let parts = key.split(separator: "-", omittingEmptySubsequences: false)
-        guard parts.count == 2 else { return false }
-        let prefix = parts[0]
-        let number = parts[1]
-        guard prefix.count >= 2 && prefix.count <= 10, !number.isEmpty else { return false }
-        guard let first = prefix.first, first.isASCII && first.isLetter && first.isUppercase else { return false }
-        guard prefix.allSatisfy({ $0.isASCII && ($0.isUppercase || $0.isNumber) }) else { return false }
-        return number.allSatisfy({ $0.isASCII && $0.isNumber })
-    }
-
-    public static func parse(_ code: String) -> ChatDispatchCard? {
-        var keys: [String] = []
-        var seen: Set<String> = []
-        for rawLine in code.split(separator: "\n") {
-            let key = rawLine.trimmingCharacters(in: .whitespacesAndNewlines).uppercased()
-            if isValidTicketKey(key) && seen.insert(key).inserted {
-                keys.append(key)
-                if keys.count >= maxKeys { break }
-            }
-        }
-        return keys.isEmpty ? nil : ChatDispatchCard(ticketKeys: keys)
-    }
-
-    public static func runEnded(_ state: String) -> Bool {
-        endedRunStates.contains(state)
-    }
-
-    public static func planLine(stepsTotal: Int, stepsDone: Int, currentStep: String?) -> String {
-        guard stepsTotal > 0 else { return "" }
-        guard let currentStep, !currentStep.isEmpty else {
-            return "\(stepsDone) of \(stepsTotal) steps done"
-        }
-        return "Step \(min(stepsDone + 1, stepsTotal)) of \(stepsTotal) · \(currentStep)"
-    }
-}
-
 // MARK: - Recommend Fence (`web/lib/chat-recommend.ts`)
 
 public struct ChatRecommendCard: Sendable, Equatable, Hashable {

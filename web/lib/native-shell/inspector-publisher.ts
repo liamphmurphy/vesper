@@ -3,9 +3,8 @@
 // DefaultCompanion while mounted, and unmounting restores DefaultCompanion.
 // No React; clock and transport are injectable for tests.
 
-import type { WorkSubject } from "../work-context.ts";
 import { postDeduped } from "./bridge.ts";
-import type { CompanionSubject, InspectorModel, NativeCommand, PageMessage } from "./protocol.ts";
+import type { InspectorModel, NativeCommand, PageMessage } from "./protocol.ts";
 
 export type InspectorCommand = Extract<
   NativeCommand,
@@ -41,34 +40,6 @@ const INSPECTOR_COMMAND_TYPES = new Set<string>([
 
 export function isInspectorCommand(cmd: NativeCommand): cmd is InspectorCommand {
   return INSPECTOR_COMMAND_TYPES.has(cmd.type);
-}
-
-export function toCompanionSubject(subject?: WorkSubject): CompanionSubject | undefined {
-  if (!subject) return undefined;
-  if (subject.kind === "ticket") {
-    return { kind: "ticket", id: subject.key, title: subject.title, ticketKey: subject.key };
-  }
-  return {
-    kind: "run",
-    id: subject.id,
-    title: subject.title,
-    agent: subject.agent,
-    ...(subject.ticketKey ? { ticketKey: subject.ticketKey } : {}),
-  };
-}
-
-export function fromCompanionSubject(subject?: CompanionSubject): WorkSubject | undefined {
-  if (!subject) return undefined;
-  if (subject.kind === "ticket") {
-    return { kind: "ticket", key: subject.ticketKey || subject.id, title: subject.title };
-  }
-  return {
-    kind: "run",
-    id: subject.id,
-    title: subject.title,
-    agent: subject.agent || "Agent",
-    ...(subject.ticketKey ? { ticketKey: subject.ticketKey } : {}),
-  };
 }
 
 export function createInspectorPublisher(deps: InspectorPublisherDeps) {

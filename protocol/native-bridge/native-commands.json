@@ -169,14 +169,7 @@
     "v": 1,
     "type": "companion.context",
     "context": {
-      "subject": {
-        "kind": "run",
-        "id": "0b5c9a6e-0000-4000-8000-000000000001",
-        "title": "Implementer on VES-412",
-        "agent": "Implementer",
-        "ticketKey": "VES-412"
-      },
-      "path": "/runs/0b5c9a6e-0000-4000-8000-000000000001"
+      "path": "/knowledge"
     }
   },
   {

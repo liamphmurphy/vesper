@@ -40,15 +40,12 @@ struct ArtifactReviewScreen: View {
     @State private var composingPinText = ""
     @State private var activePinIndex: Int?
     @State private var note = ""
-    @State private var selectedTicketKey: String?
-    @State private var tickedCriteria: Set<String> = []
     @State private var deciding = false
     @State private var reviewError: String?
     @State private var savedDecision: API.ReviewArtifactVersionBody.Decision?
 
     private var artifactId: String { context.match.params["id"] ?? "" }
     private var queryVersion: String? { context.match.query["version"] }
-    private var queryTicket: String? { context.match.query["ticket"] }
 
     var body: some View {
         let req = API.getArtifact(id: artifactId)
@@ -85,9 +82,6 @@ struct ArtifactReviewScreen: View {
                         ? queryVersion
                         : artifact.currentVersion.id
                 }
-                if selectedTicketKey == nil {
-                    selectedTicketKey = ticketKeys(for: artifact).first
-                }
             }
             syncChrome(artifact: artifact)
             bindCommands(artifact: artifact)
@@ -95,15 +89,6 @@ struct ArtifactReviewScreen: View {
         .onChange(of: primaryVersionId) { _, _ in
             syncChrome(artifact: entry.data)
         }
-    }
-
-    private func ticketKeys(for artifact: API.Artifact) -> [String] {
-        var keys: [String] = []
-        if let q = queryTicket, !q.isEmpty { keys.append(q) }
-        for t in artifact.tickets where !keys.contains(t.key) {
-            keys.append(t.key)
-        }
-        return keys
     }
 
     private func primaryVersion(for artifact: API.Artifact) -> API.ArtifactVersion {
@@ -147,11 +132,7 @@ struct ArtifactReviewScreen: View {
                 return
             }
             guard case .toolbarAction(itemId: "review.close", _) = cmd else { return }
-            if let key = selectedTicketKey {
-                context.navigate("/tickets/\(key)")
-            } else {
-                context.navigate("/artifacts/\(artifactId)")
-            }
+            context.navigate("/artifacts/\(artifactId)")
         }
     }
 
@@ -554,9 +535,6 @@ struct ArtifactReviewScreen: View {
     ) -> some View {
         let review = primary.review
         let state = review?.state ?? .pending
-        let keys = ticketKeys(for: artifact)
-        let ticketReq = selectedTicketKey.map { API.getTicket(key: $0) }
-        let ticket = ticketReq.flatMap { context.store.entry($0).data }
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 0) {
@@ -580,64 +558,6 @@ struct ArtifactReviewScreen: View {
                             .font(.system(size: theme.pointSize(.small)))
                             .foregroundStyle(theme.palette.text)
                             .padding(.top, 2)
-                    }
-                }
-
-                // Acceptance criteria checklist
-                reviewSection("Acceptance criteria") {
-                    if let key = selectedTicketKey {
-                        HStack {
-                            if keys.count > 1 {
-                                Picker("Ticket", selection: Binding(
-                                    get: { key },
-                                    set: { next in
-                                        selectedTicketKey = next
-                                        context.store.load(API.getTicket(key: next))
-                                    }
-                                )) {
-                                    ForEach(keys, id: \.self) { Text($0).tag($0) }
-                                }
-                                .labelsHidden()
-                                .frame(maxWidth: 140)
-                            }
-                            Button("\(key) \u{2197}") { context.navigate("/tickets/\(key)") }
-                                .buttonStyle(.plain)
-                                .font(.system(size: theme.pointSize(.small), design: .monospaced))
-                                .foregroundStyle(theme.palette.accent)
-                            Spacer()
-                        }
-
-                        let criteria = ticket?.criteria ?? []
-                        if ticket == nil {
-                            Text("Loading criteria\u{2026}")
-                                .font(.system(size: theme.pointSize(.small)))
-                                .foregroundStyle(theme.palette.tertiaryText)
-                                .onAppear { context.store.load(API.getTicket(key: key)) }
-                        } else if criteria.isEmpty {
-                            Text("\(key) has no acceptance criteria.")
-                                .font(.system(size: theme.pointSize(.small)))
-                                .foregroundStyle(theme.palette.tertiaryText)
-                        } else {
-                            VStack(alignment: .leading, spacing: 6) {
-                                ForEach(criteria, id: \.id) { c in
-                                    Toggle(c.text, isOn: Binding(
-                                        get: { tickedCriteria.contains(c.id) },
-                                        set: { on in
-                                            if on { tickedCriteria.insert(c.id) } else { tickedCriteria.remove(c.id) }
-                                        }
-                                    ))
-                                    .toggleStyle(.checkbox)
-                                    .font(.system(size: theme.pointSize(.small)))
-                                }
-                                Text("Ticks are your checklist for this review; they aren\u{2019}t saved.")
-                                    .font(.system(size: theme.pointSize(.micro)))
-                                    .foregroundStyle(theme.palette.tertiaryText)
-                            }
-                        }
-                    } else {
-                        Text("This mockup isn\u{2019}t attached to a ticket, so there are no criteria to check it against.")
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(theme.palette.tertiaryText)
                     }
                 }
 
@@ -763,7 +683,7 @@ struct ArtifactReviewScreen: View {
             note = ""
             draftPins = []
             savedDecision = decision
-            context.store.invalidate(QueryInvalidation(resources: ["artifacts", "tickets", "epics"]))
+            context.store.invalidate(QueryInvalidation(resources: ["artifacts"]))
             await context.store.refetch(API.getArtifact(id: artifact.id))
         } catch {
             reviewError = (error as? APIError)?.userMessage ?? error.localizedDescription

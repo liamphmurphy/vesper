@@ -489,10 +489,7 @@ struct CommandPaletteView: View {
                     model.pickFacet(nil)
                 }
                 ForEach(model.activeFacets.prefix(6)) { f in
-                    let label = (!model.isKnowledgeMode && model.oneType == .ticket)
-                        ? "\(CommandPaletteModel.statusLabel(f.value)) \(f.count)"
-                        : "\(f.value) \(f.count)"
-                    facetButton(label: label, active: model.facet == f.value) {
+                    facetButton(label: "\(f.value) \(f.count)", active: model.facet == f.value) {
                         model.pickFacet(f.value)
                     }
                 }

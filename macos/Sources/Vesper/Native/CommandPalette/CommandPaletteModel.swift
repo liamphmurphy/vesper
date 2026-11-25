@@ -31,7 +31,6 @@ struct PaletteCommandPreview: Equatable {
 
 enum PalettePreview: Equatable {
     case inbox(API.InboxItem)
-    case ticket(key: String, title: String)
     case page(id: String, path: String, title: String, isKnowledge: Bool, row: KnowledgePageRow?)
     case chat(CommandPaletteChatMatch)
     case message(chat: CommandPaletteChatMatch, message: CommandPaletteMessageMatch)
@@ -299,11 +298,6 @@ final class CommandPaletteModel {
         CommandPaletteLogic.pageContext(path: hostPath)
     }
 
-    var currentTicket: API.Ticket? {
-        guard case .ticket(let key) = pageContext else { return nil }
-        return store?.entry(API.getTicket(key: key)).data
-    }
-
     var currentKnowledgePage: KnowledgePage? {
         guard case .knowledge(let id) = pageContext else { return nil }
         return store?.entry(KnowledgeAPI.getPage(id: id)).data
@@ -352,7 +346,7 @@ final class CommandPaletteModel {
         case .root:
             if isKnowledgeMode { return "Search Knowledge pages, #tags…" }
             if let scopedType { return "Search \(scopedType.noun)…" }
-            return "Search everything, or type @ people  # tickets  > commands"
+            return "Search everything, or type @ people  > commands"
         }
     }
 
@@ -378,7 +372,6 @@ final class CommandPaletteModel {
 
     var facetAnyLabel: String {
         if isKnowledgeMode || oneType == .page { return "Any folder" }
-        if oneType == .ticket || oneType == .run { return "Any status" }
         if oneType == .chat { return "Anyone" }
         return "All"
     }
@@ -429,12 +422,9 @@ final class CommandPaletteModel {
         store.load(API.listCustomApps())
         store.load(API.getDevWorkspace())
         store.load(API.listInbox())
-        store.load(API.listRuns(state: .live))
         store.load(API.listChats(archived: false))
 
         switch pageContext {
-        case .ticket(let key):
-            store.load(API.getTicket(key: key))
         case .knowledge(let id):
             store.load(KnowledgeAPI.getPage(id: id))
         case .wiki(let path):
@@ -449,12 +439,6 @@ final class CommandPaletteModel {
     func ensurePreviewLoaded(for row: PaletteRow?) {
         guard let store, let preview = row?.preview else { return }
         switch preview {
-        case .ticket(let key, _):
-            guard !key.isEmpty else { return }
-            let token = "ticket:\(key)"
-            if previewLoadedKeys.insert(token).inserted {
-                store.load(API.getTicket(key: key))
-            }
         case .page(let id, let path, _, let isKnowledge, _):
             if isKnowledge, !id.isEmpty {
                 let token = "kpage:\(id)"
@@ -854,11 +838,8 @@ final class CommandPaletteModel {
         let primaryTone: PalettePreviewAction.Tone
         switch row.preview {
         case .inbox(let item):
-            primaryLabel = item.kind == .dispatch ? "Review dispatch" : "Open item"
+            primaryLabel = "Open item"
             primaryTone = item.needsYou ? .approve : .primary
-        case .ticket:
-            primaryLabel = "Open ticket"
-            primaryTone = .primary
         case .page:
             primaryLabel = "Open page"
             primaryTone = .primary
@@ -985,34 +966,6 @@ final class CommandPaletteModel {
         }
     }
 
-    private func updateCurrentTicketStatus(_ status: API.TicketStatus) {
-        guard let ticket = currentTicket, let client = clientProvider?() else { return }
-        close(restoreFocus: true)
-        Task { @MainActor [weak self] in
-            do {
-                _ = try await client.send(API.updateTicket(key: ticket.key, body: API.TicketPatch(revision: ticket.revision, status: status)))
-                self?.store?.load(API.getTicket(key: ticket.key))
-                self?.onToast?("\(ticket.key) → \(Self.statusLabel(status.rawValue))", .success)
-            } catch {
-                self?.onToast?("Couldn’t update \(ticket.key).", .error)
-            }
-        }
-    }
-
-    private func cancelCurrentTicketRun() {
-        guard let run = currentTicket?.run, let client = clientProvider?() else { return }
-        close(restoreFocus: true)
-        Task { @MainActor [weak self] in
-            do {
-                _ = try await client.send(API.controlRun(id: run.id, action: .cancel))
-                self?.store?.load(API.listRuns(state: .live))
-                self?.onToast?("Canceled run", .neutral)
-            } catch {
-                self?.onToast?("Couldn’t cancel the run.", .error)
-            }
-        }
-    }
-
     // MARK: - Section Builders
 
     private func buildIdleSections() -> [PaletteSection] {
@@ -1041,32 +994,7 @@ final class CommandPaletteModel {
             result.append(PaletteSection(id: "needs-you", label: "Needs you", count: inboxItems.count, tone: .human, rows: rows))
         }
 
-        // 2. Running (live runs)
-        let runs = store?.entry(API.listRuns(state: .live)).data?.runs ?? []
-        if !runs.isEmpty {
-            let rows = runs.prefix(3).map { run -> PaletteRow in
-                let href = run.purpose == .chat && run.chatId != nil ? "/chat/\(run.chatId!)" : "/runs/\(run.id)"
-                let title = run.workTitle ?? (run.ticketKey.isEmpty ? "Run \(run.id.prefix(8))" : run.ticketKey)
-                let sub = [run.agent.name, run.state.rawValue.replacingOccurrences(of: "_", with: " "), run.ticketKey.isEmpty ? nil : run.ticketKey]
-                    .compactMap { $0 }
-                    .joined(separator: " · ")
-                return PaletteRow(
-                    id: "run-\(run.id)",
-                    title: title,
-                    subtitle: sub,
-                    meta: APIDate.shortAgo(run.startedAt),
-                    sfSymbol: "play.circle.fill",
-                    tone: .run,
-                    href: href,
-                    recent: CommandPaletteLink(id: run.id, title: title, meta: "run", href: href, kind: "Runs"),
-                    type: .run,
-                    preview: .item(label: "Live run", title: title, detail: sub, updatedAt: run.startedAt)
-                )
-            }
-            result.append(PaletteSection(id: "running", label: "Running", count: runs.count, rows: rows))
-        }
-
-        // 3. Continue (most recent chat)
+        // 2. Continue (most recent chat)
         let chats = (store?.entry(API.listChats(archived: false)).data?.chats ?? []).filter { $0.parentChatId == nil }
         if let latest = chats.first {
             let title = latest.title.isEmpty ? "Untitled chat" : latest.title
@@ -1101,9 +1029,7 @@ final class CommandPaletteModel {
             let rows = recent.prefix(6).map { item -> PaletteRow in
                 let symbol = Self.symbolForKindLabel(item.kind)
                 let preview: PalettePreview
-                if item.href.hasPrefix("/tickets/"), let key = CommandPaletteLogic.ticketKeyFrom(String(item.href.dropFirst("/tickets/".count))) {
-                    preview = .ticket(key: key, title: item.title)
-                } else if item.href.hasPrefix("/knowledge/") {
+                if item.href.hasPrefix("/knowledge/") {
                     let id = String(item.href.dropFirst("/knowledge/".count)).split(separator: "/").first.map(String.init) ?? item.id
                     preview = .page(id: id, path: item.title, title: item.title, isKnowledge: true, row: nil)
                 } else {
@@ -1149,11 +1075,9 @@ final class CommandPaletteModel {
     private var allAppJumps: [AppJump] {
         var items: [AppJump] = [
             AppJump(label: "Chat", href: "/chat", aliases: "messages assistant", kind: "app", sfSymbol: "bubble.left"),
+            AppJump(label: "Spaces", href: "/spaces", aliases: "projects hubs repos", kind: "app", sfSymbol: "square.stack.3d.up"),
             AppJump(label: "Inbox", href: "/inbox", aliases: "needs you approvals", kind: "app", sfSymbol: "tray"),
-            AppJump(label: "Work", href: "/work", aliases: "tickets runs epics", kind: "app", sfSymbol: "briefcase"),
             AppJump(label: "Knowledge", href: "/knowledge", aliases: "wiki notes pages", kind: "app", sfSymbol: "book"),
-            AppJump(label: "Tickets", href: "/tickets", aliases: "board issues", kind: "app", sfSymbol: "checklist"),
-            AppJump(label: "Runs", href: "/runs", aliases: "agents activity", kind: "app", sfSymbol: "play.circle"),
             AppJump(label: "Library", href: "/library", aliases: "files images links", kind: "app", sfSymbol: "books.vertical"),
             AppJump(label: "Learn", href: "/learn", aliases: "courses study", kind: "app", sfSymbol: "graduationcap"),
             AppJump(label: "Workflows", href: "/workflows", aliases: "automations", kind: "app", sfSymbol: "point.3.connected.trianglepath.dotted"),
@@ -1203,10 +1127,6 @@ final class CommandPaletteModel {
             let type = CommandPaletteLogic.typeOf(hit.target)
             if type == .chat { continue }
             if let shownTypes, !shownTypes.contains(type) { continue }
-            if let statusFilter = filters.status, type == .ticket,
-               (hit.target.status ?? "").lowercased() != statusFilter.lowercased() {
-                continue
-            }
             if let row = hitRow(hit, type: type) {
                 byType[type, default: []].append(row)
             }
@@ -1236,27 +1156,6 @@ final class CommandPaletteModel {
 
     private func buildSearchSections() -> [PaletteSection] {
         var result: [PaletteSection] = []
-
-        // Direct ticket key jump
-        if scopedType == nil || oneType == .ticket {
-            let cleanedKeyQuery = query.trimmingCharacters(in: .whitespaces).replacingOccurrences(of: "^#\\s*", with: "", options: .regularExpression)
-            if let key = CommandPaletteLogic.ticketKeyFrom(cleanedKeyQuery, project: activeProject) {
-                let row = PaletteRow(
-                    id: "jump-\(key)",
-                    title: "Open \(key)",
-                    subtitle: "/tickets/\(key)",
-                    sfSymbol: "checklist",
-                    tone: .accent,
-                    href: "/tickets/\(key)",
-                    recent: CommandPaletteLink(id: "jump-\(key)", title: key, meta: key, href: "/tickets/\(key)", kind: "Tickets"),
-                    score: 1000,
-                    type: .ticket,
-                    preview: .ticket(key: key, title: key),
-                    attach: PaletteAttachRef(kind: "ticket", idOrKey: key, label: key, project: CommandPaletteLogic.projectOfKey(key))
-                )
-                result.append(PaletteSection(id: "jump", label: "Jump to", rows: [row]))
-            }
-        }
 
         // Chat with matching persona
         if (shownTypes == nil || shownTypes?.contains(.people) == true) && !searchText.isEmpty {
@@ -1296,27 +1195,6 @@ final class CommandPaletteModel {
             let expanded = expandChatRows(rows)
             if !expanded.isEmpty {
                 result.append(PaletteSection(id: "type-\(oneType.rawValue)", label: oneType.label, count: counts[oneType] ?? rows.count, rows: expanded))
-            } else if searchText.isEmpty && oneType == .run {
-                // Scoped to Runs with empty query shows live runs
-                let runs = store?.entry(API.listRuns(state: .live)).data?.runs ?? []
-                if !runs.isEmpty {
-                    let runRows = runs.map { run -> PaletteRow in
-                        let href = "/runs/\(run.id)"
-                        let title = run.workTitle ?? (run.ticketKey.isEmpty ? "Run \(run.id.prefix(8))" : run.ticketKey)
-                        return PaletteRow(
-                            id: "scoped-run-\(run.id)",
-                            title: title,
-                            subtitle: "\(run.agent.name) · \(run.state.rawValue.replacingOccurrences(of: "_", with: " "))",
-                            meta: APIDate.shortAgo(run.startedAt),
-                            sfSymbol: "play.circle.fill",
-                            tone: .run,
-                            href: href,
-                            type: .run,
-                            preview: .item(label: "Run", title: title, detail: run.agent.name, updatedAt: run.startedAt)
-                        )
-                    }
-                    result.append(PaletteSection(id: "scoped-runs", label: "Live runs", count: runRows.count, rows: runRows))
-                }
             } else if searchText.isEmpty && oneType == .chat {
                 let chats = (store?.entry(API.listChats(archived: false)).data?.chats ?? []).filter { $0.parentChatId == nil }
                 if !chats.isEmpty {
@@ -1384,25 +1262,6 @@ final class CommandPaletteModel {
                     }
                 ),
             ]
-            if let proj = activeProject {
-                let encoded = trimmed.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? trimmed
-                let href = "/tickets?project=\(proj)&new=1&title=\(encoded)"
-                fallbacks.append(PaletteRow(
-                    id: "fallback-ticket",
-                    title: "New ticket: “\(trimmed)”",
-                    subtitle: "Create in \(proj)",
-                    sfSymbol: "plus.square",
-                    href: href,
-                    preview: .command(PaletteCommandPreview(
-                        category: "Create",
-                        title: "New Ticket in \(proj)",
-                        description: "Opens a new ticket draft titled “\(trimmed)” in \(proj).",
-                        shortcut: "↵",
-                        contextLabel: "Project",
-                        contextValue: proj
-                    ))
-                ))
-            }
             result.append(PaletteSection(id: "fallbacks", label: "Actions", rows: fallbacks))
         }
 
@@ -1531,103 +1390,11 @@ final class CommandPaletteModel {
                     self?.createKnowledgePage(title: "Untitled")
                 }
             ),
-            PaletteRow(
-                id: "cmd-new-ticket",
-                title: "New Ticket\(activeProject.map { " in \($0)" } ?? "")",
-                subtitle: "Open ticket creation form",
-                shortcut: "C",
-                sfSymbol: "plus.square",
-                href: activeProject.map { "/tickets?project=\($0)&new=1" } ?? "/tickets?new=1",
-                highlightTitle: true,
-                preview: .command(PaletteCommandPreview(
-                    category: "Command · Create",
-                    title: "New Ticket",
-                    description: "Opens the ticket creation view in \(projectLabel).",
-                    shortcut: "C",
-                    contextLabel: "Project",
-                    contextValue: projectLabel
-                ))
-            ),
         ]
 
         // Contextual page commands
         var contextRows: [PaletteRow] = []
-        if let ticket = currentTicket {
-            if let run = ticket.run {
-                contextRows.append(PaletteRow(
-                    id: "cmd-go-run",
-                    title: "Go to run for \(ticket.key)",
-                    subtitle: "\(run.agent.name) · \(run.state.rawValue.replacingOccurrences(of: "_", with: " "))",
-                    sfSymbol: "play.circle",
-                    tone: .run,
-                    href: "/runs/\(run.id)",
-                    highlightTitle: true,
-                    preview: .command(PaletteCommandPreview(
-                        category: "Current Ticket",
-                        title: "Go to run for \(ticket.key)",
-                        description: "Jumps directly to the active or most recent run for \(ticket.key).",
-                        shortcut: "↵",
-                        contextLabel: "Run state",
-                        contextValue: run.state.rawValue.replacingOccurrences(of: "_", with: " ")
-                    ))
-                ))
-                if [.queued, .starting, .running, .paused].contains(run.state) {
-                    contextRows.append(PaletteRow(
-                        id: "cmd-cancel-run",
-                        title: "Cancel run for \(ticket.key)",
-                        subtitle: "Stop \(run.agent.name)’s active run",
-                        sfSymbol: "stop.circle",
-                        tone: .human,
-                        highlightTitle: true,
-                        preview: .command(PaletteCommandPreview(
-                            category: "Current Ticket",
-                            title: "Cancel run for \(ticket.key)",
-                            description: "Sends a cancel request to \(run.agent.name)’s active run.",
-                            shortcut: "↵",
-                            contextLabel: "Ticket",
-                            contextValue: ticket.key
-                        )),
-                        perform: { [weak self] in self?.cancelCurrentTicketRun() }
-                    ))
-                }
-            }
-            let attach = PaletteAttachRef(kind: "ticket", idOrKey: ticket.key, label: ticket.key, project: ticket.project.key)
-            contextRows.append(PaletteRow(
-                id: "cmd-attach-here",
-                title: "New chat with \(ticket.key) attached",
-                subtitle: "Start a chat referencing this ticket",
-                sfSymbol: "paperclip",
-                highlightTitle: true,
-                preview: .command(PaletteCommandPreview(
-                    category: "Current Ticket",
-                    title: "New chat with \(ticket.key) attached",
-                    description: "Starts a fresh conversation with \(ticket.key) attached as context.",
-                    shortcut: "↵",
-                    contextLabel: "Context",
-                    contextValue: ticket.key
-                )),
-                perform: { [weak self] in self?.attachToChat(attach, recent: nil) }
-            ))
-            for status in [API.TicketStatus.backlog, .todo, .inProgress, .inReview, .done] where status != ticket.status {
-                let label = Self.statusLabel(status.rawValue)
-                contextRows.append(PaletteRow(
-                    id: "cmd-status-\(status.rawValue)",
-                    title: "Set status: \(label)",
-                    subtitle: ticket.key,
-                    sfSymbol: "arrow.triangle.2.circlepath",
-                    highlightTitle: true,
-                    preview: .command(PaletteCommandPreview(
-                        category: "Current Ticket",
-                        title: "Set \(ticket.key) to \(label)",
-                        description: "Updates \(ticket.key) status from \(Self.statusLabel(ticket.status.rawValue)) to \(label).",
-                        shortcut: "↵",
-                        contextLabel: "Ticket",
-                        contextValue: ticket.key
-                    )),
-                    perform: { [weak self] in self?.updateCurrentTicketStatus(status) }
-                ))
-            }
-        } else if let page = currentKnowledgePage {
+        if let page = currentKnowledgePage {
             let attach = PaletteAttachRef(kind: "page", idOrKey: page.id, label: page.title.isEmpty ? "Untitled" : page.title, project: nil)
             contextRows.append(PaletteRow(
                 id: "cmd-attach-page",
@@ -1679,7 +1446,7 @@ final class CommandPaletteModel {
                 preview: .command(PaletteCommandPreview(
                     category: "Command · Workspace",
                     title: "Switch Space",
-                    description: "Switch the active project/space filter for tickets, epics, and quick actions.",
+                    description: "Open a space hub.",
                     shortcut: "⌘P",
                     contextLabel: "Current",
                     contextValue: projectLabel
@@ -1872,7 +1639,8 @@ final class CommandPaletteModel {
                     perform: { [weak self] in
                         self?.rememberProject(project.key)
                         self?.close(restoreFocus: false)
-                        self?.onNavigate?("/tickets?project=\(project.key)", false)
+                        let href = project.spaceId.map { "/spaces/\($0)" } ?? "/spaces"
+                        self?.onNavigate?(href, false)
                     }
                 )
             }
@@ -1886,33 +1654,12 @@ final class CommandPaletteModel {
         guard let link = CommandPaletteLogic.linkFromTarget(t) else { return nil }
         let at = hit.updatedAt.map { APIDate.shortAgo($0) }
         var attach: PaletteAttachRef?
-        if t.kind == .ticket, let key = t.displayId, !key.isEmpty {
-            attach = PaletteAttachRef(kind: "ticket", idOrKey: key, label: key, project: CommandPaletteLogic.projectOfKey(key))
-        } else if t.kind == .artifact, let id = t.id, !id.isEmpty {
+        if t.kind == .artifact, let id = t.id, !id.isEmpty {
             let kind = t.artifactType == .note ? "page" : "artifact"
             attach = PaletteAttachRef(kind: kind, idOrKey: id, label: t.path ?? t.title, project: nil)
         }
 
         switch type {
-        case .ticket:
-            let key = t.displayId ?? ""
-            let sub = [key.isEmpty ? nil : key, hit.detail ?? "unassigned"].compactMap { $0 }.joined(separator: " · ")
-            return PaletteRow(
-                id: "ticket-\(link.id)",
-                title: t.title,
-                subtitle: sub,
-                meta: t.status.map { Self.statusLabel($0) },
-                metaTone: t.status,
-                sfSymbol: type.sfSymbol,
-                href: link.href,
-                recent: link,
-                score: hit.score,
-                highlightTitle: true,
-                type: type,
-                preview: .ticket(key: key, title: t.title),
-                attach: attach,
-                facet: t.status
-            )
         case .page:
             let folder = hit.detail ?? ""
             let bodyMatch = CommandPaletteLogic.foundInBody(snippet: hit.snippet, title: t.title)
@@ -1934,22 +1681,6 @@ final class CommandPaletteModel {
                 preview: .page(id: t.id ?? "", path: t.path ?? "", title: t.title, isKnowledge: isKnowledge, row: nil),
                 attach: attach,
                 facet: folder.isEmpty ? nil : folder
-            )
-        case .run:
-            return PaletteRow(
-                id: "run-\(link.id)",
-                title: t.title,
-                subtitle: hit.detail,
-                meta: t.status?.replacingOccurrences(of: "_", with: " "),
-                metaTone: t.status == "failed" ? "blocked" : t.status,
-                sfSymbol: type.sfSymbol,
-                href: link.href,
-                recent: link,
-                score: hit.score,
-                highlightTitle: true,
-                type: type,
-                preview: .item(label: "Run", title: t.title, detail: hit.detail, updatedAt: hit.updatedAt),
-                facet: t.status
             )
         case .people:
             let sub = t.kind == .agent ? [hit.detail, "agent"].compactMap { $0 }.joined(separator: " · ") : "persona"

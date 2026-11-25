@@ -25,7 +25,6 @@ final class ChatScreenModel {
     var renameDraft = ""
     var deleteTargetId: String?
     var forkTarget: API.ChatMessage?
-    var promoteTicketTarget: API.ChatMessage?
     var saveWikiTarget: API.ChatMessage?
     var composerPrefill: ChatComposerPrefill?
     @ObservationIgnored var prefillToken = 0
@@ -101,10 +100,6 @@ struct ChatScreen: View {
         ChatCompanions.companion(for: chatId ?? "new")
     }
 
-    private var ticketRunsRequest: APIRequest<API.ChatTicketRuns>? {
-        chatId.map { API.listChatTicketRuns(id: $0) }
-    }
-
     private var codeReviewRequest: APIRequest<API.CodeReviewList>? {
         chatId.map { API.getChatCodeReview(id: $0) }
     }
@@ -152,9 +147,6 @@ struct ChatScreen: View {
         let harnesses = store.entry(Self.dockRequest).data?.harnesses ?? []
         let workflows = store.entry(Self.workflowsRequest).data?.workflows ?? []
         let repositories = store.entry(Self.repositoriesRequest).data ?? []
-        let ticketRuns = (ticketRunsRequest.flatMap { store.entry($0).data?.runs } ?? []).filter {
-            ["queued", "starting", "running", "waiting"].contains($0.state)
-        }
         let chatsEntry = store.entry(chatsRequest)
         let chats = chatsEntry.data?.chats ?? []
         let session = sessionRequest.flatMap { store.entry($0).data }
@@ -224,7 +216,6 @@ struct ChatScreen: View {
                 harnesses: harnesses,
                 workflows: workflows,
                 repositories: repositories,
-                activeTicketRuns: ticketRuns,
                 selectedHarness: $model.selectedHarness,
                 selectedModel: $model.selectedModel,
                 selectedEffort: $model.selectedEffort,
@@ -416,12 +407,6 @@ struct ChatScreen: View {
             forkSheet(session: session, message: item.message)
         }
         .sheet(item: Binding(
-            get: { model.promoteTicketTarget.map { MessageSheetTarget(message: $0) } },
-            set: { if $0 == nil { model.promoteTicketTarget = nil } }
-        )) { item in
-            promoteTicketSheet(session: session, message: item.message)
-        }
-        .sheet(item: Binding(
             get: { model.saveWikiTarget.map { MessageSheetTarget(message: $0) } },
             set: { if $0 == nil { model.saveWikiTarget = nil } }
         )) { item in
@@ -485,9 +470,6 @@ struct ChatScreen: View {
             onForkMessage: { msg in
                 model.forkTarget = msg
             },
-            onPromoteTicket: { msg in
-                model.promoteTicketTarget = msg
-            },
             onSaveWiki: { msg in
                 model.saveWikiTarget = msg
             },
@@ -517,19 +499,6 @@ struct ChatScreen: View {
                 hasRepo: !(session?.repoUrl ?? "").isEmpty,
                 message: message,
                 onClose: { model.forkTarget = nil }
-            )
-        }
-    }
-
-    @ViewBuilder
-    private func promoteTicketSheet(session: API.ChatSession?, message: API.ChatMessage) -> some View {
-        if let chatId {
-            ChatPromoteTicketSheetView(
-                chatId: chatId,
-                chatTitle: session?.title ?? "",
-                defaultProjectKey: session?.project,
-                bodyMd: message.bodyMd,
-                onClose: { model.promoteTicketTarget = nil }
             )
         }
     }
@@ -1422,7 +1391,6 @@ struct ChatScreen: View {
             track(SpacesLogic.spaceChatsRequest(spaceId: spaceId))
         }
         if let sessionRequest { track(sessionRequest) }
-        if let ticketRunsRequest { track(ticketRunsRequest) }
         if let codeReviewRequest { track(codeReviewRequest) }
         if let playgroundRequest { track(playgroundRequest) }
         if let canvasesRequest { track(canvasesRequest) }

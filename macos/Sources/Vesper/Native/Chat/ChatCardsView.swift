@@ -75,166 +75,6 @@ struct ChatChoicesCardView: View {
     }
 }
 
-// MARK: - Dispatch Card
-
-struct ChatDispatchCardView: View {
-    @Environment(NativeScreenContext.self) private var context
-    @Environment(\.vesperTheme) private var theme
-
-    let chatId: String
-    let messageId: String
-    let card: ChatDispatchCard
-    let runs: [API.ChatTicketRun]
-
-    @State private var selectedKeys: Set<String> = []
-    @State private var initialized = false
-    @State private var isStarting = false
-    @State private var errorMessage: String?
-
-    private var runsByTicket: [String: API.ChatTicketRun] {
-        var map: [String: API.ChatTicketRun] = [:]
-        for run in runs where card.ticketKeys.contains(run.ticket) {
-            if map[run.ticket] == nil || run.messageId == messageId {
-                map[run.ticket] = run
-            }
-        }
-        return map
-    }
-
-    private var startableKeys: [String] {
-        card.ticketKeys.filter { key in
-            guard let run = runsByTicket[key] else { return true }
-            return ChatDispatchCard.runEnded(run.state)
-        }
-    }
-
-    var body: some View {
-        let p = theme.palette
-        VStack(alignment: .leading, spacing: 10) {
-            HStack(spacing: 8) {
-                Image(systemName: "play.square.stack")
-                    .foregroundStyle(p.accent)
-                Text(card.ticketKeys.count == 1 ? "Start ticket run" : "Start ticket runs (\(card.ticketKeys.count))")
-                    .font(.system(size: theme.pointSize(.body), weight: .semibold))
-                Spacer(minLength: 8)
-                if !startableKeys.isEmpty {
-                    Button {
-                        startSelected()
-                    } label: {
-                        Text(isStarting ? "Starting…" : "Start (\(selectedKeys.intersection(startableKeys).count))")
-                    }
-                    .buttonStyle(.vesper(.primary))
-                    .disabled(isStarting || selectedKeys.intersection(startableKeys).isEmpty)
-                }
-            }
-
-            VStack(alignment: .leading, spacing: 6) {
-                ForEach(card.ticketKeys, id: \.self) { key in
-                    ticketRow(key: key, run: runsByTicket[key])
-                }
-            }
-
-            if let errorMessage {
-                Text(errorMessage)
-                    .font(.system(size: theme.pointSize(.small)))
-                    .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-            }
-        }
-        .padding(12)
-        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-        .onAppear {
-            if !initialized {
-                selectedKeys = Set(startableKeys)
-                initialized = true
-            }
-        }
-    }
-
-    private func ticketRow(key: String, run: API.ChatTicketRun?) -> some View {
-        let p = theme.palette
-        let isStartable = run == nil || ChatDispatchCard.runEnded(run!.state)
-        let isSelected = selectedKeys.contains(key)
-        return HStack(spacing: 8) {
-            if isStartable {
-                Button {
-                    if isSelected { selectedKeys.remove(key) } else { selectedKeys.insert(key) }
-                } label: {
-                    Image(systemName: isSelected ? "checkmark.square.fill" : "square")
-                        .foregroundStyle(isSelected ? p.accent : p.tertiaryText)
-                }
-                .buttonStyle(.plain)
-            } else {
-                Image(systemName: "bolt.circle.fill")
-                    .foregroundStyle(p.accent)
-            }
-
-            Button {
-                context.navigate("/tickets/\(key)")
-            } label: {
-                Text(key)
-                    .font(.system(size: theme.pointSize(.small), weight: .semibold, design: .monospaced))
-                    .foregroundStyle(p.accent)
-            }
-            .buttonStyle(.plain)
-
-            if let run {
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(run.ticketTitle)
-                        .font(.system(size: theme.pointSize(.small)))
-                        .foregroundStyle(p.text)
-                        .lineLimit(1)
-                    let plan = ChatDispatchCard.planLine(
-                        stepsTotal: run.stepsTotal,
-                        stepsDone: run.stepsDone,
-                        currentStep: run.currentStep
-                    )
-                    if !plan.isEmpty {
-                        Text(plan)
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(p.secondaryText)
-                            .lineLimit(1)
-                    }
-                }
-                Spacer(minLength: 4)
-                let badge = ChatCardDisplay.stateBadge(for: run.state)
-                TonePill(label: badge.label, tone: badge.tone.pillTone)
-                Button("Run") {
-                    context.navigate("/runs/\(run.runId)")
-                }
-                .buttonStyle(.vesper())
-            } else {
-                Spacer(minLength: 4)
-            }
-        }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
-        .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.rowBorder))
-    }
-
-    private func startSelected() {
-        let keys = card.ticketKeys.filter { selectedKeys.contains($0) && startableKeys.contains($0) }
-        guard !keys.isEmpty, !isStarting else { return }
-        isStarting = true
-        errorMessage = nil
-        Task {
-            do {
-                for key in keys {
-                    _ = try await context.store.mutate(
-                        API.startChatTicketRun(id: chatId, body: API.ChatTicketRunStart(messageId: messageId, ticket: key)),
-                        invalidating: QueryInvalidation(resources: ["chats", "runs", "tickets"])
-                    )
-                }
-                context.showToast(ToastItemModel(id: "chat.dispatch", title: "Started \(keys.count) run\(keys.count == 1 ? "" : "s")", tone: .success))
-            } catch {
-                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
-            }
-            isStarting = false
-        }
-    }
-}
-
 // MARK: - Recommend Link / YouTube Cards
 
 struct ChatRecommendCardsView: View {
@@ -648,8 +488,7 @@ struct ChatContextChipsView: View {
     let refs: [API.ChatContextRef]
 
     private var hasContext: Bool {
-        !stripped.workContextLines.isEmpty
-            || !stripped.knowledgeContextLines.isEmpty
+        !stripped.knowledgeContextLines.isEmpty
             || !stripped.customAppContextLines.isEmpty
             || !refs.isEmpty
     }
@@ -659,9 +498,6 @@ struct ChatContextChipsView: View {
         if hasContext {
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(spacing: 6) {
-                    ForEach(stripped.workContextLines, id: \.self) { line in
-                        chip(icon: "hammer", text: line, palette: p)
-                    }
                     ForEach(stripped.knowledgeContextLines, id: \.self) { line in
                         chip(icon: "book", text: line, palette: p)
                     }

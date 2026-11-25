@@ -7,7 +7,7 @@ import { buildDocActions, buildDocOutlineNav, outlineItems, parseHeadingId } fro
 import { buildDeckActions, buildDeckNav, parseDeckCommand } from "./models/deck-editor.ts";
 import { buildDesignActions, buildDesignNav, buildDesignTitleMenu, parseDesignCommand } from "./models/design-editor.ts";
 import { buildCustomAppActions, buildCustomAppNav, parseViewId } from "./models/custom-app.ts";
-import { buildArtifactActions, buildMockupEditActions, buildReviewActions } from "./models/mockup-editor.ts";
+import { buildArtifactActions, buildMockupEditActions } from "./models/mockup-editor.ts";
 
 const ids = (items) => items.map((i) => i.id);
 
@@ -256,28 +256,4 @@ test("mockup editor toolbar: the mode menu checks the current mode; saving needs
   ok.dispatch("mockup.save");
   ok.dispatch("mockup.approve");
   assert.deepEqual(calls.slice(-2), ["save", "approve"]);
-});
-
-test("review toolbar: version, compare and with menus lead; Close trails", () => {
-  const calls = [];
-  const versions = [{ id: "v2", label: "v2" }, { id: "v1", label: "v1" }];
-  const input = {
-    versions, primaryId: "v2", currentId: "v2", pickVersion: (id) => calls.push(`pick:${id}`),
-    modes: [{ value: "single", label: "Single" }, { value: "side", label: "Side by side" }],
-    mode: "single", setMode: (m) => calls.push(`mode:${m}`), setWith: (id) => calls.push(`with:${id}`), close: () => calls.push("close"),
-    ticket: { key: "VES-1", run: () => calls.push("ticket") },
-  };
-  const single = splitActions(buildReviewActions(input));
-  assert.deepEqual(ids(single.items), ["review.ticket", "review.version", "review.compare", "review.close"]);
-  assert.equal(single.items[1].label, "Version v2");
-  single.dispatch("review.version", "version:v1");
-  single.dispatch("review.compare", "mode:side");
-  single.dispatch("review.ticket");
-  single.dispatch("review.close");
-  assert.deepEqual(calls, ["pick:v1", "mode:side", "ticket", "close"]);
-  const side = splitActions(buildReviewActions({ ...input, mode: "side", others: [{ id: "v1", label: "v1" }], withId: "v1" }));
-  assert.deepEqual(ids(side.items), ["review.ticket", "review.version", "review.compare", "review.with", "review.close"]);
-  assert.equal(side.items[3].label, "with v1");
-  assert.deepEqual(ids(buildReviewActions({ ...input, modes: undefined, ticket: undefined })), ["review.version", "review.close"]);
-  assert.equal(buildReviewActions(input)[1].placement, "leading");
 });

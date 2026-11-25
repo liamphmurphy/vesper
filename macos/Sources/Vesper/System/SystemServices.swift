@@ -40,7 +40,7 @@ final class SystemServices {
         pause: { [weak self] runs in await self?.pauseRuns(runs) },
         resume: { [weak self] in await self?.resumeRuns() },
         refreshRuns: { [weak self] in await self?.runMonitor.refreshNow() },
-        notice: { [weak self] title, body in self?.notifications.notice(title: title, body: body, target: .href("/runs"), silent: true) },
+        notice: { [weak self] title, body in self?.notifications.notice(title: title, body: body, target: .href("/chat"), silent: true) },
         noticeChanged: { [weak self] in self?.refreshTray() }))
     private var logsWindow: LogsWindowController?
     private var started = false

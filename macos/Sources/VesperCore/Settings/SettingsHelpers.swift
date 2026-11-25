@@ -726,9 +726,7 @@ public enum WorkspaceSetupHelpers {
         firstWorkSpaceId: String?,
         harnessSecretSet: Bool,
         harnessModels: [API.ChatHarnessModels],
-        runner: API.RunnerStatus?,
-        ticketAgentsCount: Int,
-        plansCount: Int
+        runner: API.RunnerStatus?
     ) -> [SetupChecklistItem] {
         let health = harnessHealth(harnessModels)
         let secretDone = harnessSecretSet || health.ready
@@ -746,7 +744,7 @@ public enum WorkspaceSetupHelpers {
                 done: reposCount > 0,
                 detail: reposCount > 0
                     ? "\(reposCount) \(reposCount == 1 ? "space has" : "spaces have") a repository"
-                    : "Without one, runs start in an empty workspace and can’t push."
+                    : "Without one, coding chats start in an empty workspace and can’t push."
             ),
             SetupChecklistItem(
                 id: "secret",
@@ -764,27 +762,7 @@ public enum WorkspaceSetupHelpers {
                 done: runnerOnline,
                 detail: runnerOnline
                     ? "\(onlineRunners.count) \(onlineRunners.count == 1 ? "runner" : "runners") online · \(backends) · \(slots) \(slots == 1 ? "slot" : "slots")"
-                    : (runner?.starting == true ? "Runner is starting…" : "No runner online. Dispatched work stays queued.")
-            ),
-            SetupChecklistItem(
-                id: "agents",
-                label: ticketAgentsCount > 0 ? "Review who does the work" : "Give a persona work",
-                href: "/settings?section=personas&filter=tickets",
-                linkLabel: "Personas",
-                done: ticketAgentsCount > 0 && plansCount > 0,
-                detail: ticketAgentsCount > 0
-                    ? "\(ticketAgentsCount) \(ticketAgentsCount == 1 ? "persona works" : "personas work") on tickets or runs"
-                    : "No persona takes tickets yet."
-            ),
-            SetupChecklistItem(
-                id: "plan",
-                label: "Run a sample planning goal",
-                href: "/plans",
-                linkLabel: "Plans",
-                done: plansCount > 0,
-                detail: plansCount > 0
-                    ? "\(plansCount) \(plansCount == 1 ? "plan" : "plans") so far"
-                    : (secretDone ? "Ticked when any plan exists" : "Needs a harness first · ticked when any plan exists")
+                    : (runner?.starting == true ? "Runner is starting…" : "No runner online. Active chats wait until a runner connects.")
             ),
         ]
     }

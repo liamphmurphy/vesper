@@ -1,63 +1,27 @@
 import Foundation
 
-// MARK: - Context Markers & Work Context (`web/lib/chat-context.ts`, `web/lib/work-context.ts`)
+// MARK: - Context Markers (`web/lib/chat-context.ts`)
 
 public enum ChatContextMarker {
-    public static let work = "\n\n<!-- vesper:work-context -->\n"
+    public static let legacyWork = "\n\n<!-- vesper:work-context -->\n"
     public static let knowledge = "\n\n<!-- vesper:knowledge-context -->\n"
     public static let customApp = "\n\n<!-- vesper:custom-app-context -->\n"
-    static let all = [knowledge, work, customApp]
+    static let all = [knowledge, legacyWork, customApp]
 }
 
 public struct ChatStrippedContext: Sendable, Equatable, Hashable {
     public var typedBody: String
-    public var workContextLines: [String]
     public var knowledgeContextLines: [String]
     public var customAppContextLines: [String]
 
     public init(
         typedBody: String,
-        workContextLines: [String] = [],
         knowledgeContextLines: [String] = [],
         customAppContextLines: [String] = []
     ) {
         self.typedBody = typedBody
-        self.workContextLines = workContextLines
         self.knowledgeContextLines = knowledgeContextLines
         self.customAppContextLines = customAppContextLines
-    }
-}
-
-public enum ChatWorkSubject: Sendable, Equatable, Hashable {
-    case run(id: String, title: String, agent: String, ticketKey: String?)
-    case ticket(key: String, title: String)
-
-    public func contextLine(pinned: Bool = false) -> String {
-        let verb = pinned ? "Pinned" : "Viewing"
-        switch self {
-        case .ticket(let key, let title):
-            return "\(verb) ticket \(key) (“\(title)”)."
-        case .run(let id, let title, let agent, let ticketKey):
-            let suffix = ticketKey.map { " for ticket \($0)" } ?? ""
-            return "\(verb) run \(id) (“\(title)”) by \(agent)\(suffix)."
-        }
-    }
-
-    public var label: String {
-        switch self {
-        case .ticket(let key, let title): return "\(key) · \(title)"
-        case .run(_, let title, _, let ticketKey): return ticketKey.map { "\($0) · \(title)" } ?? title
-        }
-    }
-
-    public static func withWorkContext(_ body: String, viewing: ChatWorkSubject?, pinned: ChatWorkSubject? = nil) -> String {
-        let same = pinned != nil && viewing != nil && pinned == viewing
-        var lines: [String] = []
-        if let pinned, !same { lines.append(pinned.contextLine(pinned: true)) }
-        if let viewing { lines.append(viewing.contextLine(pinned: same)) }
-        guard !lines.isEmpty else { return body }
-        let suffix = ChatContextMarker.work + lines.joined(separator: "\n")
-        return body.hasSuffix(suffix) ? body : body + suffix
     }
 }
 
@@ -99,7 +63,6 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case tabs(ChatTabsSpec)
     case details(ChatDetailsSpec)
     case choices(ChatChoicesCard)
-    case dispatch(ChatDispatchCard)
     case recommend([ChatRecommendCard])
     case gallery(ChatGallerySpec)
     case product(ChatProductSpec)
@@ -120,10 +83,6 @@ public struct ParsedChatMessage: Sendable, Equatable {
     public var sources: [ChatListedSource]
     public var mentions: [String]
     public var entityRefs: [ChatEntityRef]
-
-    public var hasDispatchSegment: Bool {
-        segments.contains { if case .dispatch = $0 { return true }; return false }
-    }
 
     public var hasWorkflowRunSegment: Bool {
         segments.contains { if case .workflowRun = $0 { return true }; return false }
@@ -155,11 +114,11 @@ public enum ChatTranscriptLogic {
 
     // MARK: Context Stripping
 
-    /// Splits appended dock context markers (`work-context`, `knowledge-context`, `custom-app-context`) from the user's typed text.
+    /// Splits appended dock context markers (`knowledge-context`, `custom-app-context`, legacy `work-context`) from the user's typed text.
     public static func stripContext(_ body: String) -> ChatStrippedContext {
         struct MarkerHit { let kind: String; let range: Range<String.Index> }
         var hits: [MarkerHit] = []
-        for (kind, marker) in [("work", ChatContextMarker.work), ("knowledge", ChatContextMarker.knowledge), ("customApp", ChatContextMarker.customApp)] {
+        for (kind, marker) in [("work", ChatContextMarker.legacyWork), ("knowledge", ChatContextMarker.knowledge), ("customApp", ChatContextMarker.customApp)] {
             if let range = body.range(of: marker) {
                 hits.append(MarkerHit(kind: kind, range: range))
             }
@@ -168,7 +127,6 @@ public enum ChatTranscriptLogic {
         hits.sort { $0.range.lowerBound < $1.range.lowerBound }
 
         let typed = String(body[..<hits[0].range.lowerBound])
-        var work: [String] = []
         var knowledge: [String] = []
         var customApp: [String] = []
 
@@ -179,14 +137,13 @@ public enum ChatTranscriptLogic {
                 .map { $0.trimmingCharacters(in: .whitespaces) }
                 .filter { !$0.isEmpty }
             switch hit.kind {
-            case "work": work.append(contentsOf: lines)
+            case "work": break
             case "knowledge": knowledge.append(contentsOf: lines)
             default: customApp.append(contentsOf: lines)
             }
         }
         return ChatStrippedContext(
             typedBody: typed,
-            workContextLines: work,
             knowledgeContextLines: knowledge,
             customAppContextLines: customApp
         )
@@ -546,12 +503,6 @@ public enum ChatTranscriptLogic {
                 if ChatChoicesCard.isChoicesFence(infoOpt), let card = ChatChoicesCard.parse(code) {
                     flushMarkdown()
                     segments.append(.choices(card))
-                    i = nextIndex
-                    continue
-                }
-                if ChatDispatchCard.isDispatchFence(infoOpt), let card = ChatDispatchCard.parse(code) {
-                    flushMarkdown()
-                    segments.append(.dispatch(card))
                     i = nextIndex
                     continue
                 }

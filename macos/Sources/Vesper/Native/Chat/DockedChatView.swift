@@ -66,10 +66,6 @@ struct DockedChatView<ContextChips: View>: View {
         chatId.map { API.listChatMessages(id: $0, limit: 200) }
     }
 
-    private var ticketRunsRequest: APIRequest<API.ChatTicketRuns>? {
-        chatId.map { API.listChatTicketRuns(id: $0) }
-    }
-
     var body: some View {
         let p = theme.palette
         let store = context.store
@@ -80,9 +76,6 @@ struct DockedChatView<ContextChips: View>: View {
         let repositories = store.entry(DockedChatRequests.repositories).data ?? []
         let session = sessionRequest.flatMap { store.entry($0).data }
         let messages = messagesRequest.flatMap { store.entry($0).data?.messages } ?? []
-        let ticketRuns = (ticketRunsRequest.flatMap { store.entry($0).data?.runs } ?? []).filter {
-            ["queued", "starting", "running", "waiting"].contains($0.state)
-        }
         let activePersona: API.Persona? = {
             if let pid = session?.persona?.id, let match = personas.first(where: { $0.id == pid }) {
                 return match
@@ -140,7 +133,6 @@ struct DockedChatView<ContextChips: View>: View {
                         harnesses: harnesses,
                         workflows: workflows,
                         repositories: repositories,
-                        activeTicketRuns: ticketRuns,
                         selectedHarness: $selectedHarness,
                         selectedModel: $selectedModel,
                         selectedEffort: $selectedEffort,
@@ -421,7 +413,6 @@ struct DockedChatView<ContextChips: View>: View {
         watch(DockedChatRequests.repositories)
         if let req = sessionRequest { watch(req) }
         if let req = messagesRequest { watch(req) }
-        if let req = ticketRunsRequest { watch(req) }
         if let chatId { watch(API.listChatAsides(id: chatId)) }
         if session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty {
             watch(API.listRunEvents(id: runId))

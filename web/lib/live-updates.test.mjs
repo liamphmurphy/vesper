@@ -3,8 +3,8 @@ import test from "node:test";
 import { invalidatedBy, invalidatedKeys } from "./live-updates.ts";
 
 test("a change hint invalidates its entity's queries and the overview counts", () => {
-  assert.deepEqual(invalidatedBy("chat.updated"), ["chats", "canvases", "videos", "audio", "push-requests", "dock", "dashboard", "epics", "agent-overviews"]);
-  assert.deepEqual(invalidatedBy("ticket.updated").slice(0, 2), ["planning", "tickets"]);
+  assert.deepEqual(invalidatedBy("chat.updated"), ["chats", "canvases", "videos", "audio", "push-requests", "dock", "dashboard"]);
+  assert.deepEqual(invalidatedBy("artifact.updated").slice(0, 2), ["artifacts", "wiki"]);
 });
 
 test("harness log lines and video and audio progress refetch only their own queries", () => {
@@ -13,15 +13,15 @@ test("harness log lines and video and audio progress refetch only their own quer
   assert.deepEqual(invalidatedBy("audio.updated"), ["audio"]);
   assert.deepEqual(invalidatedBy("custom_app.updated"), ["custom-apps"]);
   assert.deepEqual(invalidatedBy("browser_share.updated"), ["browser-shares"]);
-  assert.deepEqual(invalidatedBy("pr_feedback.updated"), ["tickets", "push-requests", "inbox", "bootstrap", "spaces"]);
+  assert.deepEqual(invalidatedBy("pr_feedback.updated"), ["push-requests", "inbox", "bootstrap", "spaces"]);
 });
 
 test("approval hints also refresh chat tool approvals", () => {
-  assert.deepEqual(invalidatedBy("approval.updated"), ["tickets", "runs", "chats", "inbox", "bootstrap", "dashboard", "epics", "agent-overviews"]);
+  assert.deepEqual(invalidatedBy("approval.updated"), ["runs", "chats", "inbox", "bootstrap", "dashboard"]);
 });
 
 test("an unknown hint refetches only the overview counts", () => {
-  assert.deepEqual(invalidatedBy("nope.updated"), ["dashboard", "epics", "agent-overviews"]);
+  assert.deepEqual(invalidatedBy("nope.updated"), ["dashboard"]);
 });
 
 // designKeys (lib/api/designs-hooks.ts) live under "canvases": the design, its versions and its suggestions.

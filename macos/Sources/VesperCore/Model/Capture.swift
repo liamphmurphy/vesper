@@ -2,26 +2,22 @@ import Foundation
 
 // Port of desktop/src/capture.ts: quick capture requests and global shortcut validation.
 
-public enum CaptureKind: String, Sendable, CaseIterable { case note, message, ticket }
+public enum CaptureKind: String, Sendable, CaseIterable { case note, message }
 
 public struct CaptureInput: Sendable {
     public var kind: CaptureKind
     public var text: String
     /// message: one of the person's persona ids; empty for their default persona.
     public var personaId: String?
-    /// ticket: the project key.
-    public var projectKey: String?
-    public init(kind: CaptureKind, text: String, personaId: String? = nil, projectKey: String? = nil) {
+    public init(kind: CaptureKind, text: String, personaId: String? = nil) {
         self.kind = kind
         self.text = text
         self.personaId = personaId
-        self.projectKey = projectKey
     }
 }
 
 public enum Capture {
     static let maxText = 100_000
-    static let ticketTitleMax = 300
     static let noteTitleMax = 120
 
     /// The existing API call for a capture, or a message to show.
@@ -48,17 +44,6 @@ public enum Capture {
             var body: APIBody = ["message": .object(["body": .string(text)])]
             if !persona.isEmpty { body["persona_id"] = .string(persona) }
             return .success(APICall(path: "/api/v1/chats", body: body))
-        case .ticket:
-            let project = (input.projectKey ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-            if project.range(of: #"^[A-Z][A-Z0-9_]{0,31}\z"#, options: .regularExpression) == nil {
-                return .failure(CaptureError("Pick a project for the ticket."))
-            }
-            let lines = text.split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: false)
-            let title = String(String(lines[0]).trimmingCharacters(in: .whitespaces).prefix(ticketTitleMax))
-            let description = lines.count > 1 ? String(lines[1]).trimmingCharacters(in: .whitespacesAndNewlines) : ""
-            var body: APIBody = ["project_key": .string(project), "title": .string(title)]
-            if !description.isEmpty { body["description_md"] = .string(description) }
-            return .success(APICall(path: "/api/v1/tickets", body: body))
         }
     }
 
@@ -68,9 +53,6 @@ public enum Capture {
         if let id = r["id"] as? String, id.range(of: uuidPattern, options: .regularExpression) != nil {
             if kind == .message { return "/chat/\(id)" }
             if kind == .note { return "/knowledge/\(id)" }
-        }
-        if kind == .ticket, let key = r["key"] as? String, key.range(of: ticketKeyPattern, options: .regularExpression) != nil {
-            return "/tickets/\(key)"
         }
         return nil
     }

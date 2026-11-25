@@ -358,11 +358,11 @@ struct SettingsDetail: View {
             }
             .disabled(!s.notifications.enabled)
             Toggle(isOn: bind(\.notifications.groupByWork)) {
-                Text("Group notifications by ticket, chat or epic")
+                Text("Group notifications by chat or workflow")
                 Text("A newer update replaces the earlier unread banner for the same thing.")
             }
             .disabled(!s.notifications.enabled)
-            Toggle("Notify when any ticket or plan run finishes", isOn: bind(\.notifications.runFinished))
+            Toggle("Notify when a workflow or scheduled run finishes", isOn: bind(\.notifications.runFinished))
                 .disabled(!s.notifications.enabled)
             Toggle("Play a sound", isOn: bind(\.notifications.sound))
                 .disabled(!s.notifications.enabled)
@@ -458,7 +458,7 @@ struct SettingsDetail: View {
         Section("Links") {
             Toggle(isOn: bind(\.deepLinks.enabled)) {
                 Text("Handle vesper:// links in this app")
-                Text("Links from terminals, scripts and browsers open the ticket, run, chat or wiki page inside Vesper.")
+                Text("Links from terminals, scripts and browsers open the chat, space or Knowledge page inside Vesper.")
             }
             LabeledContent {
                 EmptyView()
@@ -509,7 +509,7 @@ struct SettingsDetail: View {
         Section("Sleep & Battery") {
             Toggle(isOn: bind(\.power.preventSleepWhileRunning)) {
                 Text("Keep Mac awake while an agent is working")
-                Text("Prevents idle sleep while a ticket, plan or chat run is active. Closing the lid still sleeps.")
+                Text("Prevents idle sleep while a chat or workflow run is active. Closing the lid still sleeps.")
             }
             Picker(selection: bind(\.power.onSleep)) {
                 Text("Let runs stay as they are").tag(SleepPolicy.keep)
