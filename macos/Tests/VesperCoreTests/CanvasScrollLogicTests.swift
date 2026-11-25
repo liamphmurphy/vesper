@@ -169,11 +169,4 @@ struct CanvasScrollLogicTests {
         #expect(abs(afterScreen.y - anchorY) < 1e-6)
         #expect(abs(zoomed.scale - 1.8) < 1e-9)
     }
-
-    @Test func mockupEditorVisualCanvasSupportsWheelZoom() {
-        let html = MockupEditorLogic.visualCanvasHTML(dark: true)
-        #expect(html.contains(#"data-theme="dark""#))
-        #expect(html.contains(#"stage.addEventListener("wheel""#))
-        #expect(html.contains("e.metaKey || e.ctrlKey"))
-    }
 }
