@@ -34,6 +34,7 @@ struct ArtifactReviewScreen: View {
     @State private var primaryDrawing: RenderedMockup?
     @State private var compareDrawing: RenderedMockup?
     @State private var dragStartCamera: ArtifactDetailLogic.MockupCamera?
+    @State private var magnifyStartCamera: ArtifactDetailLogic.MockupCamera?
 
     @State private var draftPins: [API.MockupPin] = []
     @State private var composingPinAt: ArtifactDetailLogic.MockupFraction?
@@ -431,6 +432,38 @@ struct ArtifactReviewScreen: View {
         }
         .clipped()
         .contentShape(Rectangle())
+        .onCanvasScrollWheel { action in
+            switch action {
+            case .zoom(let factor, let ax, let ay):
+                let current = resolveCamera(drawing: drawingSize, pane: paneSize)
+                cameraMode = .free(ArtifactDetailLogic.zoomAt(current, factor: factor, px: ax, py: ay))
+                return true
+            case .pan(let dx, let dy):
+                let current = resolveCamera(drawing: drawingSize, pane: paneSize)
+                cameraMode = .free(ArtifactDetailLogic.panBy(current, dx: dx, dy: dy))
+                return true
+            case .ignore:
+                return false
+            }
+        }
+        .simultaneousGesture(
+            MagnifyGesture()
+                .onChanged { value in
+                    let base = magnifyStartCamera ?? resolveCamera(drawing: drawingSize, pane: paneSize)
+                    if magnifyStartCamera == nil { magnifyStartCamera = base }
+                    cameraMode = .free(
+                        ArtifactDetailLogic.zoomAt(
+                            base,
+                            factor: Double(value.magnification),
+                            px: Double(value.startLocation.x),
+                            py: Double(value.startLocation.y)
+                        )
+                    )
+                }
+                .onEnded { _ in
+                    magnifyStartCamera = nil
+                }
+        )
         .gesture(
             SpatialTapGesture()
                 .onEnded { value in

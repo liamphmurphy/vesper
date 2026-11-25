@@ -738,10 +738,8 @@ struct DesignEditorView: View {
     }
 
     private func zoomBy(_ factor: Double) {
-        let nextZ = max(0.1, min(8.0, camera.z * factor))
         let mid = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
-        let w = camera.screenToWorld(mid)
-        camera = DesignCamera(x: w.x - mid.x / nextZ, y: w.y - mid.y / nextZ, z: nextZ)
+        camera = camera.zoomed(by: factor, around: mid)
     }
 
     private func addPage() {

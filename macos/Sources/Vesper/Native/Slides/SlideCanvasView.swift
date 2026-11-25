@@ -79,6 +79,8 @@ struct InteractiveSlideCanvas: View {
         case nw, n, ne, e, se, s, sw, w
     }
 
+    @Environment(\.vesperTheme) private var theme
+
     let deck: SlideDeck
     let slide: Slide
     let images: [String: CGImage]
@@ -95,6 +97,10 @@ struct InteractiveSlideCanvas: View {
     @State private var guidesX: [Double] = []
     @State private var guidesY: [Double] = []
     @State private var inlineDraftText: String = ""
+    @State private var zoom: Double = 1.0
+    @State private var panOffset: CGSize = .zero
+    @State private var magnifyBaseZoom: Double?
+    @State private var magnifyBasePan: CGSize?
     @FocusState private var inlineFocused: Bool
 
     private var activeSlide: Slide { draftSlide ?? slide }
@@ -104,11 +110,12 @@ struct InteractiveSlideCanvas: View {
             let pad: CGFloat = 28
             let availW = max(100, geo.size.width - pad * 2)
             let availH = max(100, geo.size.height - pad * 2)
-            let scale = min(availW / deck.size.w, availH / deck.size.h)
+            let fitScale = min(availW / deck.size.w, availH / deck.size.h)
+            let scale = fitScale * zoom
             let canvasW = deck.size.w * scale
             let canvasH = deck.size.h * scale
-            let originX = (geo.size.width - canvasW) / 2
-            let originY = (geo.size.height - canvasH) / 2
+            let originX = (geo.size.width - canvasW) / 2 + panOffset.width
+            let originY = (geo.size.height - canvasH) / 2 + panOffset.height
 
             ZStack(alignment: .topLeading) {
                 Color.clear
@@ -222,7 +229,71 @@ struct InteractiveSlideCanvas: View {
                     }
                 )
                 .offset(x: originX, y: originY)
+
+                if abs(zoom - 1.0) > 0.01 {
+                    HStack(spacing: 4) {
+                        Text("\(Int((zoom * 100).rounded()))%")
+                            .font(.system(size: 11, design: .monospaced))
+                            .foregroundStyle(theme.palette.secondaryText)
+                        Button("Fit") {
+                            zoom = 1.0
+                            panOffset = .zero
+                        }
+                        .buttonStyle(.borderless)
+                        .font(.system(size: 11, weight: .medium))
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 8))
+                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(theme.palette.border))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .bottomTrailing)
+                    .padding(12)
+                }
             }
+            .clipped()
+            .onCanvasScrollWheel { action in
+                switch action {
+                case .zoom(let factor, let ax, let ay):
+                    applyZoom(
+                        targetZoom: zoom * factor,
+                        anchor: CGPoint(x: ax, y: ay),
+                        viewport: geo.size,
+                        fitScale: fitScale,
+                        fromZoom: zoom,
+                        fromPan: panOffset
+                    )
+                    return true
+                case .pan(let dx, let dy):
+                    guard zoom > 1.001, editingTextId == nil else { return false }
+                    panOffset = CGSize(width: panOffset.width + dx, height: panOffset.height + dy)
+                    return true
+                case .ignore:
+                    return false
+                }
+            }
+            .simultaneousGesture(
+                MagnifyGesture()
+                    .onChanged { val in
+                        let baseZ = magnifyBaseZoom ?? zoom
+                        let baseP = magnifyBasePan ?? panOffset
+                        if magnifyBaseZoom == nil {
+                            magnifyBaseZoom = baseZ
+                            magnifyBasePan = baseP
+                        }
+                        applyZoom(
+                            targetZoom: baseZ * Double(val.magnification),
+                            anchor: val.startLocation,
+                            viewport: geo.size,
+                            fitScale: fitScale,
+                            fromZoom: baseZ,
+                            fromPan: baseP
+                        )
+                    }
+                    .onEnded { _ in
+                        magnifyBaseZoom = nil
+                        magnifyBasePan = nil
+                    }
+            )
         }
         .onChange(of: slide.id) { _, _ in
             commitInlineEditIfNeeded()
@@ -415,6 +486,34 @@ struct InteractiveSlideCanvas: View {
                 }
                 draftSlide = nil
             }
+    }
+
+    private func applyZoom(
+        targetZoom: Double,
+        anchor: CGPoint,
+        viewport: CGSize,
+        fitScale: Double,
+        fromZoom: Double,
+        fromPan: CGSize
+    ) {
+        let clamped = min(4.0, max(0.5, targetZoom))
+        let prevScale = fitScale * fromZoom
+        let nextScale = fitScale * clamped
+        guard prevScale > 0, nextScale > 0 else { return }
+        let prevOriginX = (viewport.width - deck.size.w * prevScale) / 2 + fromPan.width
+        let prevOriginY = (viewport.height - deck.size.h * prevScale) / 2 + fromPan.height
+        let slideX = (anchor.x - prevOriginX) / prevScale
+        let slideY = (anchor.y - prevOriginY) / prevScale
+        let nextOriginX = anchor.x - slideX * nextScale
+        let nextOriginY = anchor.y - slideY * nextScale
+        let baseOriginX = (viewport.width - deck.size.w * nextScale) / 2
+        let baseOriginY = (viewport.height - deck.size.h * nextScale) / 2
+        zoom = clamped
+        if clamped <= 1.001 && abs(clamped - 1.0) < 0.01 {
+            panOffset = .zero
+        } else {
+            panOffset = CGSize(width: nextOriginX - baseOriginX, height: nextOriginY - baseOriginY)
+        }
     }
 
     private func beginInlineEdit(_ el: SlideElement) {

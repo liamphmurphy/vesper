@@ -43,6 +43,18 @@ struct NodeGraphCanvasView: View {
                 }
                 .background(theme.palette.surface)
                 .contentShape(Rectangle())
+                .onCanvasScrollWheel { action in
+                    switch action {
+                    case .zoom(let factor, let ax, let ay):
+                        viewport.zoom(factor: factor, around: GraphPoint(x: ax, y: ay))
+                        return true
+                    case .pan(let dx, let dy):
+                        viewport.pan(by: GraphPoint(x: dx, y: dy))
+                        return true
+                    case .ignore:
+                        return false
+                    }
+                }
                 .gesture(canvasDragGesture)
                 .gesture(canvasMagnifyGesture)
                 .simultaneousGesture(SpatialTapGesture(count: 2).onEnded { value in
