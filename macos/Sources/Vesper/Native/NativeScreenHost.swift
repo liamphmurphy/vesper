@@ -174,6 +174,7 @@ struct NativeScreenRoot: View {
         case .slidesPresent: SlidesPresentScreen()
         case .designEditor: DesignEditorScreen()
         case .designPresent: DesignPresentScreen()
+        case .customApp: CustomAppScreen()
         }
     }
 }
