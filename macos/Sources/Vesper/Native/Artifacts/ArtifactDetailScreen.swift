@@ -3,10 +3,9 @@ import AppKit
 import SwiftUI
 import VesperCore
 
-/// Native SwiftUI implementation of `/artifacts/:id` (port of `web/app/(app)/artifacts/[id]/artifact-screen.tsx`).
-/// Renders markdown, images, inline MP4 videos, PDFs, generic files, and SVG mockups natively, while
-/// keeping the direct-manipulation SVG visual editor (`?edit=1` on mockups) hosted cleanly via
-/// `HostedWebPageView` so interactive DOM canvas editing stays intact.
+/// Native SwiftUI implementation of `/artifacts/:id`.
+/// Renders markdown, images, inline MP4 videos, PDFs, generic files, and SVG mockups natively,
+/// including the direct-manipulation SVG visual/source/split editor (`?edit=1` on mockups).
 struct ArtifactDetailScreen: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -35,7 +34,9 @@ struct ArtifactDetailScreen: View {
                 errorView(error)
             } else if let artifact = entry.data {
                 if artifact.type == .mockup && wantsEdit {
-                    HostedWebPageView(path: "/artifacts/\(artifact.id)?edit=1")
+                    MockupEditorView(artifact: artifact) {
+                        context.navigate("/artifacts/\(artifact.id)")
+                    }
                 } else {
                     loadedView(artifact: artifact, backlinks: backlinks)
                 }
