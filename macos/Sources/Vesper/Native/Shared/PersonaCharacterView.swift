@@ -1,9 +1,12 @@
 import SwiftUI
 import VesperCore
 
-/// Renders a custom 64x64 animated SVG persona character:
-/// - `active == true`: uses a pooled live `WKWebView` with CSS animations (frozen when Reduce Motion is enabled).
-/// - `active == false`: uses a cached offscreen snapshot with zero live web views.
+/// Renders a custom 64x64 animated SVG persona character natively (`PersonaCharacterRig`):
+/// - `active == true` and animation allowed (`AnimationPolicy`): the state's motions at the
+///   display's refresh rate, restarting from their first frame whenever what's shown changes, as
+///   the web view's CSS animations restarted with each page load.
+/// - otherwise (inactive, Reduce Motion, hidden window, Low Power Mode for idle): the still
+///   `static` frame with no timeline at all, as the web snapshots showed.
 struct PersonaCharacterView: View {
     let svg: String
     let color: String
@@ -11,33 +14,13 @@ struct PersonaCharacterView: View {
     var size: CGFloat = 24
     var active: Bool = false
     var framed: Bool = false
+    /// Clips the character to a circle. Drawing never spills past the view's square, so this only
+    /// adds the circular mask `framed` already applies.
     var clipped: Bool = false
 
     @Environment(\.vesperTheme) private var theme
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
-    @Environment(\.displayScale) private var displayScale
     @Environment(\.vesperWindowVisible) private var windowVisible
-
-    @State private var ownerID = UUID()
-    @State private var snapshotImage: Image?
-
-    private var snapshotState: CharacterState {
-        active ? .staticState : state
-    }
-
-    private var pixelSize: Int {
-        max(32, Int((size * max(1, displayScale)).rounded()))
-    }
-
-    private var snapshotKey: String {
-        PersonaCharacterSanitizer.cacheKey(
-            svg: svg,
-            color: color,
-            state: snapshotState,
-            pixelSize: pixelSize,
-            clipped: clipped
-        )
-    }
 
     var body: some View {
         let pad = framed ? max(1, (size * 0.06).rounded()) : 0
@@ -51,31 +34,19 @@ struct PersonaCharacterView: View {
                 windowVisible: windowVisible
             )
         )
-        let showsLive = liveAllowed && PersonaCharacterPool.shared.isShowingLive(ownerID)
-        let cached = snapshotImage ?? PersonaCharacterPool.shared.cachedSnapshot(
-            svg: svg,
-            color: color,
-            state: snapshotState,
-            pixelSize: pixelSize,
-            clipped: clipped
-        )
+        let rig = PersonaCharacterRigCache.rig(svg: svg, color: color)
+        let shownState: CharacterState = liveAllowed ? state : .staticState
+        let animates = rig?.animates(in: shownState) ?? false
 
-        ZStack {
-            if !showsLive, let cached {
-                cached
-                    .resizable()
-                    .interpolation(.high)
-                    .aspectRatio(contentMode: .fit)
-            }
-            if liveAllowed {
-                PersonaCharacterPlatformHost(
-                    ownerID: ownerID,
-                    svg: svg,
-                    color: color,
-                    state: state,
-                    clipped: clipped,
-                    reduceMotion: reduceMotion
-                )
+        Group {
+            if let rig {
+                if animates {
+                    // A new identity per run gives the canvas a fresh clock.
+                    AnimatedCharacterCanvas(rig: rig, state: shownState)
+                        .id(AnimationRun(svg: svg, color: color, state: shownState))
+                } else {
+                    CharacterCanvas(rig: rig, state: shownState, time: 0)
+                }
             }
         }
         .padding(pad)
@@ -89,26 +60,63 @@ struct PersonaCharacterView: View {
         }
         .modifier(CircleClipModifier(enabled: framed || clipped))
         .accessibilityHidden(true)
-        .task(id: snapshotKey) {
-            if let hit = PersonaCharacterPool.shared.cachedSnapshot(
-                svg: svg,
-                color: color,
-                state: snapshotState,
-                pixelSize: pixelSize,
-                clipped: clipped
-            ) {
-                snapshotImage = hit
-                return
-            }
-            snapshotImage = nil
-            snapshotImage = await PersonaCharacterPool.shared.snapshot(
-                svg: svg,
-                color: color,
-                state: snapshotState,
-                pixelSize: pixelSize,
-                clipped: clipped
-            )
+    }
+
+    /// What a run of the animations shows; a change starts them over.
+    private struct AnimationRun: Hashable {
+        var svg: String
+        var color: String
+        var state: CharacterState
+    }
+}
+
+/// The state's motions at the display's refresh rate, timed from when this view appeared.
+private struct AnimatedCharacterCanvas: View {
+    let rig: PersonaCharacterRig
+    let state: CharacterState
+
+    @State private var start = Date()
+
+    var body: some View {
+        TimelineView(.animation) { timeline in
+            CharacterCanvas(rig: rig, state: state, time: timeline.date.timeIntervalSince(start))
         }
+    }
+}
+
+private struct CharacterCanvas: View {
+    let rig: PersonaCharacterRig
+    let state: CharacterState
+    let time: TimeInterval
+
+    var body: some View {
+        Canvas { ctx, canvasSize in
+            ctx.withCGContext { cg in
+                rig.draw(state: state, at: time, in: cg, rect: CGRect(origin: .zero, size: canvasSize))
+            }
+        }
+    }
+}
+
+/// Compiled characters by SVG and colour, so every row showing a persona shares one parse.
+@MainActor
+enum PersonaCharacterRigCache {
+    private struct Key: Hashable {
+        var svg: String
+        var color: String
+    }
+
+    /// Distinct personas and colours on screen stay far below this; it only bounds a long session.
+    private static let limit = 128
+    private static var rigs: [Key: PersonaCharacterRig?] = [:]
+
+    static func rig(svg: String, color: String) -> PersonaCharacterRig? {
+        let key = Key(svg: svg, color: PersonaCharacterSanitizer.safeHexColor(color).lowercased())
+        if let hit = rigs[key] { return hit }
+        if rigs.count >= limit { rigs.removeAll(keepingCapacity: true) }
+        let rig = PersonaCharacterRig(svg: svg, color: key.color)
+        rigs[key] = rig
+        return rig
     }
 }
 

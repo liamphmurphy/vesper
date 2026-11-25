@@ -1,4 +1,3 @@
-import CryptoKit
 import Foundation
 
 // MARK: - Character State & Rig Vocabulary (web/lib/persona-character.ts)
@@ -387,7 +386,7 @@ public enum PersonaCharacterSanitizer {
         return SanitizedSVGResult(tree: root, skipped: delegate.skipped)
     }
 
-    // MARK: - Self-Contained CSP HTML Output & Cache Key
+    // MARK: - Self-Contained CSP HTML Output
 
     public static func safeHexColor(_ raw: String) -> String {
         let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -395,7 +394,9 @@ public enum PersonaCharacterSanitizer {
     }
 
     /// Renders a self-contained HTML document with strict CSP (`default-src 'none'; style-src 'unsafe-inline'`)
-    /// and the exact `.persona-character` keyframes from `web/app/globals.css`.
+    /// and the exact `.persona-character` keyframes from `web/app/globals.css`: the page WebKit used to
+    /// animate characters in the app. `PersonaCharacterRig` draws it natively, and
+    /// `PersonaCharacterWebKitParityTests` loads this page as the reference it must match.
     public static func renderHTML(
         svg: String,
         color: String,
@@ -427,19 +428,6 @@ public enum PersonaCharacterSanitizer {
         </body>
         </html>
         """
-    }
-
-    /// Deterministic SHA-256 snapshot cache key covering SVG source, color, state, pixel size, and clipping.
-    public static func cacheKey(
-        svg: String,
-        color: String,
-        state: CharacterState,
-        pixelSize: Int,
-        clipped: Bool = false
-    ) -> String {
-        let digest = SHA256.hash(data: Data(svg.utf8))
-        let hexDigest = digest.map { String(format: "%02x", $0) }.joined()
-        return "\(hexDigest)|\(safeHexColor(color).lowercased())|\(state.rawValue)|\(pixelSize)|\(clipped ? 1 : 0)"
     }
 
     private static func serializeNode(_ node: SanitizedSVGNode, state: CharacterState) -> String {
