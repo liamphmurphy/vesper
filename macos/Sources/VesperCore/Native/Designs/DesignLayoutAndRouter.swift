@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import os
 
 // MARK: - Orthogonal Connector Router (exact port of web/lib/designs/route.ts)
 
@@ -376,7 +377,15 @@ public enum DesignDrawOp: Sendable, Equatable {
 public struct DesignLaidNode: Sendable, Equatable {
     public var id: String
     public var box: DesignBox
+    public var renderBounds: DesignBox
     public var ops: [DesignDrawOp]
+
+    public init(id: String, box: DesignBox, renderBounds: DesignBox? = nil, ops: [DesignDrawOp]) {
+        self.id = id
+        self.box = box
+        self.renderBounds = renderBounds ?? box
+        self.ops = ops
+    }
 }
 
 public struct DesignLaidPage: Sendable, Equatable {
@@ -560,8 +569,8 @@ public final class DesignLayoutEngine {
                 if !buf.isEmpty { tokens.append(buf) }
                 for t in tokens {
                     let tw = DesignMetrics.measure(text: t, weight: wt, italic: it, size: r.size)
-                    let trimmedStr = t.replacingOccurrences(of: #"\s+$"#, with: "", options: .regularExpression)
-                    let trimmed = DesignMetrics.measure(text: trimmedStr, weight: wt, italic: it, size: r.size)
+                    let trimmedStr = Self.trimTrailingWhitespace(t)
+                    let trimmed = trimmedStr.count == t.count ? tw : DesignMetrics.measure(text: trimmedStr, weight: wt, italic: it, size: r.size)
                     if !cur.isEmpty && w + trimmed > innerW - left + 0.001 { flush() }
                     if cur.isEmpty && trimmed > innerW - left + 0.001 && innerW.isFinite {
                         var chunk = ""
@@ -995,7 +1004,8 @@ public final class DesignLayoutEngine {
             local[n.id] = DesignBox(x: n.x, y: n.y, w: w, h: h)
             drawNode(n, ax: n.x, ay: n.y, w: w, h: h, mode: design.mode, ops: &ops)
             let b = DesignBox(x: n.x, y: n.y, w: w, h: h)
-            laidNodes.append(DesignLaidNode(id: n.id, box: b, ops: ops))
+            let rb = DesignCGDrawer.renderBounds(of: ops, fallback: b)
+            laidNodes.append(DesignLaidNode(id: n.id, box: b, renderBounds: rb, ops: ops))
             x0 = min(x0, b.x); y0 = min(y0, b.y)
             x1 = max(x1, b.x + b.w); y1 = max(y1, b.y + b.h)
         }
@@ -1029,8 +1039,22 @@ public final class DesignLayoutEngine {
         return out
     }
 
+    private static let pathCoordRegex: NSRegularExpression? = try? NSRegularExpression(
+        pattern: #"(-?[\d.]+(?:[eE]-?\d+)?)[ ,]+(-?[\d.]+(?:[eE]-?\d+)?)"#
+    )
+
+    private static func trimTrailingWhitespace(_ s: String) -> String {
+        var end = s.endIndex
+        while end > s.startIndex {
+            let prev = s.index(before: end)
+            guard s[prev].isWhitespace else { break }
+            end = prev
+        }
+        return end == s.endIndex ? s : String(s[..<end])
+    }
+
     private func offsetPathD(_ d: String, dx: Double, dy: Double) -> String {
-        guard let regex = try? NSRegularExpression(pattern: #"(-?[\d.]+(?:[eE]-?\d+)?)[ ,]+(-?[\d.]+(?:[eE]-?\d+)?)"#) else { return d }
+        guard let regex = Self.pathCoordRegex else { return d }
         let ns = d as NSString
         let matches = regex.matches(in: d, range: NSRange(location: 0, length: ns.length))
         var out = d
@@ -1068,8 +1092,148 @@ public final class DesignLayoutEngine {
 // MARK: - CoreGraphics Renderer for DesignDrawOps (120Hz Editor, Present Mode & PDF Export)
 
 public enum DesignCGDrawer {
-    public static func draw(ops: [DesignDrawOp], images: [String: CGImage], in ctx: CGContext) {
+    private struct SendableFontBox: @unchecked Sendable {
+        let font: CTFont
+    }
+
+    private struct SendableLineBox: @unchecked Sendable {
+        let line: CTLine
+    }
+
+    private struct FontCacheKey: Hashable {
+        let weight: Int
+        let italic: Bool
+        let sizeBits: UInt64
+    }
+
+    private struct TextLineCacheKey: Hashable {
+        let text: String
+        let weight: Int
+        let italic: Bool
+        let sizeBits: UInt64
+        let fill: String
+    }
+
+    private static let fontCache = OSAllocatedUnfairLock<[FontCacheKey: SendableFontBox]>(initialState: [:])
+    private static let lineCache = OSAllocatedUnfairLock<[TextLineCacheKey: SendableLineBox]>(initialState: [:])
+    private static let rgbColorSpace = CGColorSpaceCreateDeviceRGB()
+
+    /// Computes a conservative world-space bounding rect for a single leaf draw operation.
+    /// Returns `nil` for gstate/transform directives (`.clip`, `.unclip`, `.rotate`, `.unrotate`).
+    public static func opBounds(_ op: DesignDrawOp) -> CGRect? {
+        switch op {
+        case .rect(let x, let y, let w, let h, _, _, let stroke, let sw, _, _, _):
+            guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { return nil }
+            let pad = (stroke != nil && sw.isFinite && sw > 0) ? sw / 2 : 0
+            return CGRect(x: x - pad, y: y - pad, width: max(0, w) + pad * 2, height: max(0, h) + pad * 2)
+        case .ellipse(let x, let y, let w, let h, _, let stroke, let sw, _, _, _):
+            guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { return nil }
+            let pad = (stroke != nil && sw.isFinite && sw > 0) ? sw / 2 : 0
+            return CGRect(x: x - pad, y: y - pad, width: max(0, w) + pad * 2, height: max(0, h) + pad * 2)
+        case .path(_, let box, _, let stroke, let sw, _, _, _, _, _):
+            guard box.x.isFinite, box.y.isFinite, box.w.isFinite, box.h.isFinite else { return nil }
+            let pad = (stroke != nil && sw.isFinite && sw > 0) ? sw / 2 : 0
+            return box.cgRect.standardized.insetBy(dx: -pad, dy: -pad)
+        case .polyline(let pts, _, let sw, _, _, _, _):
+            var minX = Double.infinity, minY = Double.infinity
+            var maxX = -Double.infinity, maxY = -Double.infinity
+            for p in pts where p.x.isFinite && p.y.isFinite {
+                minX = min(minX, p.x); minY = min(minY, p.y)
+                maxX = max(maxX, p.x); maxY = max(maxY, p.y)
+            }
+            guard minX.isFinite else { return nil }
+            let pad = (sw.isFinite && sw > 0) ? sw / 2 : 0
+            return CGRect(x: minX - pad, y: minY - pad, width: (maxX - minX) + pad * 2, height: (maxY - minY) + pad * 2)
+        case .image(_, let x, let y, let w, let h, _, _, _, _, _, _, _):
+            guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { return nil }
+            return CGRect(x: x, y: y, width: max(0, w), height: max(0, h))
+        case .text(let x, let y, let text, _, _, let size, _, _, _):
+            guard x.isFinite, y.isFinite, size.isFinite, size > 0 else { return nil }
+            let asc = size * 1.15
+            let desc = size * 0.45
+            let width = max(size, Double(text.count) * size * 0.85)
+            return CGRect(x: x, y: y - asc, width: width, height: asc + desc)
+        case .clip, .unclip, .rotate, .unrotate:
+            return nil
+        }
+    }
+
+    /// Computes a world-space bounding box covering all ops (including rotated subtrees and overflowing children).
+    public static func renderBounds(of ops: [DesignDrawOp], fallback: DesignBox) -> DesignBox {
+        var transforms: [CGAffineTransform] = [.identity]
+        var acc: CGRect? = fallback.cgRect.standardized.isNull ? nil : fallback.cgRect.standardized
         for op in ops {
+            switch op {
+            case .rotate(let deg, let cx, let cy):
+                let cur = transforms.last ?? .identity
+                if deg.isFinite && cx.isFinite && cy.isFinite {
+                    let next = cur
+                        .translatedBy(x: cx, y: cy)
+                        .rotated(by: deg * .pi / 180)
+                        .translatedBy(x: -cx, y: -cy)
+                    transforms.append(next)
+                } else {
+                    transforms.append(cur)
+                }
+            case .unrotate:
+                if transforms.count > 1 { transforms.removeLast() }
+            case .clip, .unclip:
+                break
+            default:
+                if let r = opBounds(op) {
+                    let cur = transforms.last ?? .identity
+                    let tr = cur.isIdentity ? r : r.applying(cur)
+                    acc = acc.map { $0.union(tr) } ?? tr
+                }
+            }
+        }
+        guard let final = acc, final.origin.x.isFinite, final.origin.y.isFinite, final.width.isFinite, final.height.isFinite else {
+            return fallback
+        }
+        return DesignBox(x: final.minX, y: final.minY, w: final.width, h: final.height)
+    }
+
+    /// Draws a laid-out page directly without allocating a flattened `allOps` array.
+    /// When `visibleWorldRect` is provided, off-screen top-level nodes and off-screen leaf ops are skipped.
+    public static func draw(
+        laid: DesignLaidPage,
+        images: [String: CGImage],
+        visibleWorldRect: CGRect? = nil,
+        in ctx: CGContext
+    ) {
+        if let vis = visibleWorldRect {
+            for node in laid.nodes {
+                guard node.renderBounds.cgRect.intersects(vis) else { continue }
+                draw(ops: node.ops, images: images, visibleWorldRect: vis, in: ctx)
+            }
+            if !laid.connectors.isEmpty {
+                draw(ops: laid.connectors, images: images, visibleWorldRect: vis, in: ctx)
+            }
+        } else {
+            for node in laid.nodes {
+                draw(ops: node.ops, images: images, visibleWorldRect: nil, in: ctx)
+            }
+            if !laid.connectors.isEmpty {
+                draw(ops: laid.connectors, images: images, visibleWorldRect: nil, in: ctx)
+            }
+        }
+    }
+
+    public static func draw(ops: [DesignDrawOp], images: [String: CGImage], in ctx: CGContext) {
+        draw(ops: ops, images: images, visibleWorldRect: nil, in: ctx)
+    }
+
+    public static func draw(
+        ops: [DesignDrawOp],
+        images: [String: CGImage],
+        visibleWorldRect: CGRect?,
+        in ctx: CGContext
+    ) {
+        var rotateDepth = 0
+        for op in ops {
+            if let vis = visibleWorldRect, rotateDepth == 0, let bounds = opBounds(op), !bounds.intersects(vis) {
+                continue
+            }
             switch op {
             case .clip(let x, let y, let w, let h, let r):
                 ctx.saveGState()
@@ -1080,9 +1244,13 @@ public enum DesignCGDrawer {
                 } else {
                     ctx.clip(to: rect)
                 }
-            case .unclip, .unrotate:
+            case .unclip:
+                ctx.restoreGState()
+            case .unrotate:
+                if rotateDepth > 0 { rotateDepth -= 1 }
                 ctx.restoreGState()
             case .rotate(let deg, let cx, let cy):
+                rotateDepth += 1
                 ctx.saveGState()
                 if deg.isFinite && cx.isFinite && cy.isFinite {
                     ctx.translateBy(x: cx, y: cy)
@@ -1094,8 +1262,13 @@ public enum DesignCGDrawer {
                 ctx.saveGState()
                 ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
                 let rect = CGRect(x: x, y: y, width: max(0, w), height: max(0, h))
-                let path = SlideCGDrawer.safeRoundedRectPath(rect, cornerWidth: r, cornerHeight: r)
-                paint(path, bounds: rect, fill: fill, stroke: stroke, sw: sw, dash: dash, cap: nil, join: nil, in: ctx)
+                if !(r.isFinite && r > 0), case .color(let hex) = fill, stroke == nil || sw <= 0 {
+                    ctx.setFillColor(SlideCGDrawer.cgColor(hex))
+                    ctx.fill(rect)
+                } else {
+                    let path = SlideCGDrawer.safeRoundedRectPath(rect, cornerWidth: r, cornerHeight: r)
+                    paint(path, bounds: rect, fill: fill, stroke: stroke, sw: sw, dash: dash, cap: nil, join: nil, in: ctx)
+                }
                 ctx.restoreGState()
             case .ellipse(let x, let y, let w, let h, let fill, let stroke, let sw, let dash, let opacity, _):
                 guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { continue }
@@ -1151,11 +1324,7 @@ public enum DesignCGDrawer {
                 guard x.isFinite, y.isFinite, size.isFinite else { continue }
                 ctx.saveGState()
                 ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
-                let font = makeInterCTFont(weight: weight, italic: italic, size: size)
-                let color = SlideCGDrawer.cgColor(fill)
-                let attrs: [CFString: Any] = [kCTFontAttributeName: font, kCTForegroundColorAttributeName: color, kCTKernAttributeName: 0.0]
-                if let attr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) {
-                    let line = CTLineCreateWithAttributedString(attr)
+                if let line = makeCTLine(text: text, weight: weight, italic: italic, size: size, fill: fill) {
                     ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
                     ctx.textPosition = CGPoint(x: x, y: y)
                     CTLineDraw(line, ctx)
@@ -1165,8 +1334,34 @@ public enum DesignCGDrawer {
         }
     }
 
+    private static func makeCTLine(text: String, weight: Int, italic: Bool, size: Double, fill: String) -> CTLine? {
+        let safeSize = (size.isFinite && size > 0) ? min(size, 2000) : 14
+        let shouldCache = text.utf8.count <= 512
+        let key = TextLineCacheKey(text: text, weight: weight, italic: italic, sizeBits: safeSize.bitPattern, fill: fill)
+        if shouldCache, let hit = lineCache.withLock({ $0[key] }) {
+            return hit.line
+        }
+        let font = makeInterCTFont(weight: weight, italic: italic, size: safeSize)
+        let color = SlideCGDrawer.cgColor(fill)
+        let attrs: [CFString: Any] = [kCTFontAttributeName: font, kCTForegroundColorAttributeName: color, kCTKernAttributeName: 0.0]
+        guard let attr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) else { return nil }
+        let line = CTLineCreateWithAttributedString(attr)
+        if shouldCache {
+            let box = SendableLineBox(line: line)
+            lineCache.withLock { cache in
+                if cache.count >= 4096 { cache.removeAll(keepingCapacity: true) }
+                cache[key] = box
+            }
+        }
+        return line
+    }
+
     private static func makeInterCTFont(weight: Int, italic: Bool, size: Double) -> CTFont {
         let safeSize = (size.isFinite && size > 0) ? min(size, 2000) : 14
+        let key = FontCacheKey(weight: weight, italic: italic, sizeBits: safeSize.bitPattern)
+        if let hit = fontCache.withLock({ $0[key] }) {
+            return hit.font
+        }
         let weightNum: CGFloat = switch weight {
         case 500: 0.23
         case 600: 0.30
@@ -1181,8 +1376,15 @@ public enum DesignCGDrawer {
         ] as CFDictionary)
         let candidate = CTFontCreateWithFontDescriptor(desc, CGFloat(safeSize), nil)
         let family = CTFontCopyFamilyName(candidate) as String
-        if family.localizedCaseInsensitiveContains("Inter") { return candidate }
-        return SlideLayoutEngine.makeCTFont(slot: .sans, bold: weight >= 600, italic: italic, size: safeSize)
+        let resolved = family.localizedCaseInsensitiveContains("Inter")
+            ? candidate
+            : SlideLayoutEngine.makeCTFont(slot: .sans, bold: weight >= 600, italic: italic, size: safeSize)
+        let box = SendableFontBox(font: resolved)
+        fontCache.withLock { cache in
+            if cache.count >= 512 { cache.removeAll(keepingCapacity: true) }
+            cache[key] = box
+        }
+        return resolved
     }
 
     private static func paint(_ path: CGPath, bounds: CGRect, fill: DesignResolvedPaint?, stroke: String?, sw: Double, dash: [Double], cap: String?, join: String?, in ctx: CGContext) {
@@ -1201,7 +1403,7 @@ public enum DesignCGDrawer {
                 let p0 = CGPoint(x: bounds.minX + (0.5 - cx / 2) * bounds.width, y: bounds.minY + (0.5 - sy / 2) * bounds.height)
                 let p1 = CGPoint(x: bounds.minX + (0.5 + cx / 2) * bounds.width, y: bounds.minY + (0.5 + sy / 2) * bounds.height)
                 let colors = [SlideCGDrawer.cgColor(start), SlideCGDrawer.cgColor(end)] as CFArray
-                if let grad = CGGradient(colorsSpace: CGColorSpaceCreateDeviceRGB(), colors: colors, locations: [0, 1]) {
+                if let grad = CGGradient(colorsSpace: rgbColorSpace, colors: colors, locations: [0, 1]) {
                     ctx.drawLinearGradient(grad, start: p0, end: p1, options: [.drawsBeforeStartLocation, .drawsAfterEndLocation])
                 }
             }

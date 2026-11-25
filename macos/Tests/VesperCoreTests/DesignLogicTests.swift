@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import VesperCore
@@ -134,5 +135,80 @@ struct DesignLogicTests {
         let negObstacle = DesignBox(x: 200, y: 180, w: -80, h: -90)
         let pts = DesignConnectorRouter.connectorPath(fb: from, tb: to, fromAnchor: "right", toAnchor: "left", obstacles: [negObstacle])
         #expect(pts.count >= 2)
+    }
+
+    @Test func renderBoundsCoversRotatedAndOverflowingChildrenAndCullingMatchesUnculledPixels() {
+        let onScreenRect = DesignNode(
+            id: "n_on", type: .shape, x: 10, y: 10, w: 40, h: 40,
+            fill: .color("#FF0000"), shape: "rect"
+        )
+        let rotatedBar = DesignNode(
+            id: "n_rot", type: .shape, x: 20, y: 50, w: 60, h: 10, rotation: 90,
+            fill: .color("#00FF00"), shape: "rect"
+        )
+        let offScreenRect = DesignNode(
+            id: "n_off", type: .shape, x: 500, y: 500, w: 40, h: 40,
+            fill: .color("#0000FF"), shape: "rect"
+        )
+        let label = DesignNode(
+            id: "n_txt", type: .text, x: 10, y: 80, w: 80, h: 20,
+            paragraphs: [DesignParagraph(runs: [DesignRun(text: "Hello", size: 12, color: "#FFFFFF")])]
+        )
+        let doc = DesignDocument(pages: [
+            DesignPage(id: "p_1", name: "Page 1", children: [onScreenRect, rotatedBar, offScreenRect, label]),
+        ])
+        let laid = DesignLayoutEngine(design: doc).layoutPage(doc.pages[0])
+
+        // Rotated 60x10 bar around center (50, 55) becomes a 10x60 vertical bar spanning y: 25...85.
+        let rotNode = laid.nodes.first { $0.id == "n_rot" }!
+        #expect(rotNode.renderBounds.y <= 26)
+        #expect(rotNode.renderBounds.y + rotNode.renderBounds.h >= 84)
+
+        func render(visibleWorldRect: CGRect?) -> [UInt8] {
+            let width = 100, height = 100
+            var pixels = [UInt8](repeating: 0, count: width * height * 4)
+            let space = CGColorSpace(name: CGColorSpace.sRGB)!
+            pixels.withUnsafeMutableBytes { buf in
+                let ctx = CGContext(
+                    data: buf.baseAddress,
+                    width: width,
+                    height: height,
+                    bitsPerComponent: 8,
+                    bytesPerRow: width * 4,
+                    space: space,
+                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                )!
+                // Flip to y-down to match SwiftUI Canvas coordinates.
+                ctx.translateBy(x: 0, y: CGFloat(height))
+                ctx.scaleBy(x: 1, y: -1)
+                DesignCGDrawer.draw(laid: laid, images: [:], visibleWorldRect: visibleWorldRect, in: ctx)
+            }
+            return pixels
+        }
+
+        let unculled = render(visibleWorldRect: nil)
+        let culled = render(visibleWorldRect: CGRect(x: 0, y: 0, width: 100, height: 100))
+        #expect(culled == unculled)
+        // Confirm something actually drew (red rect at (20, 20), green rotated bar at (50, 35)).
+        let redIdx = (20 * 100 + 20) * 4
+        #expect(culled[redIdx] > 200)
+        #expect(culled[redIdx + 1] < 60)
+        #expect(culled[redIdx + 2] < 20)
+        let greenIdx = (35 * 100 + 50) * 4
+        #expect(culled[greenIdx] < 60)
+        #expect(culled[greenIdx + 1] > 200)
+        #expect(culled[greenIdx + 2] < 20)
+    }
+
+    @Test func cgColorCachePreservesAlphaSemantics() {
+        let full = SlideCGDrawer.cgColor("#3B6FE0", alpha: 1.0)
+        let half = SlideCGDrawer.cgColor("#3B6FE0", alpha: 0.5)
+        let fullAgain = SlideCGDrawer.cgColor("#3B6FE0", alpha: 1.0)
+        #expect(full.alpha == 1.0)
+        #expect(abs(half.alpha - 0.5) < 0.01)
+        #expect(fullAgain.alpha == 1.0)
+        // NaN alpha falls back to the hex's own alpha without crashing.
+        let nanAlpha = SlideCGDrawer.cgColor("#3B6FE080", alpha: .nan)
+        #expect(nanAlpha.alpha > 0.45 && nanAlpha.alpha < 0.55)
     }
 }
