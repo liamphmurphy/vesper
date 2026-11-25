@@ -40,6 +40,7 @@ struct EmbeddedBlockView: View {
         case .math: MathBlockView(tex: source, messageID: messageID ?? "")
         case .mermaid, .svgImage, .svgSteps: DiagramEmbedView(kind: kind, source: source, messageID: messageID, info: info)
         case .app: AppEmbedView(source: source, messageID: messageID ?? "", index: index, info: info)
+        case .mockup: MockupCardView(source: source)
         }
     }
 }

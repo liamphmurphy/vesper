@@ -21,9 +21,9 @@ final class ChatEmbedsTests: XCTestCase {
         XCTAssertNil(EmbeddedBlockKind.classify(info: nil))
     }
 
-    func testOnlyDiagramsSaveToLibraryAndOnlyAppsStayLive() {
+    func testOnlyDiagramsSaveToLibraryAndOnlyAppsAndMockupsStayLive() {
         XCTAssertEqual(EmbeddedBlockKind.allCases.filter(\.savesToLibrary), [.mermaid, .svgImage, .svgSteps])
-        XCTAssertEqual(EmbeddedBlockKind.allCases.filter { !$0.isRenderedOnce }, [.app])
+        XCTAssertEqual(EmbeddedBlockKind.allCases.filter { !$0.isRenderedOnce }, [.app, .mockup])
     }
 
     // MARK: Cache keys

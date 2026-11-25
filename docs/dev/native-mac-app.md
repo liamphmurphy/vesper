@@ -808,6 +808,15 @@ app sandbox's CSP and the ports of `web/lib/chat-svg.ts` and `web/lib/chat-app.t
   blanks the view and returns it to the pool, and the snapshot stands in until the block is back. When
   more apps are on screen than views, the least recently used one is snapshotted and parked behind a
   Run app button. An app restarts when it gets a view again, as a remounted iframe does.
+- **Mockups** (`MockupCardView`, parser `ChatMockupCard`). A chat persona's `create_mockup` returns
+  a ```` ```mockup ```` fence, `{"artifact_id","version_id","title"}` with UUID ids (anything else
+  shows its source). The card loads `GET /artifacts/{id}` (observed, so a review elsewhere shows) and
+  that exact version's SVG, draws it with `MockupRendering.draw`, pans on drag, zooms on pinch or
+  ⌘-scroll (a plain scroll still scrolls the transcript) and fits on double-click. Approve / Request
+  changes (a note is required for changes) go through `MockupRendering.review`, so the decision
+  records the same snapshot as the review screen; a superseded version links to the review of the
+  latest. Open editor navigates to `/artifacts/{id}?edit=1` (⌘-click: a new tab). The server posts
+  the decision into the chat as a system message, and the persona's next turn gets it.
 - **Security.** The app sandbox matches the web iframe's: `ChatApp.csp` (= `APP_CSP`, tested) is the
   document's first element; a fresh non-persistent data store per view (no Vesper cookies or
   storage); no bridge, message handler or native-mode script in the page world (the height script and
