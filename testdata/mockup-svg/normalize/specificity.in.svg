@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <style>
+    #primary { fill: #2563EB }
+    .button { fill: #9CA3AF; stroke: #4B5563 }
+    rect { fill: #F9FAFB; stroke: #000000; stroke-width: 2 }
+  </style>
+  <rect id="primary" class="button" x="10" y="10" width="50" height="30"/>
+  <rect class="button" x="70" y="10" width="50" height="30"/>
+  <rect x="130" y="10" width="50" height="30"/>
+</svg>

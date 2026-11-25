@@ -281,6 +281,13 @@ func TestAttachToTicketsRecordsActivity(t *testing.T) {
 
 func ptr[T any](v T) *T { return &v }
 
+func deref(s *string) string {
+	if s == nil {
+		return ""
+	}
+	return *s
+}
+
 // A chat has no project to file under, so what it saves (reports, notes,
 // mockups, designs) needs none; the types that are project documents still do.
 func TestProjectOptionalByType(t *testing.T) {

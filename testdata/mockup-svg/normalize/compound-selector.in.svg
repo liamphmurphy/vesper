@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100">
+  <style>
+    rect.card { fill: #FFFFFF; stroke: #D1D5DB; stroke-width: 1.5 }
+    .card.selected { stroke: #3B82F6 }
+  </style>
+  <rect class="card" x="10" y="10" width="80" height="40"/>
+  <rect class="card selected" x="110" y="10" width="80" height="40"/>
+  <circle class="card" cx="50" cy="80" r="10"/>
+</svg>

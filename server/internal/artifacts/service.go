@@ -160,7 +160,17 @@ func (s *Service) resolve(ctx context.Context, ws uuid.UUID, typ string, c Conte
 			return resolved{}, noop, apperr.Invalid("body_md", "must be UTF-8 text")
 		}
 		if mockup {
+			// Every new version must conform to profile v1, so simple CSS is
+			// rewritten first and the rewritten source is what's stored
+			// (docs/dev/mockup-svg-profile.md).
+			body, err := NormalizeMockupSVG(body)
+			if err != nil {
+				return resolved{}, noop, err
+			}
 			if err := ValidSVG(body); err != nil {
+				return resolved{}, noop, err
+			}
+			if err := ValidateMockupProfile(body); err != nil {
 				return resolved{}, noop, err
 			}
 			return resolved{body: &body, contentType: MockupContentType, size: int64(len(body))}, noop, nil

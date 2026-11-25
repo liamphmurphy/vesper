@@ -508,7 +508,7 @@ func (in NewTicketIn) estimate() (*int, *string, error) {
 type MockupIn struct {
 	TicketArg
 	Title    string `json:"title,omitempty" jsonschema:"Mockup title, e.g. Checkout screen. Required for a new mockup."`
-	SVG      string `json:"svg" jsonschema:"The complete SVG document: self-contained, no scripts, no external images or links. Wireframe the screen at its real size."`
+	SVG      string `json:"svg" jsonschema:"The complete SVG document at the screen's real size, with a viewBox. Mockup SVG profile v1: shapes (rect, circle, ellipse, line, polyline, polygon, path), g, text/tspan (one x, y, dx, dy each), image (data: URIs), use/symbol, gradients, clipPath, mask, pattern, marker; styled with presentation attributes (fill, stroke, font-size…). No style or class, filters, animation, foreignObject, textPath, nested svg, scripts or external links. Simple <style> rules (type, .class, #id) are converted; anything else is refused with what to change."`
 	MockupID string `json:"mockup_id,omitempty" jsonschema:"Revise this existing mockup (id from get_ticket) instead of creating a new one"`
 	Note     string `json:"note,omitempty" jsonschema:"One line on what changed in this revision"`
 }
@@ -1170,7 +1170,7 @@ var Tools = []Tool{
 			}
 			return ok(map[string]any{"ticket": nt.Key}), nil
 		}),
-	define("create_mockup", "Draft or revise a UI mockup as SVG (self-contained: no scripts, no external images). Wireframe the screen at its real size.",
+	define("create_mockup", "Draft or revise a UI mockup as SVG in mockup SVG profile v1 (see the svg field), wireframed at the screen's real size. The person reviews exactly what the Mac app draws.",
 		func(ctx context.Context, d Deps, c agents.Caller, in MockupIn) (any, error) {
 			var id *uuid.UUID
 			if strings.TrimSpace(in.MockupID) != "" {
