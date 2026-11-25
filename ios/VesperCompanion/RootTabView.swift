@@ -4,7 +4,6 @@ import VesperCore
 struct RootTabView: View {
     let connection: CompanionConnectionManager
 
-    @State private var sseTick = 0
     @State private var inboxBadge = 0
 
     var body: some View {
@@ -12,15 +11,15 @@ struct RootTabView: View {
             ConnectionStatusBanner(connection: connection)
 
             TabView {
-                ChatListView(connection: connection, sseTick: sseTick)
+                ChatListView(connection: connection)
                     .tabItem { Label("Chat", systemImage: "bubble.left.and.bubble.right") }
 
-                InboxView(connection: connection, sseTick: sseTick, badgeCount: $inboxBadge)
+                SpacesView(connection: connection)
+                    .tabItem { Label("Spaces", systemImage: "square.stack.3d.up") }
+
+                InboxView(connection: connection, badgeCount: $inboxBadge)
                     .tabItem { Label("Inbox", systemImage: "tray") }
                     .badge(inboxBadge)
-
-                RunsView(connection: connection, sseTick: sseTick)
-                    .tabItem { Label("Runs", systemImage: "bolt.horizontal.circle") }
 
                 QuickCaptureView(connection: connection)
                     .tabItem { Label("Capture", systemImage: "plus.square.on.square") }
@@ -28,18 +27,6 @@ struct RootTabView: View {
                 CompanionSettingsView(connection: connection)
                     .tabItem { Label("Mac", systemImage: "desktopcomputer") }
             }
-        }
-        .onChange(of: connection.state) { _, _ in
-            wireSSE()
-        }
-        .onAppear {
-            wireSSE()
-        }
-    }
-
-    private func wireSSE() {
-        connection.eventStream?.onEvent = { _ in
-            sseTick += 1
         }
     }
 }

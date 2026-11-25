@@ -19,8 +19,12 @@ struct VesperCompanionApp: App {
                 await connection.start()
             }
             .onChange(of: scenePhase) { _, phase in
-                if phase == .active, connection.pairedHost != nil, !connection.state.isConnected {
-                    Task { await connection.reconnect() }
+                if phase == .active, connection.pairedHost != nil {
+                    if connection.state.isConnected {
+                        connection.notifyForeground()
+                    } else {
+                        Task { await connection.reconnect() }
+                    }
                 }
             }
         }
