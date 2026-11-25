@@ -620,6 +620,20 @@ public enum KnowledgeShellLogic: Sendable {
         return s.isEmpty ? "/knowledge/\(id)" : "/knowledge/\(id)/\(s)"
     }
 
+    /// Returns the navigation href for a Knowledge explorer row.
+    /// Designs and slide decks open in their dedicated full-screen editors so their
+    /// layers/thumbnails sidebar and properties inspector own the window chrome
+    /// instead of stacking a second panel next to the Knowledge explorer.
+    public static func pageHref(for row: KnowledgePageRow) -> String {
+        if row.kind == .design, let cid = row.canvasId, !cid.isEmpty {
+            return "/apps/designs/\(cid)"
+        }
+        if row.kind == .deck, let cid = row.canvasId, !cid.isEmpty {
+            return "/apps/slides/\(cid)"
+        }
+        return pageHref(id: row.id, title: row.title)
+    }
+
     public static func normalizeFolderPath(_ path: String) -> String {
         path.split(separator: "/").map(String.init).filter { !$0.isEmpty }.joined(separator: "/")
     }

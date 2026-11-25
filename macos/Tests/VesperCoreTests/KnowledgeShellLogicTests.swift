@@ -215,6 +215,23 @@ final class KnowledgeShellLogicTests: XCTestCase {
         XCTAssertEqual(KnowledgeShellLogic.ancestors(of: "A/B/C"), ["A", "A/B"])
     }
 
+    func testPageHrefForRowRoutesCanvasKindsToEditors() {
+        let design = makeRow(id: "p-design", title: "Audio Library", path: "Designs/Audio Library", kind: .design, canvasId: "c-design")
+        XCTAssertEqual(KnowledgeShellLogic.pageHref(for: design), "/apps/designs/c-design")
+
+        let deck = makeRow(id: "p-deck", title: "Q4 Review", path: "Decks/Q4 Review", kind: .deck, canvasId: "c-deck")
+        XCTAssertEqual(KnowledgeShellLogic.pageHref(for: deck), "/apps/slides/c-deck")
+
+        let designWithoutCanvas = makeRow(id: "p-design-2", title: "Draft", path: "Designs/Draft", kind: .design, canvasId: nil)
+        XCTAssertEqual(KnowledgeShellLogic.pageHref(for: designWithoutCanvas), "/knowledge/p-design-2/draft")
+
+        let deckEmptyCanvas = makeRow(id: "p-deck-2", title: "Empty", path: "Decks/Empty", kind: .deck, canvasId: "")
+        XCTAssertEqual(KnowledgeShellLogic.pageHref(for: deckEmptyCanvas), "/knowledge/p-deck-2/empty")
+
+        let doc = makeRow(id: "p-doc", title: "ADR 1", path: "Decisions/ADR 1", kind: .document, canvasId: "c-doc")
+        XCTAssertEqual(KnowledgeShellLogic.pageHref(for: doc), "/knowledge/p-doc/adr-1")
+    }
+
     func testDragPayloadEncodingAndDecoding() {
         let row = makeRow(id: "p1", title: "Doc", path: "Notes/Doc")
         let pagePayload = KnowledgeDragItem.page(row).encodeDragPayload()
