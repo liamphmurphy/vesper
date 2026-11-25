@@ -140,8 +140,10 @@ private struct EmbedLoadingView: View {
 
 // MARK: - Diagrams
 
-/// mermaid, svg-image and svg-steps (svg-fence.tsx `DiagramVisual`, mermaid-fence.tsx): drawn once
-/// off-screen into a vector image per frame, cached per message, theme and source.
+/// mermaid, svg-image and svg-steps (svg-fence.tsx `DiagramVisual`, mermaid-fence.tsx). svg-image and
+/// svg-steps frames are compiled by the native mockup renderer (`ChatSVGNative`) and drawn as vectors
+/// at whatever size they're shown; mermaid is drawn once off-screen into a vector image. Both are
+/// cached per message, theme, source and frame.
 struct DiagramEmbedView: View {
     let kind: EmbeddedBlockKind
     let source: String
@@ -174,9 +176,10 @@ struct DiagramEmbedView: View {
         let stepped = count > 1
         let at = min(step, max(count - 1, 0))
         let key = renderKey(at, palette: palette, themed: themed, stepped: stepped)
-        let current = rendered[key] ?? EmbedRenderer.shared.cached(key)
+        let native = kind == .mermaid ? nil : nativeFrame(key, svg: svg, palette: palette, themed: themed, step: stepped ? at + 1 : nil)
+        let current = kind == .mermaid ? (rendered[key] ?? EmbedRenderer.shared.cached(key)) : nil
         let tooLong = kind == .mermaid && source.count > EmbedRendererPage.mermaidMaxSource
-        let didFail = tooLong || failed.contains(key)
+        let didFail = tooLong || (kind == .mermaid ? failed.contains(key) : native == nil)
         let showCode = view == "Code" || (didFail && kind == .mermaid)
         let label = kind == .mermaid ? "Diagram" : stepped ? "Step-through" : "SVG image"
         let name = ChatSVG.title(svg) ?? label
@@ -191,7 +194,7 @@ struct DiagramEmbedView: View {
                 if let portable = portableSVG(current, palette: palette, svg: svg, count: count) {
                     actions(portable)
                 }
-                if current != nil {
+                if current != nil || native != nil {
                     Button {
                         showLightbox = true
                     } label: {
@@ -212,21 +215,22 @@ struct DiagramEmbedView: View {
                 failureLine(name)
                 EmbedSourceView(code: source, language: "html")
             } else {
-                stage(current, key: key, themed: themed, palette: palette, alt: stepped ? "\(name). Step \(at + 1) of \(count)" : name)
+                stage(current, native: native, key: key, themed: themed, palette: palette, alt: stepped ? "\(name). Step \(at + 1) of \(count)" : name)
                 if stepped { stepNav(at: at, count: count, captions: captions) }
             }
         }
         .task(id: key) {
-            await draw(at, palette: palette, svg: svg, themed: themed, stepped: stepped)
-            // The next frame too, so stepping forward doesn't wait.
-            if stepped, at + 1 < count {
-                await draw(at + 1, palette: palette, svg: svg, themed: themed, stepped: stepped)
+            if kind == .mermaid {
+                await draw(at, palette: palette)
+            } else if stepped, at + 1 < count {
+                // The next frame too, so stepping forward doesn't wait.
+                _ = nativeFrame(renderKey(at + 1, palette: palette, themed: themed, stepped: stepped), svg: svg, palette: palette, themed: themed, step: at + 2)
             }
         }
         .sheet(isPresented: $showLightbox) {
             ChatLightboxSheet(title: name, subtitle: stepped ? "Step \(at + 1) of \(count)" : label) {
                 VStack(spacing: 12) {
-                    stage(current, key: key, themed: themed, palette: palette, alt: stepped ? "\(name). Step \(at + 1) of \(count)" : name)
+                    stage(current, native: native, key: key, themed: themed, palette: palette, alt: stepped ? "\(name). Step \(at + 1) of \(count)" : name)
                     if stepped { stepNav(at: at, count: count, captions: captions) }
                 }
             }
@@ -238,18 +242,16 @@ struct DiagramEmbedView: View {
         EmbedCacheKey(kind: kind, messageID: messageID ?? "", theme: themed ? palette.fingerprint : "plain", source: source, variant: stepped ? String(frame + 1) : "")
     }
 
-    private func draw(_ frame: Int, palette: VizPalette, svg: String, themed: Bool, stepped: Bool) async {
-        let key = renderKey(frame, palette: palette, themed: themed, stepped: stepped)
+    /// An svg-image or svg-steps frame, compiled natively (cached), or nil when it can't be drawn.
+    private func nativeFrame(_ key: EmbedCacheKey, svg: String, palette: VizPalette, themed: Bool, step: Int?) -> ChatSVGFrame? {
+        ChatSVGNative.frame(key, source: ChatSVGNative.frameSource(svg, palette: palette, themed: themed, step: step))
+    }
+
+    private func draw(_ frame: Int, palette: VizPalette) async {
+        let key = renderKey(frame, palette: palette, themed: true, stepped: false)
         if rendered[key] != nil || failed.contains(key) { return }
-        if kind == .mermaid && source.count > EmbedRendererPage.mermaidMaxSource { return }
-        let job: EmbedRenderer.Job
-        if kind == .mermaid {
-            job = .mermaid(source, palette: palette)
-        } else {
-            let doc = themed ? ChatSVG.theme(svg, palette: palette) : svg
-            job = .svg(stepped ? ChatSVG.stepFrame(doc, step: frame + 1) : doc, background: themed ? palette.surface : "#FFFFFF")
-        }
-        if let drawn = await EmbedRenderer.shared.render(key, job) {
+        if source.count > EmbedRendererPage.mermaidMaxSource { return }
+        if let drawn = await EmbedRenderer.shared.render(key, .mermaid(source, palette: palette)) {
             rendered[key] = drawn
         } else {
             failed.insert(key)
@@ -257,10 +259,15 @@ struct DiagramEmbedView: View {
     }
 
     @ViewBuilder
-    private func stage(_ embed: RenderedEmbed?, key: EmbedCacheKey, themed: Bool, palette: VizPalette, alt: String) -> some View {
+    private func stage(_ embed: RenderedEmbed?, native: ChatSVGFrame?, key: EmbedCacheKey, themed: Bool, palette: VizPalette, alt: String) -> some View {
         let background = themed ? (Color(hex: palette.surface) ?? .white) : .white
         Group {
-            if let embed, let image = EmbedImages.image(embed, key: key) {
+            if let native {
+                let image = EmbedImages.image(native, key: key, background: themed ? palette.surface : "#FFFFFF")
+                EmbedImageView(image: image, size: native.document.intrinsicSize, maxHeight: 720, alt: alt)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .help(native.dropped.isEmpty ? "" : "Simplified to draw natively: left out \(native.dropped.joined(separator: ", "))")
+            } else if let embed, let image = EmbedImages.image(embed, key: key) {
                 EmbedImageView(image: image, size: CGSize(width: embed.width, height: embed.height), maxHeight: kind == .mermaid ? 480 : 720, alt: alt)
                     .frame(maxWidth: .infinity, alignment: kind == .mermaid ? .leading : .center)
             } else {

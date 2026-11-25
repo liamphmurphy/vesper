@@ -22,6 +22,23 @@ enum EmbedImages {
         cache.setObject(image, forKey: name)
         return image
     }
+
+    /// A natively compiled SVG frame as an image that redraws the document at each size AppKit asks
+    /// for, so it stays sharp at any zoom. Not a PDF: CoreGraphics' PDF output flattens gradient
+    /// alpha (see `MockupRendering.image`).
+    static func image(_ frame: ChatSVGFrame, key: EmbedCacheKey, background: String) -> NSImage {
+        let name = "native|\(key.description)|\(background)" as NSString
+        if let hit = cache.object(forKey: name) { return hit }
+        let fill = RGBA(hex: background).map { CGColor(srgbRed: $0.red, green: $0.green, blue: $0.blue, alpha: $0.alpha) }
+        let document = frame.document
+        let image = NSImage(size: document.intrinsicSize, flipped: true) { rect in
+            guard let ctx = NSGraphicsContext.current?.cgContext else { return false }
+            MockupSVGRenderer.draw(document, in: ctx, rect: rect, options: MockupSVGRenderOptions(background: fill))
+            return true
+        }
+        cache.setObject(image, forKey: name)
+        return image
+    }
 }
 
 /// Draws math natively (`NativeMath`: SwiftMath layout, CoreGraphics drawing), cached like every
