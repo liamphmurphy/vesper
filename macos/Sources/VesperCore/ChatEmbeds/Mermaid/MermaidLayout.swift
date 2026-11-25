@@ -120,7 +120,12 @@ enum MermaidLayered {
         }
         let edges = g.edges.map { e in
             ELKJSONEdge(id: e.id, sources: [ref(e.source)], targets: [ref(e.target)],
-                        labels: e.label.map { [ELKJSONLabel(width: $0.width.rounded(.up), height: $0.height.rounded(.up))] })
+                        labels: e.label.map {
+                            // elkjs only reserves room for a label that has text, and only centres
+                            // it on the edge when `inline` is set on the label itself.
+                            [ELKJSONLabel(width: $0.width.rounded(.up), height: $0.height.rounded(.up), text: " ",
+                                          layoutOptions: ["elk.edgeLabels.inline": "true"])]
+                        })
         }
         var root = ELKJSONNode(id: "root")
         root.children = children(of: "")
@@ -172,11 +177,15 @@ enum MermaidLayered {
                 }
             }
             out.edges[e.id] = pts
-            // ELK reserves room for inline labels but doesn't reliably report where it put them
-            // (labels come back at their container's origin, or without coordinates), so each
-            // label is centred on its routed edge, halfway along it, as mermaid places them.
-            if let l = e.labels?.first, let mid = Self.midpoint(pts) {
-                out.labels[e.id] = CGRect(x: mid.x - l.width / 2, y: mid.y - l.height / 2, width: l.width, height: l.height)
+            // ELK places each label in the room it reserved on the edge. A position that isn't on
+            // the routed edge (a label at its container's origin) falls back to halfway along it,
+            // as mermaid places labels.
+            if let l = e.labels?.first {
+                if let x = l.x, let y = l.y, Self.distance(from: CGPoint(x: x + l.width / 2, y: y + l.height / 2), to: pts) <= max(l.width, l.height) / 2 + 2 {
+                    out.labels[e.id] = CGRect(x: x, y: y, width: l.width, height: l.height)
+                } else if let mid = Self.midpoint(pts) {
+                    out.labels[e.id] = CGRect(x: mid.x - l.width / 2, y: mid.y - l.height / 2, width: l.width, height: l.height)
+                }
             }
         }
         out.size = CGSize(width: laid.width ?? 0, height: laid.height ?? 0)
@@ -196,6 +205,18 @@ enum MermaidLayered {
             remaining -= len
         }
         return pts.last ?? first
+    }
+
+    /// The shortest distance from `p` to a polyline; infinite for one with no points.
+    static func distance(from p: CGPoint, to pts: [CGPoint]) -> Double {
+        guard let first = pts.first else { return .infinity }
+        var best = hypot(p.x - first.x, p.y - first.y)
+        for (a, b) in zip(pts, pts.dropFirst()) {
+            let dx = b.x - a.x, dy = b.y - a.y, len2 = dx * dx + dy * dy
+            let t = len2 > 0 ? max(0, min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / len2)) : 0
+            best = min(best, hypot(p.x - (a.x + dx * t), p.y - (a.y + dy * t)))
+        }
+        return best
     }
 
     /// Moves an edge end that ELK attached to a node's bounding box onto the node's real outline
@@ -249,6 +270,8 @@ struct ELKJSONEdge: Codable {
 struct ELKJSONLabel: Codable {
     var width: Double
     var height: Double
+    var text: String?
+    var layoutOptions: [String: String]?
     var x: Double?
     var y: Double?
 }
