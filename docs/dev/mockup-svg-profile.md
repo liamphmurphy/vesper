@@ -94,10 +94,11 @@ ignored: `xmlns`, `xmlns:*`, `version`, `baseProfile`, `xml:space`, `xml:lang`,
   SVG grammar (`none` or `x(Min|Mid|Max)Y(Min|Mid|Max)` with optional
   `meet|slice`).
 - **font-family**: any comma-separated list. The renderer uses the first
-  family installed on the Mac; `sans-serif`, `system-ui`, `-apple-system`,
-  `ui-sans-serif` and `BlinkMacSystemFont` map to the system font, `serif` and
-  `ui-serif` to Times/New York, `monospace` and `ui-monospace` to SF Mono or
-  Menlo. An unknown family falls back to the system font.
+  family installed on the Mac, with Safari's generic families so a mockup
+  reads the same as in a browser: `sans-serif` is Helvetica, `serif` Times,
+  `monospace` Courier; `system-ui`, `-apple-system`, `BlinkMacSystemFont` and
+  `ui-sans-serif` the system font, `ui-serif` New York, `ui-monospace` SF Mono.
+  A list with no installed family falls back to Times, as Safari's does.
 
 ## Normalization (server, before validation)
 

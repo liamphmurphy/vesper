@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 260">
+  <rect width="400" height="260" fill="#FFFFFF"/>
+  <line x1="200" y1="0" x2="200" y2="260" stroke="#E5E7EB"/>
+  <text x="200" y="30" text-anchor="start" font-family="sans-serif" font-size="16">start</text>
+  <text x="200" y="60" text-anchor="middle" font-family="sans-serif" font-size="16">middle</text>
+  <text x="200" y="90" text-anchor="end" font-family="sans-serif" font-size="16">end</text>
+  <line x1="0" y1="140" x2="400" y2="140" stroke="#E5E7EB"/>
+  <text x="10" y="140" font-family="sans-serif" font-size="20" dominant-baseline="middle">Mid</text>
+  <text x="80" y="140" font-family="sans-serif" font-size="20" dominant-baseline="central">Cen</text>
+  <text x="150" y="140" font-family="sans-serif" font-size="20" dominant-baseline="hanging">Hang</text>
+  <text x="230" y="140" font-family="sans-serif" font-size="20">Alpha</text>
+  <text x="10" y="200" font-family="serif" font-size="18">Serif <tspan font-weight="bold">bold</tspan> <tspan font-style="italic">italic</tspan></text>
+  <text x="10" y="240" font-family="monospace" font-size="14" letter-spacing="1">mono spaced 0123</text>
+</svg>

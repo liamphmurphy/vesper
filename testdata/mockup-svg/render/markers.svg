@@ -1,0 +1,13 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 300 200">
+  <defs>
+    <marker id="arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto-start-reverse">
+      <path d="M0 0 L10 5 L0 10 Z" fill="#111827"/>
+    </marker>
+    <marker id="dot" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="5" markerHeight="5">
+      <circle cx="5" cy="5" r="5" fill="#EF4444"/>
+    </marker>
+  </defs>
+  <rect width="300" height="200" fill="#FFFFFF"/>
+  <line x1="20" y1="30" x2="280" y2="30" stroke="#111827" stroke-width="2" marker-start="url(#arrow)" marker-end="url(#arrow)"/>
+  <polyline points="20,170 90,80 160,150 280,60" fill="none" stroke="#111827" stroke-width="2" marker-mid="url(#dot)" marker-end="url(#arrow)"/>
+</svg>
