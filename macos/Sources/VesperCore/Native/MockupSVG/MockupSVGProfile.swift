@@ -2,13 +2,26 @@ import Foundation
 
 /// One way a source falls outside mockup SVG profile v1.
 public struct MockupSVGViolation: Equatable, Sendable {
+    /// What a violation is about, so tools such as `MockupSVGSimplifier` can act on it without
+    /// reading the message.
+    public enum Kind: Equatable, Sendable {
+        /// The whole document: a parse error, the root, its size, element count, depth or a cycle.
+        case document
+        /// The element at `path` isn't allowed where it is.
+        case element
+        /// The named attribute (as written, e.g. `xlink:href`) of the element at `path`.
+        case attribute(String)
+    }
+
     /// The element's path in the tree ("" for the root or a parse error).
     public let path: String
     public let message: String
+    public let kind: Kind
 
-    public init(path: String, message: String) {
+    public init(path: String, message: String, kind: Kind = .document) {
         self.path = path
         self.message = message
+        self.kind = kind
     }
 }
 
@@ -53,6 +66,8 @@ public enum MockupSVGProfile {
         let path: String
         let element: String
         let attribute: String
+        /// The attribute as written, which differs from `attribute` for `xlink:href`.
+        let written: String
         let id: String
         let kinds: Set<String>?
     }
@@ -67,8 +82,8 @@ public enum MockupSVGProfile {
 
         init(tree: MockupSVGTree) { self.tree = tree }
 
-        mutating func add(_ path: String, _ element: String, _ message: String) {
-            problems.append(MockupSVGViolation(path: path, message: "<\(element)> \(message)"))
+        mutating func add(_ path: String, _ element: String, _ message: String, _ kind: MockupSVGViolation.Kind = .document) {
+            problems.append(MockupSVGViolation(path: path, message: "<\(element)> \(message)", kind: kind))
         }
 
         mutating func run() {
@@ -126,16 +141,16 @@ public enum MockupSVGProfile {
                 add(path, name, "is nested \(depth) deep; mockups are limited to \(maxDepth) levels")
             }
             guard ns.namespace(of: n.name) == svgNS else {
-                add(path, name, "isn't an SVG element; use only SVG elements in the SVG namespace")
+                add(path, name, "isn't an SVG element; use only SVG elements in the SVG namespace", .element)
                 return
             }
             if ignoredElements.contains(name) { return }
             if name == "svg", !isRoot {
-                add(path, name, "can't be nested; use <g transform=\"translate(x y)\"> or <symbol> with <use>")
+                add(path, name, "can't be nested; use <g transform=\"translate(x y)\"> or <symbol> with <use>", .element)
             } else if name == "style" {
-                add(path, name, "isn't allowed in mockups; use presentation attributes such as fill=\"#fff\" on the elements")
+                add(path, name, "isn't allowed in mockups; use presentation attributes such as fill=\"#fff\" on the elements", .element)
             } else if !drawn.contains(name), !referenced.contains(name) {
-                add(path, name, "isn't supported in mockups (\(Self.hint(name)))")
+                add(path, name, "isn't supported in mockups (\(Self.hint(name)))", .element)
             }
             for a in n.attributes { checkAttribute(a, element: n, path: path, ns: ns) }
             for (i, c) in n.children.enumerated() where c.isElement {
@@ -159,11 +174,11 @@ public enum MockupSVGProfile {
                 let prefix = String(a.name[..<colon]), local = String(a.name[a.name.index(after: colon)...])
                 if prefix == "xml" {
                     if local == "space" || local == "lang" { return }
-                    add(path, el, "attribute \(a.name) isn't supported")
+                    add(path, el, "attribute \(a.name) isn't supported", .attribute(a.name))
                 } else if ns.prefixes[prefix] == xlinkNS, local == "href" {
-                    checkHref(a.value, element: n, path: path)
+                    checkHref(a.value, written: a.name, element: n, path: path)
                 } else {
-                    add(path, el, "attribute \(a.name) isn't supported in mockups")
+                    add(path, el, "attribute \(a.name) isn't supported in mockups", .attribute(a.name))
                 }
                 return
             }
@@ -171,71 +186,71 @@ public enum MockupSVGProfile {
             if ignoredAttributes.contains(name) || name.hasPrefix("aria-") || name.hasPrefix("data-") { return }
             switch name {
             case "class", "style":
-                add(path, el, "attribute \(name) isn't allowed in mockups; use presentation attributes such as fill=\"#fff\" or stroke-width=\"2\"")
+                add(path, el, "attribute \(name) isn't allowed in mockups; use presentation attributes such as fill=\"#fff\" or stroke-width=\"2\"", .attribute(a.name))
                 return
             case "href":
-                checkHref(a.value, element: n, path: path)
+                checkHref(a.value, written: a.name, element: n, path: path)
                 return
             default:
                 break
             }
             guard let rule = Self.rules[name] else {
-                add(path, el, "attribute \(name) isn't supported in mockups")
+                add(path, el, "attribute \(name) isn't supported in mockups", .attribute(a.name))
                 return
             }
             let v = a.value.trimmingCharacters(in: .whitespacesAndNewlines)
             switch rule {
             case .check(let ok, let hint):
-                if !ok(v) { add(path, el, "\(name)=\"\(a.value)\": \(hint)") }
+                if !ok(v) { add(path, el, "\(name)=\"\(a.value)\": \(hint)", .attribute(a.name)) }
             case .paint:
                 guard let p = MockupSVGValues.paint(v) else {
-                    add(path, el, "\(name)=\"\(a.value)\": \(Self.colorHint), none or url(#gradient)")
+                    add(path, el, "\(name)=\"\(a.value)\": \(Self.colorHint), none or url(#gradient)", .attribute(a.name))
                     return
                 }
                 if case .url(let id, _) = p {
-                    refs.append(Ref(path: path, element: el, attribute: name, id: id, kinds: ["linearGradient", "radialGradient", "pattern"]))
+                    refs.append(Ref(path: path, element: el, attribute: name, written: name, id: id, kinds: ["linearGradient", "radialGradient", "pattern"]))
                 }
             case .reference(let kind):
                 guard let id = MockupSVGValues.reference(v) else {
-                    add(path, el, "\(name)=\"\(a.value)\": use none or url(#id) pointing at a <\(kind)>")
+                    add(path, el, "\(name)=\"\(a.value)\": use none or url(#id) pointing at a <\(kind)>", .attribute(a.name))
                     return
                 }
-                if !id.isEmpty { refs.append(Ref(path: path, element: el, attribute: name, id: id, kinds: [kind])) }
+                if !id.isEmpty { refs.append(Ref(path: path, element: el, attribute: name, written: name, id: id, kinds: [kind])) }
             }
         }
 
-        mutating func checkHref(_ raw: String, element n: MockupSVGNode, path: String) {
+        mutating func checkHref(_ raw: String, written: String, element n: MockupSVGNode, path: String) {
             let el = n.localName
             switch el {
             case "image":
                 if MockupSVGValues.imageData(raw) == nil {
-                    add(path, el, "href must be a data:image/png, jpeg, gif or webp base64 URI")
+                    add(path, el, "href must be a data:image/png, jpeg, gif or webp base64 URI", .attribute(written))
                 }
             case "use":
                 if let id = MockupSVGValues.fragment(raw) {
-                    refs.append(Ref(path: path, element: el, attribute: "href", id: id, kinds: nil))
+                    refs.append(Ref(path: path, element: el, attribute: "href", written: written, id: id, kinds: nil))
                 } else {
-                    add(path, el, "href must point at an element in this file, like href=\"#card\"")
+                    add(path, el, "href must point at an element in this file, like href=\"#card\"", .attribute(written))
                 }
             case "linearGradient", "radialGradient":
                 if let id = MockupSVGValues.fragment(raw) {
-                    refs.append(Ref(path: path, element: el, attribute: "href", id: id, kinds: ["linearGradient", "radialGradient"]))
+                    refs.append(Ref(path: path, element: el, attribute: "href", written: written, id: id, kinds: ["linearGradient", "radialGradient"]))
                 } else {
-                    add(path, el, "href must point at another gradient, like href=\"#base\"")
+                    add(path, el, "href must point at another gradient, like href=\"#base\"", .attribute(written))
                 }
             default:
-                add(path, el, "attribute href isn't supported here; only <use>, <image> and gradients take one")
+                add(path, el, "attribute href isn't supported here; only <use>, <image> and gradients take one", .attribute(written))
             }
         }
 
         mutating func checkRefs() {
             for r in refs {
                 guard let target = ids[r.id] else {
-                    add(r.path, r.element, "\(r.attribute) points at #\(r.id), which isn't in this file")
+                    add(r.path, r.element, "\(r.attribute) points at #\(r.id), which isn't in this file", .attribute(r.written))
                     continue
                 }
                 if let kinds = r.kinds, !kinds.contains(target.name) {
-                    add(r.path, r.element, "\(r.attribute) points at <\(target.name) id=\"\(r.id)\">, which isn't a \(kinds.sorted().joined(separator: " or "))")
+                    add(r.path, r.element, "\(r.attribute) points at <\(target.name) id=\"\(r.id)\">, which isn't a \(kinds.sorted().joined(separator: " or "))", .attribute(r.written))
                 }
             }
         }
@@ -267,7 +282,7 @@ public enum MockupSVGProfile {
                 switch state[child] {
                 case 1:
                     let from = stack[top].path
-                    add(from, tree.node(at: from)?.localName ?? "use", "makes a cycle: it uses an element that contains it; point <use> at a separate element in <defs>")
+                    add(from, tree.node(at: from)?.localName ?? "use", "makes a cycle: it uses an element that contains it; point <use> at a separate element in <defs>", .element)
                     reported = true
                 case 2:
                     continue
