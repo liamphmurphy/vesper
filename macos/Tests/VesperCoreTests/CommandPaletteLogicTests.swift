@@ -7,11 +7,11 @@ final class CommandPaletteLogicTests: XCTestCase {
         XCTAssertEqual(people.types, [.people])
         XCTAssertEqual(people.text, "meow")
 
-        let tickets = CommandPaletteLogic.parseFilters("# status:in_progress palette")
-        XCTAssertEqual(tickets.types, [.ticket])
-        XCTAssertEqual(tickets.status, "in_progress")
-        XCTAssertEqual(tickets.text, "palette")
-        XCTAssertEqual(tickets.tokens, ["status:in_progress"])
+        let status = CommandPaletteLogic.parseFilters("is:chat status:in_progress palette")
+        XCTAssertEqual(status.types, [.chat])
+        XCTAssertEqual(status.status, "in_progress")
+        XCTAssertEqual(status.text, "palette")
+        XCTAssertEqual(status.tokens, ["is:chat", "status:in_progress"])
 
         let synonyms = CommandPaletteLogic.parseFilters("is:note in:project is:unknown roadmap")
         XCTAssertEqual(synonyms.types, [.page, .space])
@@ -20,9 +20,8 @@ final class CommandPaletteLogicTests: XCTestCase {
     }
 
     func testRemoveTokenAndStripTypeFilters() {
-        XCTAssertEqual(CommandPaletteLogic.removeToken("is:ticket status:done deploy", token: "status:done"), "is:ticket deploy")
+        XCTAssertEqual(CommandPaletteLogic.removeToken("is:page status:done deploy", token: "status:done"), "is:page deploy")
         XCTAssertEqual(CommandPaletteLogic.stripTypeFilters(from: "@ is:people status:open alice"), "status:open alice")
-        XCTAssertEqual(CommandPaletteLogic.stripTypeFilters(from: "#LAZY-42"), "LAZY-42")
     }
 
     func testTicketKeyFrom() {
@@ -52,12 +51,13 @@ final class CommandPaletteLogicTests: XCTestCase {
     func testPageScopeAndContext() {
         XCTAssertEqual(CommandPaletteLogic.pageScope(path: "/knowledge/123"), .knowledge)
         XCTAssertEqual(CommandPaletteLogic.pageScope(path: "/apps/designs/abc"), .knowledge)
-        XCTAssertEqual(CommandPaletteLogic.pageScope(path: "/tickets", search: "?layout=epics"), .type(.epic, label: "Epics"))
-        XCTAssertEqual(CommandPaletteLogic.pageScope(path: "/work?view=tickets"), .type(.ticket, label: "Tickets"))
+        XCTAssertEqual(CommandPaletteLogic.pageScope(path: "/spaces/s1"), .type(.space, label: "Spaces"))
         XCTAssertEqual(CommandPaletteLogic.pageScope(path: "/chat/abc"), .type(.chat, label: "Chats"))
         XCTAssertNil(CommandPaletteLogic.pageScope(path: "/inbox"))
+        XCTAssertNil(CommandPaletteLogic.pageScope(path: "/work"))
+        XCTAssertNil(CommandPaletteLogic.pageScope(path: "/tickets"))
 
-        XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/tickets/LAZY-412"), .ticket(key: "LAZY-412"))
+        XCTAssertNil(CommandPaletteLogic.pageContext(path: "/tickets/LAZY-412"))
         let uuid = "01a20427-8af8-7560-ae88-62e1c37d551e"
         XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/knowledge/\(uuid)"), .knowledge(id: uuid))
         XCTAssertEqual(CommandPaletteLogic.pageContext(path: "/wiki/docs/dev%20guide"), .wiki(path: "docs/dev guide"))
@@ -108,13 +108,13 @@ final class CommandPaletteLogicTests: XCTestCase {
         let ranked = CommandPaletteLogic.rankGroups(
             [
                 (.page, [1.0, 2.0]),
-                (.ticket, [9.0, 8.0, 7.0, 6.0]),
+                (.space, [9.0, 8.0, 7.0, 6.0]),
             ],
             score: { $0 },
             cap: 3,
-            counts: [.ticket: 5, .page: 2]
+            counts: [.space: 5, .page: 2]
         )
-        XCTAssertEqual(ranked.map(\.type), [.ticket, .page])
+        XCTAssertEqual(ranked.map(\.type), [.space, .page])
         XCTAssertEqual(ranked[0].items.count, 3)
         XCTAssertEqual(ranked[0].more, 2)
     }

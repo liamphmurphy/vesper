@@ -539,12 +539,7 @@
       "open": true,
       "activeTabId": "properties",
       "companion": {
-        "subject": {
-          "kind": "ticket",
-          "id": "VES-412",
-          "title": "Move right inspector to native macOS split view"
-        },
-        "path": "/tickets/VES-412"
+        "path": "/knowledge"
       },
       "tabs": [
         {

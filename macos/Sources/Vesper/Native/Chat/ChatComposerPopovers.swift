@@ -101,59 +101,6 @@ struct ChatComposerCompletionPopover: View {
     }
 }
 
-// MARK: - Active Ticket Runs Strip
-
-struct ChatRunningStatusStrip: View {
-    @Environment(\.vesperTheme) private var theme
-
-    let activeTicketRuns: [API.ChatTicketRun]
-    let onOpenRun: (String) -> Void
-
-    var body: some View {
-        if !activeTicketRuns.isEmpty {
-            let p = theme.palette
-            HStack(spacing: 8) {
-                ProgressView()
-                    .controlSize(.small)
-
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack(spacing: 6) {
-                        ForEach(activeTicketRuns, id: \.runId) { run in
-                            Button {
-                                onOpenRun(run.runId)
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Circle()
-                                        .fill(p.accent)
-                                        .frame(width: 6, height: 6)
-                                    Text(run.ticket)
-                                        .font(.system(size: theme.pointSize(.micro), weight: .semibold))
-                                    if let step = run.currentStep, !step.isEmpty {
-                                        Text("· \(step)")
-                                            .font(.system(size: theme.pointSize(.micro)))
-                                            .foregroundStyle(p.secondaryText)
-                                            .lineLimit(1)
-                                    }
-                                }
-                                .padding(.horizontal, 7)
-                                .padding(.vertical, 3)
-                                .background(p.surface, in: Capsule())
-                                .overlay(Capsule().stroke(p.border))
-                            }
-                            .buttonStyle(.plain)
-                        }
-                    }
-                }
-            }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-            .background(p.surface.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-        }
-    }
-}
-
 // MARK: - Pinned Collapsible Live Step Checklist Bar
 
 /// Compact pinned bar above the composer while a running turn has a `TodoWrite` / `TaskCreate` plan.

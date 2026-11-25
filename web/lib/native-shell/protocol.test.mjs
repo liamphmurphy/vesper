@@ -58,8 +58,8 @@ test("inspector and openInMain messages validate shape and in-app paths", () => 
   assert.equal(isPageMessage({ v: 1, type: "inspector", model: { id: "x", open: true, activeTabId: "a", tabs: [] } }), true);
   assert.equal(isPageMessage({ v: 1, type: "inspector", model: "bad" }), false);
 
-  assert.equal(isPageMessage({ v: 1, type: "openInMain", path: "/tickets/VES-1", newTab: true }), true);
-  for (const path of ["//evil.com", "https://evil.com", "tickets/VES-1"]) {
+  assert.equal(isPageMessage({ v: 1, type: "openInMain", path: "/spaces/s1", newTab: true }), true);
+  for (const path of ["//evil.com", "https://evil.com", "spaces/s1"]) {
     assert.equal(isPageMessage({ v: 1, type: "openInMain", path }), false, path);
   }
 });
@@ -97,7 +97,7 @@ test("prompt, toast, shortcuts, commandPalette, and quickLook messages validate 
   assert.equal(isPageMessage({ v: 1, type: "toast.show", id: "t1", title: "Saved", tone: "info", durationMs: 3000 }), false);
   assert.equal(isPageMessage({ v: 1, type: "toast.dismiss", id: "t1" }), true);
   assert.equal(isPageMessage({ v: 1, type: "showShortcuts" }), true);
-  assert.equal(isPageMessage({ v: 1, type: "commandPalette.open", request: { path: "/work", scope: "all" } }), true);
+  assert.equal(isPageMessage({ v: 1, type: "commandPalette.open", request: { path: "/spaces", scope: "all" } }), true);
   assert.equal(isPageMessage({ v: 1, type: "commandPalette.open", request: { path: "//evil" } }), false);
   assert.equal(isPageMessage({ v: 1, type: "commandPalette.close" }), true);
   assert.equal(isPageMessage({ v: 1, type: "quickLook", items: [{ url: "/api/v1/library/1/content", title: "File" }] }), true);

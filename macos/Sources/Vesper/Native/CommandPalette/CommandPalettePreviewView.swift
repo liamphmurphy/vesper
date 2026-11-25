@@ -94,8 +94,6 @@ struct CommandPalettePreviewView: View {
         switch preview {
         case .inbox(let item):
             inboxPreview(item)
-        case .ticket(let key, let title):
-            ticketPreview(key: key, fallbackTitle: title)
         case .page(let id, let path, let title, let isKnowledge, let rowData):
             pagePreview(id: id, path: path, fallbackTitle: title, isKnowledge: isKnowledge, rowData: rowData)
         case .chat(let chat):
@@ -150,69 +148,6 @@ struct CommandPalettePreviewView: View {
                         .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
                         .padding(.top, 4)
                 }
-            }
-        }
-    }
-
-    private func ticketPreview(key: String, fallbackTitle: String) -> some View {
-        let ticket = key.isEmpty ? nil : model.store?.entry(API.getTicket(key: key)).data
-        let title = ticket?.title ?? fallbackTitle
-        let excerpt = ticket.map { CommandPaletteLogic.plainExcerpt($0.descriptionMd, max: 280) } ?? ""
-        let facts: [String] = [
-            ticket?.assignee?.name ?? (ticket != nil ? "unassigned" : nil),
-            ticket?.epic?.name,
-            ticket?.estimatePoints.map { "\($0) pts" },
-        ].compactMap { $0 }
-
-        return VStack(alignment: .leading, spacing: 10) {
-            sectionKicker(key.isEmpty ? "TICKET" : "TICKET · \(key)", color: accentColor)
-            previewTitle(title)
-
-            if let ticket {
-                HStack(spacing: 8) {
-                    statusBadge(ticket.status.rawValue)
-                    if !facts.isEmpty {
-                        Text(facts.joined(separator: " · "))
-                            .font(.system(size: 12))
-                            .foregroundStyle(secondaryText)
-                            .lineLimit(1)
-                    }
-                }
-            }
-
-            if !excerpt.isEmpty {
-                highlightedText(excerpt, query: model.highlightQuery, baseColor: bodyText, matchColor: primaryText)
-                    .font(.system(size: 12.5))
-                    .lineSpacing(4)
-                    .lineLimit(5)
-                    .padding(.top, 4)
-            }
-
-            if let run = ticket?.run {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text("LAST RUN")
-                        .font(.system(size: 10.5, weight: .semibold))
-                        .foregroundStyle(tertiaryText)
-                        .tracking(0.5)
-                    HStack(spacing: 8) {
-                        Circle()
-                            .fill(runStateColor(run.state.rawValue))
-                            .frame(width: 7, height: 7)
-                        Text(run.state.rawValue.replacingOccurrences(of: "_", with: " "))
-                            .font(.system(size: 12.5, weight: .medium))
-                            .foregroundStyle(primaryText)
-                        Text("· \(run.agent.name) · \(APIDate.shortAgo(run.startedAt))")
-                            .font(.system(size: 12))
-                            .foregroundStyle(secondaryText)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(cardFill, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
-                    .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(cardBorder, lineWidth: 1))
-                }
-                .padding(.top, 8)
             }
         }
     }

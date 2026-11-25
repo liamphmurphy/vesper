@@ -93,7 +93,7 @@ struct SettingsRunnersPane: View {
                             Divider()
                         }
                     } else {
-                        Text("No runner online. Dispatched work stays queued until a runner connects.")
+                        Text("No runner online. Active chats and workflows wait until a runner connects.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                     }

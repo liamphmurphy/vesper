@@ -507,13 +507,7 @@ struct InboxAllClear: View {
     let done: Int
     let showDone: () -> Void
 
-    private static let overviews = API.listAgentOverviews()
-
     var body: some View {
-        let entry = context.store.entry(Self.overviews)
-        let running = (entry.data?.agents ?? [])
-            .flatMap { o in o.assignments.map { (work: $0, agent: o.agent) } }
-            .filter { project.isEmpty || $0.work.ticket.key.hasPrefix("\(project)-") }
         let doneColor = theme.swiftUIColor("state-done", fallback: .green)
         VStack(spacing: 12) {
             Image(systemName: "checkmark")
@@ -523,66 +517,14 @@ struct InboxAllClear: View {
                 .background(doneColor.opacity(0.1), in: Circle())
                 .overlay(Circle().stroke(doneColor.opacity(0.5)))
             Text("All clear").vesperText(.title, theme)
-            Text("No approvals, questions, mockups, proposals or failed runs need you in \(project.isEmpty ? "All spaces" : project).")
+            Text("No approvals, mockups, PR feedback, or updates need you in \(project.isEmpty ? "All spaces" : project).")
                 .vesperText(.body, theme).foregroundStyle(theme.palette.secondaryText).multilineTextAlignment(.center)
             if done > 0 {
                 Button("\(done) done · Show done", action: showDone).buttonStyle(.link).font(.system(size: theme.pointSize(.body)))
             }
-            VStack(alignment: .leading, spacing: 0) {
-                HStack(spacing: 6) {
-                    Text("Still running")
-                    Text("\(running.count)").font(.system(size: theme.pointSize(.small), design: .monospaced)).foregroundStyle(theme.palette.tertiaryText)
-                }
-                .font(.system(size: theme.pointSize(.small), weight: .medium))
-                .foregroundStyle(theme.palette.secondaryText)
-                .padding(.horizontal, 20).padding(.vertical, 8)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .background(theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface))
-                Divider()
-                if entry.data == nil {
-                    SkeletonBar(height: 32).padding(16)
-                } else if running.isEmpty {
-                    HStack(spacing: 4) {
-                        Text("No runs in progress.").foregroundStyle(theme.palette.tertiaryText)
-                        Button("Dispatch a ready ticket from the Board.") { context.navigate("/tickets?layout=board") }.buttonStyle(.link)
-                    }
-                    .vesperText(.body, theme)
-                    .padding(.horizontal, 20).padding(.vertical, 16)
-                } else {
-                    ForEach(running, id: \.work.runId) { w in
-                        Button { context.navigate("/runs/\(w.work.runId)") } label: {
-                            HStack(spacing: 12) {
-                                WorkPersonaAvatarView(id: w.agent.id, handle: w.agent.handle, name: w.agent.name, colorIndex: w.agent.colorIndex, size: 20)
-                                Text(w.work.ticket.key).font(.system(size: theme.pointSize(.small), design: .monospaced))
-                                    .foregroundStyle(theme.palette.tertiaryText).frame(width: 112, alignment: .leading).lineLimit(1)
-                                (Text(w.work.ticket.title) + Text(" · \(w.agent.name)").foregroundStyle(theme.palette.tertiaryText))
-                                    .lineLimit(1).frame(maxWidth: .infinity, alignment: .leading)
-                                Text(w.work.state == "queued" ? "queued" : "\(w.work.state.replacingOccurrences(of: "_", with: " ")) \(APIDate.duration(since: w.work.startedAt))")
-                                    .font(.system(size: theme.pointSize(.small))).foregroundStyle(theme.palette.tertiaryText)
-                            }
-                            .vesperText(.body, theme)
-                            .padding(.horizontal, 20).frame(minHeight: 44)
-                            .contentShape(Rectangle())
-                        }
-                        .buttonStyle(.plain)
-                        Divider()
-                    }
-                }
-                Button("View all runs \u{2192}") { context.navigate("/runs") }
-                    .buttonStyle(.link).font(.system(size: theme.pointSize(.body)))
-                    .padding(.horizontal, 20).padding(.vertical, 10)
-            }
-            .background(theme.palette.surface)
-            .clipShape(RoundedRectangle(cornerRadius: 12))
-            .overlay(RoundedRectangle(cornerRadius: 12).stroke(theme.palette.border))
-            .frame(maxWidth: 580)
-            .padding(.top, 16)
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 56)
         .frame(maxWidth: .infinity)
-        .task { context.store.load(Self.overviews) }
-        .onAppear { context.store.observe(Self.overviews) }
-        .onDisappear { context.store.stopObserving(Self.overviews.key) }
     }
 }

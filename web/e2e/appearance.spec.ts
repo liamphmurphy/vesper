@@ -12,7 +12,7 @@ test("saved custom colors apply before hydration, including derived colors", asy
   });
   await page.route("**/_next/static/**/*.js", (route) => route.abort());
   await installChatApi(page);
-  await page.goto("/plans", { waitUntil: "domcontentloaded" });
+  await page.goto("/sign-in", { waitUntil: "domcontentloaded" });
   await expect(page.locator("html")).toHaveAttribute("data-palette", "custom");
   expect(await rootColor(page, "accent")).toBe("#112233");
   expect(await rootColor(page, "accent-soft")).toBe("#11223326");

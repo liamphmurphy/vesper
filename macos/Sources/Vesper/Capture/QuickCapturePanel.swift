@@ -104,7 +104,6 @@ final class QuickCaptureModel {
     var kind: CaptureKind = .note
     var text = ""
     var personaId = ""
-    var projectKey = ""
     var error: String?
     var saving = false
     var saved: Saved?
@@ -123,17 +122,16 @@ final class QuickCaptureModel {
         return Capture.formatAccelerator(s.shortcut)
     }
 
-    /// Picks defaults once the lists are known: the default persona, the first project.
+    /// Picks defaults once the lists are known: the default persona.
     func optionsLoaded() {
         guard let options else { return }
         if personaId.isEmpty { personaId = options.defaultPersonaId }
-        if projectKey.isEmpty || !options.projects.contains(where: { $0.key == projectKey }) { projectKey = options.projects.first?.key ?? "" }
     }
 
     func save() async {
         guard !saving, saved == nil, let aux else { return }
         error = nil
-        let input = CaptureInput(kind: kind, text: text, personaId: kind == .message ? personaId : nil, projectKey: kind == .ticket ? projectKey : nil)
+        let input = CaptureInput(kind: kind, text: text, personaId: kind == .message ? personaId : nil)
         let call: APICall
         switch Capture.buildCaptureRequest(input) {
         case .failure(let e): error = e.message; return
@@ -145,9 +143,7 @@ final class QuickCaptureModel {
         do {
             let response = try await client.send(call, timeout: 30)
             let href = Capture.captureResultHref(kind, response: response)
-            let what = kind == .note ? "Note saved" : kind == .message ? "Message sent" : "Ticket created"
-            var label = what
-            if kind == .ticket, let key = (response as? [String: Any])?["key"] as? String { label = "Created \(key)" }
+            let label = kind == .note ? "Note saved" : "Message sent"
             saved = Saved(message: label, href: href)
             dismissTask = Task { [weak self] in
                 try? await Task.sleep(for: .seconds(6))
@@ -185,7 +181,6 @@ struct QuickCaptureView: View {
             Picker("Capture", selection: $model.kind) {
                 Text("Note").tag(CaptureKind.note)
                 Text("Message").tag(CaptureKind.message)
-                Text("Ticket").tag(CaptureKind.ticket)
             }
             .pickerStyle(.segmented)
             .labelsHidden()
@@ -211,12 +206,6 @@ struct QuickCaptureView: View {
                         ForEach(model.options?.personas ?? [], id: \.id) { Text($0.name).tag($0.id) }
                     }
                     .frame(maxWidth: 260)
-                case .ticket:
-                    Picker("Project", selection: $model.projectKey) {
-                        if (model.options?.projects ?? []).isEmpty { Text("No projects").tag("") }
-                        ForEach(model.options?.projects ?? []) { Text("\($0.key) · \($0.name)").tag($0.key) }
-                    }
-                    .frame(maxWidth: 300)
                 case .note:
                     Text("Saved to your knowledge base.").foregroundStyle(.secondary).font(.callout)
                 }
@@ -246,7 +235,6 @@ struct QuickCaptureView: View {
         switch model.kind {
         case .note: return "Jot something down…"
         case .message: return "Message a persona…"
-        case .ticket: return "First line is the title; the rest is the description…"
         }
     }
 

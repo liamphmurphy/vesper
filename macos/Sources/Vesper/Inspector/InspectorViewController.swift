@@ -197,9 +197,6 @@ final class InspectorViewController: NSViewController {
         nativeHost?.view.isHidden = isCompanion || isPanel
         companionHost?.view.isHidden = !isCompanion
         nativePanelHost?.view.isHidden = !isPanel
-        if companionStore.subject != model?.companion?.subject {
-            companionStore.subject = model?.companion?.subject
-        }
         popout?.window?.title = active?.label ?? "Inspector"
     }
 

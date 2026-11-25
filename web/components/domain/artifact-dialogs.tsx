@@ -1,19 +1,15 @@
 "use client";
 
-import { Dialog, DropdownMenu } from "radix-ui";
-import { useRouter } from "next/navigation";
-import { useQueryClient } from "@tanstack/react-query";
+import { Dialog } from "radix-ui";
 import { useRef, useState, type ReactNode } from "react";
 import type { Artifact } from "@/lib/api/client";
-import { keys, useBootstrap, useCreateArtifact, useNewVersion } from "@/lib/api/hooks";
+import { useNewVersion } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
 import { formatBytes } from "@/lib/files";
-import { blankWireframe, isSvgFile } from "@/lib/mockup";
 import { Button, IconButton } from "@/components/ui/button";
 import { Segmented } from "@/components/ui/controls";
 import { Icon } from "@/components/ui/icon";
 import { Field, TextArea, TextInput } from "@/components/ui/primitives";
-import { floatPanel } from "./pickers";
 
 export function DialogShell({
   open,
@@ -47,49 +43,6 @@ export function DialogShell({
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  );
-}
-
-function SelectMenu<T extends string>({
-  id,
-  value,
-  options,
-  onChange,
-  render,
-}: {
-  id: string;
-  value: T;
-  options: Array<{ value: T; label: string }>;
-  onChange: (v: T) => void;
-  render?: (v: T) => ReactNode;
-}) {
-  const current = options.find((o) => o.value === value);
-  return (
-    <DropdownMenu.Root>
-      <DropdownMenu.Trigger asChild>
-        <button
-          id={id}
-          type="button"
-          className="flex h-[30px] w-full items-center gap-2 rounded-md border border-border-strong bg-surface px-2.5 text-left text-13 hover:bg-hover"
-        >
-          <span className="flex min-w-0 flex-1 items-center gap-2 truncate">{render ? render(value) : current?.label}</span>
-          <Icon name="chev" size={14} className="text-fg-tertiary" />
-        </button>
-      </DropdownMenu.Trigger>
-      <DropdownMenu.Portal>
-        <DropdownMenu.Content align="start" sideOffset={4} className={cx(floatPanel, "z-[60] min-w-[220px]")}>
-          {options.map((o) => (
-            <DropdownMenu.Item
-              key={o.value}
-              onSelect={() => onChange(o.value)}
-              className="flex h-8 items-center gap-2.5 rounded-md px-2 outline-none data-[highlighted]:bg-hover"
-            >
-              {render ? render(o.value) : o.label}
-            </DropdownMenu.Item>
-          ))}
-        </DropdownMenu.Content>
-      </DropdownMenu.Portal>
-    </DropdownMenu.Root>
   );
 }
 
@@ -234,138 +187,6 @@ export function NewVersionDialog({ artifact, open, onOpenChange }: { artifact: A
         </Field>
         <Field label="What changed" htmlFor="ver-note">
           <TextInput id="ver-note" value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. Tightened the p95 target" />
-        </Field>
-      </div>
-    </DialogShell>
-  );
-}
-
-/**
- * New mockup: a blank wireframe template or an uploaded .svg. When launched
- * from a ticket it is attached as context, then the editor opens.
- */
-export function NewMockupDialog({
-  open,
-  onOpenChange,
-  defaultProject,
-  defaultEpicId,
-  ticketKey,
-}: {
-  open: boolean;
-  onOpenChange: (o: boolean) => void;
-  defaultProject?: string;
-  defaultEpicId?: string | null;
-  ticketKey?: string;
-}) {
-  const router = useRouter();
-  const boot = useBootstrap();
-  const create = useCreateArtifact();
-  const qc = useQueryClient();
-  const [mode, setMode] = useState<"template" | "upload">("template");
-  const [title, setTitle] = useState("");
-  const [files, setFiles] = useState<File[]>([]);
-  const [projectKey, setProjectKey] = useState(defaultProject ?? "");
-  const [epicId, setEpicId] = useState(defaultEpicId ?? "");
-  const [error, setError] = useState<string | null>(null);
-  const [busy, setBusy] = useState(false);
-  const projects = boot.data?.projects.filter((p) => !p.archived) ?? [];
-  const project = projects.find((p) => p.key === projectKey) ?? projects[0];
-  const epics = boot.data?.epics.filter((e) => e.project_id === project?.id) ?? [];
-  const ready = !!project && (mode === "template" ? title.trim().length > 0 : files.length === 1);
-
-  async function submit() {
-    if (!ready || busy) return;
-    setBusy(true);
-    setError(null);
-    const f = new FormData();
-    f.set("project_key", project.key);
-    f.set("type", "mockup");
-    if (epicId) f.set("epic_id", epicId);
-    if (ticketKey) f.set("ticket_key", ticketKey);
-    if (title.trim()) f.set("title", title.trim());
-    if (mode === "template") f.set("body_md", blankWireframe(title));
-    else f.set("file", files[0]);
-    try {
-      const a = await create.mutateAsync(f);
-      if (ticketKey) void qc.invalidateQueries({ queryKey: keys.ticket(ticketKey) });
-      onOpenChange(false);
-      router.push(`/artifacts/${a.id}?edit=1`);
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Couldn't create the mockup.");
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  return (
-    <DialogShell
-      open={open}
-      onOpenChange={onOpenChange}
-      title="New mockup"
-      footer={
-        <>
-          {error && (
-            <span role="alert" className="mr-auto text-12 text-pill-blocked-fg">
-              {error}
-            </span>
-          )}
-          <Dialog.Close asChild>
-            <Button variant="ghost">Cancel</Button>
-          </Dialog.Close>
-          <Button variant="primary" icon="plus" disabled={!ready || busy} onClick={submit}>
-            {mode === "template" ? "Create & edit" : "Upload & edit"}
-          </Button>
-        </>
-      }
-    >
-      <Field label="Title" htmlFor="mockup-title">
-        <TextInput id="mockup-title" autoFocus value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Payout batching — settings screen" />
-      </Field>
-      <Segmented
-        label="Start from"
-        value={mode}
-        onChange={(m) => {
-          setMode(m);
-          if (m === "upload" && files[0] && !title.trim()) setTitle(files[0].name.replace(/\.svg$/i, ""));
-        }}
-        options={[
-          { value: "template", label: "Blank wireframe" },
-          { value: "upload", label: "Upload .svg" },
-        ]}
-      />
-      {mode === "template" ? (
-        <p className="text-13 text-fg-tertiary">A 1280×800 wireframe with a header, sidebar and content blocks. You&apos;ll edit the SVG source next.</p>
-      ) : (
-        <FilePicker
-          files={files}
-          accept=".svg,image/svg+xml"
-          hint="One .svg file. Scripts, event handlers and external links are rejected."
-          onFiles={(f) => {
-            const svg = f.filter((x) => isSvgFile(x.name, x.type));
-            setFiles(svg.slice(0, 1));
-            if (svg[0] && !title.trim()) setTitle(svg[0].name.replace(/\.svg$/i, ""));
-          }}
-        />
-      )}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(200px,1fr))] gap-3">
-        <Field label="Space" htmlFor="mockup-project">
-          <SelectMenu
-            id="mockup-project"
-            value={project?.key ?? ""}
-            options={projects.map((p) => ({ value: p.key, label: p.name }))}
-            onChange={(k) => {
-              setProjectKey(k);
-              setEpicId("");
-            }}
-          />
-        </Field>
-        <Field label="Epic" htmlFor="mockup-epic">
-          <SelectMenu
-            id="mockup-epic"
-            value={epicId}
-            options={[{ value: "", label: "No epic" }, ...epics.map((e) => ({ value: e.id, label: e.name }))]}
-            onChange={setEpicId}
-          />
         </Field>
       </div>
     </DialogShell>

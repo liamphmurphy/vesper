@@ -9,13 +9,12 @@ struct ChatProposalsSectionView: View {
     let secretProposals: [API.ApiSecretProposal]
     let personaProposals: [API.PersonaProposal]
     let characterProposals: [API.PersonaCharacterProposal]
-    let ticketChanges: [API.TicketChangeRequest]
     let canvases: [API.ChatCanvasSummary]
 
     private var hasAny: Bool {
         !approvals.isEmpty || !secretProposals.isEmpty
             || !personaProposals.isEmpty || !characterProposals.isEmpty
-            || !ticketChanges.isEmpty || !canvases.isEmpty
+            || !canvases.isEmpty
     }
 
     var body: some View {
@@ -32,9 +31,6 @@ struct ChatProposalsSectionView: View {
                 }
                 ForEach(characterProposals, id: \.id) { proposal in
                     ChatPersonaCharacterProposalCardView(chatId: chatId, proposal: proposal)
-                }
-                ForEach(ticketChanges, id: \.id) { change in
-                    ChatTicketChangeCardView(request: change)
                 }
                 if !canvases.isEmpty {
                     ChatCanvasesStripView(chatId: chatId, canvases: canvases)
@@ -506,108 +502,6 @@ struct ChatPersonaCharacterProposalCardView: View {
                         body: API.DecidePersonaCharacterProposalBody(decision: decision)
                     ),
                     invalidating: QueryInvalidation(resources: ["chats", "personas"])
-                )
-            } catch {
-                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
-            }
-            busy = false
-        }
-    }
-}
-
-// MARK: - Ticket / Epic Change Proposal Card
-
-struct ChatTicketChangeCardView: View {
-    @Environment(NativeScreenContext.self) private var context
-    @Environment(\.vesperTheme) private var theme
-
-    let request: API.TicketChangeRequest
-    @State private var busy = false
-    @State private var errorMessage: String?
-
-    var body: some View {
-        let p = theme.palette
-        let badge = ChatCardDisplay.stateBadge(for: request.state.rawValue)
-
-        VStack(alignment: .leading, spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "checklist")
-                    .foregroundStyle(p.accent)
-                Button {
-                    context.navigate("/tickets/\(request.ticketKey)")
-                } label: {
-                    Text(ChatCardDisplay.ticketChangeLabel(tool: request.tool.rawValue, ticketKey: request.ticketKey))
-                        .font(.system(size: theme.pointSize(.body), weight: .semibold))
-                        .foregroundStyle(p.accent)
-                }
-                .buttonStyle(.plain)
-                Spacer(minLength: 8)
-                TonePill(label: badge.label, tone: badge.tone.pillTone)
-            }
-
-            if !request.ticketTitle.isEmpty {
-                Text(request.ticketTitle)
-                    .font(.system(size: theme.pointSize(.small)))
-                    .foregroundStyle(p.secondaryText)
-            }
-
-            VStack(alignment: .leading, spacing: 4) {
-                ForEach(Array(request.changes.enumerated()), id: \.offset) { _, change in
-                    HStack(alignment: .firstTextBaseline, spacing: 6) {
-                        Text(change.label)
-                            .font(.system(size: theme.pointSize(.small), weight: .medium))
-                            .foregroundStyle(p.secondaryText)
-                        if let before = change.before, !before.isEmpty {
-                            Text(before)
-                                .font(.system(size: theme.pointSize(.small)))
-                                .foregroundStyle(p.tertiaryText)
-                                .strikethrough()
-                                .lineLimit(1)
-                            Text("→")
-                                .foregroundStyle(p.tertiaryText)
-                        }
-                        Text(change.after)
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(p.text)
-                            .lineLimit(2)
-                    }
-                }
-            }
-
-            if request.state == .pending {
-                HStack(spacing: 8) {
-                    Button("Apply") { decide(.allow) }
-                        .buttonStyle(.vesper(.approve))
-                        .disabled(busy)
-                    Button("Always allow") { decide(.always) }
-                        .buttonStyle(.vesper(.approveOutline))
-                        .disabled(busy)
-                    Button("Decline") { decide(.deny) }
-                        .buttonStyle(.vesper(.danger))
-                        .disabled(busy)
-                }
-            }
-
-            if let err = request.error ?? errorMessage, !err.isEmpty {
-                Text(err)
-                    .font(.system(size: theme.pointSize(.small)))
-                    .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-            }
-        }
-        .padding(12)
-        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-    }
-
-    private func decide(_ decision: API.TicketChangeDecision.Decision) {
-        guard !busy else { return }
-        busy = true
-        errorMessage = nil
-        Task {
-            do {
-                _ = try await context.store.mutate(
-                    API.decideTicketChangeRequest(id: request.id, body: API.TicketChangeDecision(decision: decision)),
-                    invalidating: QueryInvalidation(resources: ["chats", "tickets"])
                 )
             } catch {
                 errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription

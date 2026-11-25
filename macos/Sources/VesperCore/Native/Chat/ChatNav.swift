@@ -304,7 +304,14 @@ public enum ChatNav {
             guard !raw.isEmpty else { return nil }
             return URL(string: raw, relativeTo: origin)?.absoluteURL.absoluteString
         }
-        return Avatar(initials: WorkNav.initials(name), color: literal, imageUrl: resolvedImage)
+        return Avatar(initials: initials(name), color: literal, imageUrl: resolvedImage)
+    }
+
+    public static func initials(_ name: String) -> String {
+        let words = name.split(whereSeparator: \.isWhitespace)
+        let letters = words.count > 1 ? [words[0], words[words.count - 1]] : words
+        let out = letters.compactMap { $0.first.map { String($0).uppercased() } }.joined()
+        return out.isEmpty ? "?" : out
     }
 
     public static func chatMenu(archived: Bool, pinned: Bool) -> [MenuItem] {

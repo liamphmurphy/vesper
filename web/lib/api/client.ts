@@ -2,12 +2,6 @@ import createClient from "openapi-fetch";
 import type { components, paths } from "./schema";
 
 export type Schemas = components["schemas"];
-export type Ticket = Schemas["Ticket"];
-export type TicketSummary = Schemas["TicketSummary"];
-export type TicketStatus = Schemas["TicketStatus"];
-export type Priority = Schemas["Priority"];
-export type TicketPatch = Schemas["TicketPatch"];
-export type ActivityEvent = Schemas["ActivityEvent"];
 export type Bootstrap = Schemas["Bootstrap"];
 export type ArtifactType = Schemas["ArtifactType"];
 export type ArtifactSummary = Schemas["ArtifactSummary"];

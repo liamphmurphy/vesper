@@ -76,14 +76,6 @@ final class EpicsScheduledReportsTests: XCTestCase {
         XCTAssertFalse(ScheduledLogic.validate(draft).isValid)
     }
 
-    func testEpicsOverdueAndRatioHelpers() {
-        XCTAssertEqual(EpicsLogic.ratio(done: 2, total: 4), 0.5, accuracy: 0.001)
-        XCTAssertEqual(EpicsLogic.ratio(done: 0, total: 0), 0.0, accuracy: 0.001)
-        XCTAssertTrue(EpicsLogic.isOverdue(status: .open, targetDate: "2026-11-01", today: "2026-11-22"))
-        XCTAssertFalse(EpicsLogic.isOverdue(status: .done, targetDate: "2026-11-01", today: "2026-11-22"))
-        XCTAssertFalse(EpicsLogic.isOverdue(status: .open, targetDate: "2026-12-01", today: "2026-11-22"))
-    }
-
     func testReportsNavModelAndCommands() {
         let projects = [
             API.Project(archived: false, color: "green", defaultBranch: "main", id: "p1", key: "PAY", name: "Payments", revision: 1),

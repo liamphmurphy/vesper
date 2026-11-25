@@ -8,7 +8,7 @@ test("routeFallbackTitle resolves static and nested app routes", () => {
   assert.equal(routeFallbackTitle("/settings"), "Settings");
   assert.equal(routeFallbackTitle("/settings/runner"), "Runner environment");
   assert.equal(routeFallbackTitle("/chat/123"), "Chat");
-  assert.equal(routeFallbackTitle("/tickets/LAZYAGENTS-1"), "Tickets");
+  assert.equal(routeFallbackTitle("/spaces/abc"), "Spaces");
   assert.equal(routeFallbackTitle("/unknown"), "");
 });
 

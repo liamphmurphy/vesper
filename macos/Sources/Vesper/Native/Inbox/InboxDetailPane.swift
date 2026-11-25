@@ -12,17 +12,16 @@ struct InboxDetailPane: View {
 
     var body: some View {
         let kind = InboxLogic.kind(item.kind.rawValue)
-        let ticketHref = item.ticketKey.isEmpty ? item.href : "/tickets/\(item.ticketKey)"
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
                 HStack(spacing: 8) {
-                    Text([kind.label, item.ticketKey, item.project.isEmpty ? "Workspace" : item.project].filter { !$0.isEmpty }.joined(separator: " · ").uppercased())
+                    Text([kind.label, item.project.isEmpty ? "Workspace" : item.project].filter { !$0.isEmpty }.joined(separator: " · ").uppercased())
                         .font(.system(size: theme.pointSize(.micro), weight: .semibold))
                         .tracking(0.6)
                         .foregroundStyle(theme.palette.tertiaryText)
                         .lineLimit(1)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    Button(item.ticketKey.isEmpty ? "Open \u{2197}" : "Open ticket \u{2197}") { follow(ticketHref) }
+                    Button("Open \u{2197}") { follow(item.href) }
                         .buttonStyle(.link).font(.system(size: theme.pointSize(.small)))
                 }
                 HStack(spacing: 12) {
@@ -38,7 +37,6 @@ struct InboxDetailPane: View {
                 }
                 switch item.kind.rawValue {
                 case "approval": InboxApprovalPane(item: item, actions: actions)
-                case "question": InboxQuestionPane(item: item, actions: actions)
                 case "blocked", "stalled": InboxRunPane(item: item, actions: actions)
                 case "pr_ci_failed", "pr_review_comments": InboxPRFeedbackPane(item: item, actions: actions)
                 case "mockup": InboxMockupPane(item: item, actions: actions)
@@ -194,14 +192,12 @@ private struct InboxApprovalPane: View {
     @FocusState private var noteFocused: Bool
 
     var body: some View {
-        let isTicket = !item.ticketKey.isEmpty
-        let ticket = isTicket ? context.store.entry(API.getTicket(key: item.ticketKey)) : nil
-        let run = !isTicket && item.runId != nil ? context.store.entry(API.getRun(id: item.runId ?? "")) : nil
-        let approvals = ticket?.data?.approvals ?? run?.data?.approvals
+        let run = item.runId.map { context.store.entry(API.getRun(id: $0)) }
+        let approvals = run?.data?.approvals
         let ap = approvals?.first { "approval:\($0.id)" == item.id }
         let live = InboxLogic.isOpen(item) && ap?.state == .pending
-        let loading = (ticket.map { $0.data == nil && $0.error == nil } ?? false) || (run.map { $0.data == nil && $0.error == nil } ?? false)
-        let failed = ticket?.error ?? run?.error
+        let loading = run.map { $0.data == nil && $0.error == nil } ?? false
+        let failed = run?.error
 
         Group {
             if loading {
@@ -249,8 +245,7 @@ private struct InboxApprovalPane: View {
             }
         }
         .task {
-            if isTicket { context.store.load(API.getTicket(key: item.ticketKey)) }
-            else if let runId = item.runId { context.store.load(API.getRun(id: runId)) }
+            if let runId = item.runId { context.store.load(API.getRun(id: runId)) }
         }
         .onChange(of: ap?.id, initial: true) { _, _ in
             actions.register(InboxPaneActions(
@@ -264,46 +259,7 @@ private struct InboxApprovalPane: View {
     private func send(_ decision: API.DecideApprovalDecision, _ ap: API.Approval) {
         let trimmed = note.trimmingCharacters(in: .whitespacesAndNewlines)
         let request = API.decideApproval(id: ap.id, decision: decision, body: .init(note: trimmed.isEmpty ? nil : trimmed))
-        decide.run({ try await mutateItem(context.store, request, resources: ["tickets", "runs", "chats"]) }) { actions.sent(item.id) }
-    }
-}
-
-private struct InboxQuestionPane: View {
-    @Environment(NativeScreenContext.self) private var context
-    let item: API.InboxItem
-    let actions: InboxActions
-    @State private var body_ = ""
-    @State private var comment = PaneAction()
-    @FocusState private var replyFocused: Bool
-
-    var body: some View {
-        let handle = item.agent?.handle ?? ""
-        let canSend = !body_.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !comment.busy
-        PaneSection(label: "Question") { PaneQuote(text: item.summary) }
-        PaneNote(label: "Reply to @\(handle)", text: $body_, placeholder: "Your answer", focused: $replyFocused, submit: send, leave: actions.leave)
-        PaneHint(text: "Posts a comment that mentions @\(handle) on \(item.ticketKey). The run resumes with your reply.")
-        HStack(spacing: 8) {
-            DoneButton { actions.markDone([item.id]) }
-            Spacer()
-            if let runId = item.runId { Button("Open run") { context.navigate("/runs/\(runId)") }.buttonStyle(.vesper()) }
-            Button(action: send) { HStack(spacing: 6) { Text("Send reply"); KeyCap(key: "⌘↵") } }
-                .buttonStyle(.vesper(.primary)).disabled(!canSend)
-        }
-        PaneFailure(message: comment.error)
-            .onAppear {
-                actions.register(InboxPaneActions(focus: { replyFocused = true }, done: { actions.markDone([item.id]) }))
-            }
-    }
-
-    private func send() {
-        let text = body_.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !text.isEmpty, !item.ticketKey.isEmpty else { return }
-        let handle = item.agent?.handle ?? ""
-        let request = API.createComment(key: item.ticketKey, body: .init(bodyMd: handle.isEmpty ? text : InboxLogic.withMention(text, handle: handle)))
-        comment.run({ try await mutateItem(context.store, request, resources: ["tickets"]) }) {
-            body_ = ""
-            actions.sent(item.id)
-        }
+        decide.run({ try await mutateItem(context.store, request, resources: ["runs", "chats"]) }) { actions.sent(item.id) }
     }
 }
 
@@ -343,8 +299,7 @@ private struct InboxRunPane: View {
                 HStack(spacing: 8) {
                     DoneButton { actions.markDone([item.id]) }
                     Spacer()
-                    if let runId = item.runId {
-                        Button("Open run log") { context.navigate("/runs/\(runId)") }.buttonStyle(.vesper())
+                    if item.runId != nil {
                         if stalled {
                             Button("Cancel run") { confirming = true }.buttonStyle(.vesper(.danger))
                         } else {
@@ -361,7 +316,7 @@ private struct InboxRunPane: View {
 
     private func act(_ action: API.ControlRunAction) {
         guard let runId = item.runId else { return }
-        control.run({ try await mutateItem(context.store, API.controlRun(id: runId, action: action), resources: ["runs", "tickets"]) }) {
+        control.run({ try await mutateItem(context.store, API.controlRun(id: runId, action: action), resources: ["runs"]) }) {
             confirming = false
             actions.sent(item.id)
         }
@@ -380,15 +335,13 @@ private struct InboxPRFeedbackPane: View {
         let open = InboxLogic.isOpen(item)
         PaneSection(label: isCI ? "Failing checks" : "Unresolved review threads") {
             PaneQuote(text: item.summary, blocked: isCI)
-            PaneHint(text: !item.ticketKey.isEmpty
-                ? "Sends a focused prompt to \(item.ticketKey)\u{2019}s existing branch with the latest details attached."
-                : "Starts a follow-up turn in the originating chat on the pull request\u{2019}s branch.")
+            PaneHint(text: "Starts a follow-up turn in the originating chat on the pull request\u{2019}s branch.")
         }
         HStack(spacing: 8) {
             if open { DoneButton { actions.markDone([item.id]) } }
             Spacer()
-            Button(!item.ticketKey.isEmpty ? "Open ticket \u{2197}" : "Open chat \u{2197}") { follow(item.href) }.buttonStyle(.vesper())
-            if !item.ticketKey.isEmpty || pushId != nil {
+            Button("Open chat \u{2197}") { follow(item.href) }.buttonStyle(.vesper())
+            if let pushId {
                 Button(address.busy ? "Sending\u{2026}" : isCI ? "Fix CI" : "Address review comments") { fix(isCI: isCI, pushId: pushId) }
                     .buttonStyle(.vesper(.primary)).disabled(address.busy || !open)
             }
@@ -401,15 +354,10 @@ private struct InboxPRFeedbackPane: View {
         if InboxLogic.isExternalHref(href) { context.openExternal(href) } else { context.navigate(href) }
     }
 
-    private func fix(isCI: Bool, pushId: String?) {
+    private func fix(isCI: Bool, pushId: String) {
         let body = API.AddressPRFeedbackRequest(mode: isCI ? .ci : .review)
-        if !item.ticketKey.isEmpty {
-            let request = API.addressTicketPRFeedback(key: item.ticketKey, body: body)
-            address.run({ try await mutateItem(context.store, request, resources: ["tickets"]) }) { actions.sent(item.id) }
-        } else if let pushId {
-            let request = API.addressPushRequestPRFeedback(id: pushId, body: body)
-            address.run({ try await mutateItem(context.store, request, resources: ["push-requests", "chats", "bootstrap"]) }) { actions.sent(item.id) }
-        }
+        let request = API.addressPushRequestPRFeedback(id: pushId, body: body)
+        address.run({ try await mutateItem(context.store, request, resources: ["push-requests", "chats", "bootstrap"]) }) { actions.sent(item.id) }
     }
 }
 
@@ -424,7 +372,6 @@ private struct InboxMockupPane: View {
     var body: some View {
         let open = InboxLogic.isOpen(item)
         PaneQuote(text: item.summary)
-        if !item.ticketKey.isEmpty { PaneHint(text: "Implementation of \(item.ticketKey) is paused until a person approves this version.") }
         if open {
             PaneNote(label: "Note (required for Request changes)", text: $note, placeholder: "What should change?", focused: $noteFocused,
                      submit: { decide(note.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? .approved : .changesRequested) },
@@ -456,7 +403,7 @@ private struct InboxMockupPane: View {
         }
         let versionId = String(item.id.dropFirst("mockup:".count))
         let request = API.reviewArtifactVersion(id: artifactId, versionId: versionId, body: .init(decision: decision, note: trimmed.isEmpty ? nil : trimmed))
-        review.run({ try await mutateItem(context.store, request, resources: ["artifacts", "tickets"]) }) { actions.sent(item.id) }
+        review.run({ try await mutateItem(context.store, request, resources: ["artifacts"]) }) { actions.sent(item.id) }
     }
 }
 

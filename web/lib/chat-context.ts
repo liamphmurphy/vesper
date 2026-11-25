@@ -1,11 +1,9 @@
 // Pure logic for chat context chips and the Sources footer (LAZYAGENTS-13).
 // Kept free of React so `npm run test:unit` covers it.
 
-import { WORK_CONTEXT_MARKER } from "./work-context.ts";
-
 export const MAX_CONTEXT_REFS = 20;
 
-/** Knowledge appends the page in view after this marker (knowledge-dock.tsx); the server cuts request text at it. */
+/** Knowledge appends the page in view after this marker; the server cuts request text at it. */
 export const KNOWLEDGE_CONTEXT_MARKER = "\n\n<!-- vesper:knowledge-context -->\n";
 /** Custom App dock appends the open app after this marker (custom-app-screen.tsx); the server cuts request text at it. */
 export const CUSTOM_APP_CONTEXT_MARKER = "\n\n<!-- vesper:custom-app-context -->\n";
@@ -15,7 +13,7 @@ export const CUSTOM_APP_CONTEXT_MARKER = "\n\n<!-- vesper:custom-app-context -->
  * this; the context still reaches the persona, and the chips under the bubble say what it carried.
  */
 export function typedText(body: string): string {
-  for (const marker of [KNOWLEDGE_CONTEXT_MARKER, WORK_CONTEXT_MARKER, CUSTOM_APP_CONTEXT_MARKER]) {
+  for (const marker of [KNOWLEDGE_CONTEXT_MARKER, CUSTOM_APP_CONTEXT_MARKER]) {
     const at = body.indexOf(marker);
     if (at >= 0) body = body.slice(0, at);
   }

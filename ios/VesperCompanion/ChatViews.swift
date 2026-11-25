@@ -735,13 +735,6 @@ private struct MessageRowView: View {
                 disabled: isRunning,
                 onSelect: onSendReply
             )
-        case .dispatch(let card):
-            ChatSimpleActionCardView(
-                icon: "paperplane.circle.fill",
-                tint: .accentColor,
-                title: "Dispatch Tickets",
-                subtitle: card.ticketKeys.joined(separator: ", ")
-            )
         case .recommend(let cards):
             ChatRecommendCardsView(cards: cards)
         case .gallery(let spec):
@@ -793,9 +786,6 @@ private struct MessageRowView: View {
 
     private func entityIcon(_ ref: ChatEntityRef) -> String {
         switch ref {
-        case .ticket: "checklist"
-        case .run: "bolt.circle"
-        case .epic: "flag.fill"
         case .page: "doc.text"
         }
     }

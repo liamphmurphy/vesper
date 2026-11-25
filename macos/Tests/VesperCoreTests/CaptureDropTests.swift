@@ -18,31 +18,18 @@ final class CaptureTests: XCTestCase {
         XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .message, text: "hi", personaId: UUID1)))?.body,
                        ["persona_id": .string(UUID1), "message": ["body": "hi"]])
         XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .message, text: "hi")))?.body, ["message": ["body": "hi"]], "default persona")
-        XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .ticket, text: "Fix login\nIt 500s on submit.\n", projectKey: "PAY"))),
-                       APICall(path: "/api/v1/tickets", body: ["project_key": "PAY", "title": "Fix login", "description_md": "It 500s on submit."]))
-        XCTAssertEqual(ok(Capture.buildCaptureRequest(CaptureInput(kind: .ticket, text: "Just a title", projectKey: "PAY")))?.body,
-                       ["project_key": "PAY", "title": "Just a title"])
     }
 
     func testRefusesEmptyTextBadIdsAndTooLong() {
         XCTAssertNil(ok(Capture.buildCaptureRequest(CaptureInput(kind: .note, text: "   "))))
         XCTAssertNil(ok(Capture.buildCaptureRequest(CaptureInput(kind: .message, text: "x", personaId: "../admin"))))
-        XCTAssertNil(ok(Capture.buildCaptureRequest(CaptureInput(kind: .ticket, text: "x", projectKey: "pay/../x"))))
-        XCTAssertNil(ok(Capture.buildCaptureRequest(CaptureInput(kind: .ticket, text: "x"))))
         XCTAssertNil(ok(Capture.buildCaptureRequest(CaptureInput(kind: .note, text: String(repeating: "x", count: 100_001)))))
         XCTAssertEqual(Capture.buildCaptureRequest(CaptureInput(kind: .note, text: " ")), .failure(CaptureError("Write something first.")))
     }
 
-    func testTicketTitleIsClippedTo300() {
-        let call = ok(Capture.buildCaptureRequest(CaptureInput(kind: .ticket, text: String(repeating: "t", count: 400), projectKey: "PAY")))
-        if case .string(let title)? = call?.body["title"] { XCTAssertEqual(title.count, 300) } else { XCTFail() }
-    }
-
     func testCaptureResultHrefOnlyLinksValidatedIds() {
         XCTAssertEqual(Capture.captureResultHref(.message, response: ["id": UUID1]), "/chat/\(UUID1)")
-        XCTAssertEqual(Capture.captureResultHref(.ticket, response: ["key": "PAY-12"]), "/tickets/PAY-12")
         XCTAssertEqual(Capture.captureResultHref(.note, response: ["id": UUID1]), "/knowledge/\(UUID1)")
-        XCTAssertNil(Capture.captureResultHref(.ticket, response: ["key": "../x"]))
         XCTAssertNil(Capture.captureResultHref(.message, response: nil))
     }
 
