@@ -175,6 +175,8 @@ struct NativeScreenRoot: View {
         case .designEditor: DesignEditorScreen()
         case .designPresent: DesignPresentScreen()
         case .customApp: CustomAppScreen()
+        case .printKnowledge: PrintKnowledgeScreen()
+        case .printArtifact: PrintArtifactScreen()
         }
     }
 }
