@@ -665,7 +665,7 @@ public enum RunGraphLogic {
         keep: Set<String> = [],
         threshold: Int = groupThreshold
     ) -> GraphLayout {
-        let byId = Dictionary(uniqueKeysWithValues: graph.nodes.map { ($0.id, $0) })
+        let byId = Dictionary(graph.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var out: [String: [String]] = [:]
         for e in graph.edges { out[e.from, default: []].append(e.to) }
 

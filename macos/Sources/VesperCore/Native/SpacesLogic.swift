@@ -315,7 +315,7 @@ public enum SpacesLogic {
         personas: [API.Persona] = [],
         origin: URL? = nil
     ) -> NavModel {
-        let personaById = Dictionary(uniqueKeysWithValues: personas.map { ($0.id, $0) })
+        let personaById = Dictionary(personas.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let sortedChats = sortChats(chats, sort: .newest)
 
         let spaceItems = spaces.map { sp -> NavItem in

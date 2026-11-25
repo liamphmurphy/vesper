@@ -26,7 +26,7 @@ struct SpacesHomeScreen: View {
             context.store.entry(Self.allBranchesRequest).data?.branches ?? []
         )
         let personas = context.store.entry(Self.personasRequest).data?.personas ?? []
-        let spaceById = Dictionary(uniqueKeysWithValues: spaces.map { ($0.id, $0) })
+        let spaceById = Dictionary(spaces.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
 
         let runningSpaceIds = Set(inFlightChats.filter { $0.state == .running }.compactMap { $0.space?.id })
         let unreadSpaceIds = Set(inFlightChats.filter { $0.unread > 0 }.compactMap { $0.space?.id })

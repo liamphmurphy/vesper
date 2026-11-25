@@ -42,7 +42,7 @@ struct ReportsScreen: View {
         let store = context.store
         let projects = (store.entry(Self.bootstrapRequest).data?.projects ?? []).filter { !$0.archived }
         let agents = store.entry(Self.bootstrapRequest).data?.agents ?? []
-        let agentNames = Dictionary(uniqueKeysWithValues: agents.map { ($0.handle, $0.name) })
+        let agentNames = Dictionary(agents.map { ($0.handle, $0.name) }, uniquingKeysWith: { _, latest in latest })
         let currentChrome = NativeChrome(
             title: "Reports",
             subtitle: tab.label,
