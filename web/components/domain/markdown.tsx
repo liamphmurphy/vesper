@@ -11,41 +11,16 @@ import { useResolvedLinks } from "@/lib/api/hooks";
 import { cx } from "@/lib/cx";
 import { headingAnchors } from "@/lib/slug";
 import { linkify, parseWikiLinks, WIKILINK_SCHEME } from "@/lib/wikilinks";
-import { isAppFence } from "@/lib/chat-app";
-import { isCanvasFence } from "@/lib/chat-canvas";
-import { isPdfFence } from "@/lib/chat-pdf";
-import { isPlaygroundFence } from "@/lib/playground";
 import { rehypeSlots, rehypeSourceSpans, SLOT_CLASS, type Slot } from "@/lib/canvas-source";
-import { groupRecommendFences, isRecommendFence, RECOMMEND_ROW } from "@/lib/chat-recommend";
-import { isGalleryFence, isProductFence } from "@/lib/chat-media";
-import { AppFence } from "./app-fence";
-import { CanvasFence } from "./canvas-fence";
-import { PdfFence } from "./pdf-fence";
-import { PlaygroundFence } from "./playground";
-import { CITE_SCHEME } from "@/lib/chat-sources";
-import { isChoicesFence } from "@/lib/chat-choices";
-import { youtubeMoment } from "@/lib/chat-recommend";
-import { isResearchPlanFence } from "@/lib/chat-research";
-import { ChoicesFence } from "./choices-fence";
-import { ResearchFence } from "./research-fence";
-import { isWorkflowRunFence } from "@/lib/workflows";
-import { WorkflowRunFence } from "./workflow-cards";
-import { isDispatchFence } from "@/lib/chat-dispatch";
-import { DispatchFence } from "./dispatch-cards";
-import { CiteMarker, MomentLink } from "./cite-marker";
-import { CodeFence } from "./code-fence";
 import { usePrintMode } from "./print-mode";
-import { RecommendFence } from "./recommend-fence";
-import { GalleryFence, ProductFence } from "./media-fence";
 import { visualFence } from "./visuals";
 import { LinkTargets, WikiLink } from "./wikilink";
 
-const urlTransform = (url: string) => (url.startsWith(WIKILINK_SCHEME) || url.startsWith(CITE_SCHEME) ? url : defaultUrlTransform(url));
+const urlTransform = (url: string) => (url.startsWith(WIKILINK_SCHEME) ? url : defaultUrlTransform(url));
 // Tables, task lists, strikethrough and bare-URL links.
 // Math needs $$: a single dollar is far more often a price.
 const remarkPlugins: Options["remarkPlugins"] = [remarkGfm, [remarkMath, { singleDollarTextMath: false }]];
 const rehypePlugins: Options["rehypePlugins"] = [rehypeKatex];
-const chatRehypePlugins: Options["rehypePlugins"] = [rehypeKatex, groupRecommendFences];
 
 /** Draws what belongs in a slot; see the slots prop. */
 export const MarkdownSlots = createContext<((id: string) => ReactNode) | null>(null);
@@ -58,7 +33,7 @@ function SlotContent({ id }: { id: string }) {
  * Renders user and agent markdown. react-markdown escapes raw HTML by
  * default, so agent-written content can't inject markup.
  */
-export function Markdown({ children, className, anchors, codeBlocks, visualBlocks, sourceSpans, slots }: { children: string; className?: string; anchors?: boolean; codeBlocks?: boolean; visualBlocks?: boolean; sourceSpans?: boolean; slots?: Slot[] }) {
+export function Markdown({ children, className, anchors, visualBlocks, sourceSpans, slots }: { children: string; className?: string; anchors?: boolean; visualBlocks?: boolean; sourceSpans?: boolean; slots?: Slot[] }) {
   const print = usePrintMode();
   // Heading ids come from source lines, so they match the API's outline
   // anchors and stay stable across re-renders.
@@ -88,7 +63,7 @@ export function Markdown({ children, className, anchors, codeBlocks, visualBlock
     };
     return {
       p: ({ children }) => <p>{children}</p>,
-      div: ({ children, className }) => className?.startsWith(SLOT_CLASS) ? <SlotContent id={className.slice(SLOT_CLASS.length)} /> : <div className={className === RECOMMEND_ROW ? "flex flex-wrap gap-3 [&>*]:w-[330px]" : className}>{children}</div>,
+      div: ({ children, className }) => className?.startsWith(SLOT_CLASS) ? <SlotContent id={className.slice(SLOT_CLASS.length)} /> : <div className={className}>{children}</div>,
       // Task lists show their checkboxes in place of bullets.
       ul: ({ children, className }) => <ul className={className?.includes("contains-task-list") ? "ml-1 list-none space-y-1 [&_input]:mr-2 [&_input]:align-middle" : "ml-5 list-disc space-y-1"}>{children}</ul>,
       ol: ({ children }) => <ol className="ml-5 list-decimal space-y-1">{children}</ol>,
@@ -113,29 +88,11 @@ export function Markdown({ children, className, anchors, codeBlocks, visualBlock
             h3: ({ children }) => <h4 className="mt-1 font-semibold">{children}</h4>,
           }),
       pre: ({ children }) => {
-        // Chat: fenced blocks get a header, Copy, lazy highlighting and collapse.
-        const code = (codeBlocks || visualBlocks) && isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : undefined;
+        const code = visualBlocks && isValidElement<{ className?: string; children?: ReactNode }>(children) ? children.props : undefined;
         if (code && typeof code.children === "string") {
           const info = /language-(\S+)/.exec(code.className ?? "")?.[1];
-          // Diagrams, step-throughs and charts: shared with Learn.
           const visual = visualFence(info, code.children);
           if (visual) return visual;
-          if (codeBlocks) {
-            // ```app fences run as sandboxed interactive apps.
-            if (isAppFence(info)) return <AppFence code={code.children} info={info} />;
-            if (isCanvasFence(info)) return <CanvasFence code={code.children} info={info} />;
-            if (isPdfFence(info)) return <PdfFence code={code.children} info={info} />;
-            if (isPlaygroundFence(info)) return <PlaygroundFence code={code.children} info={info} />;
-            if (isChoicesFence(info)) return <ChoicesFence code={code.children} info={info} />;
-            if (isResearchPlanFence(info)) return <ResearchFence code={code.children} info={info} />;
-            if (isWorkflowRunFence(info)) return <WorkflowRunFence code={code.children} info={info} />;
-            if (isDispatchFence(info)) return <DispatchFence code={code.children} info={info} />;
-            // ```recommend fences show as preview cards.
-            if (isRecommendFence(info)) return <RecommendFence code={code.children} info={info} />;
-            if (isGalleryFence(info)) return <GalleryFence code={code.children} info={info} />;
-            if (isProductFence(info)) return <ProductFence code={code.children} info={info} />;
-            return <CodeFence code={code.children} info={info} />;
-          }
         }
         return (
         <pre className="overflow-x-auto rounded-lg border border-border bg-surface-sunken p-3 font-mono text-12 leading-relaxed [&_code]:border-0 [&_code]:bg-transparent [&_code]:p-0">
@@ -144,11 +101,7 @@ export function Markdown({ children, className, anchors, codeBlocks, visualBlock
         );
       },
       a: ({ href, children }) =>
-        href?.startsWith(CITE_SCHEME) ? (
-          <CiteMarker n={Number(href.slice(CITE_SCHEME.length))} />
-        ) : codeBlocks && youtubeMoment(href) ? (
-          <MomentLink href={href!}>{children}</MomentLink>
-        ) : href?.startsWith(WIKILINK_SCHEME) ? (
+        href?.startsWith(WIKILINK_SCHEME) ? (
           <WikiLink refText={decodeURIComponent(href.slice(WIKILINK_SCHEME.length))}>{children}</WikiLink>
         ) : href?.startsWith("#") ? (
           <a href={href}>{children}</a>
@@ -158,11 +111,11 @@ export function Markdown({ children, className, anchors, codeBlocks, visualBlock
           </a>
         ),
     };
-  }, [anchors, codeBlocks, visualBlocks, ids]);
+  }, [anchors, visualBlocks, ids]);
   return (
     <LinkTargets.Provider value={targets}>
     <div className={cx("prose-code flex flex-col gap-2.5 [&_a]:text-accent [&_a]:underline-offset-2 hover:[&_a]:underline", className)}>
-      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={sourcePlugins ?? (codeBlocks ? chatRehypePlugins : rehypePlugins)} urlTransform={urlTransform} components={components}>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={sourcePlugins ?? rehypePlugins} urlTransform={urlTransform} components={components}>
         {md}
       </ReactMarkdown>
     </div>
