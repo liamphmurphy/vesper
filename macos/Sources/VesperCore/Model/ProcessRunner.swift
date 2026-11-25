@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 /// Runs a child process to completion, collecting stdout and stderr. Terminates it after `timeout`.
@@ -48,3 +49,4 @@ private final class DataBox: @unchecked Sendable {
     func append(_ d: Data) { lock.lock(); buffer.append(d); lock.unlock() }
     var data: Data { lock.lock(); defer { lock.unlock() }; return buffer }
 }
+#endif

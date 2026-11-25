@@ -22,27 +22,34 @@ public enum SSE {
         return ServerEvent(type: type, ids: ids)
     }
 
+    /// Builds an `SSEConnector` backed by a custom `URLSession` (e.g. a TLS-pinned companion session).
+    public static func urlSessionConnector(session: URLSession) -> SSEConnector {
+        { request in
+            let (bytes, response) = try await session.bytes(for: request)
+            guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
+                throw URLError(.badServerResponse)
+            }
+            return AsyncThrowingStream { continuation in
+                let task = Task {
+                    do {
+                        for try await line in bytes.lines { continuation.yield(line) }
+                        continuation.finish()
+                    } catch {
+                        continuation.finish(throwing: error)
+                    }
+                }
+                continuation.onTermination = { _ in task.cancel() }
+            }
+        }
+    }
+
     static let urlSessionConnector: SSEConnector = { request in
         let config = URLSessionConfiguration.ephemeral
         config.httpShouldSetCookies = false
         config.httpCookieStorage = nil
         config.timeoutIntervalForResource = 24 * 3600
         let session = URLSession(configuration: config)
-        let (bytes, response) = try await session.bytes(for: request)
-        guard let http = response as? HTTPURLResponse, (200..<300).contains(http.statusCode) else {
-            throw URLError(.badServerResponse)
-        }
-        return AsyncThrowingStream { continuation in
-            let task = Task {
-                do {
-                    for try await line in bytes.lines { continuation.yield(line) }
-                    continuation.finish()
-                } catch {
-                    continuation.finish(throwing: error)
-                }
-            }
-            continuation.onTermination = { _ in task.cancel() }
-        }
+        return try await urlSessionConnector(session: session)(request)
     }
 }
 

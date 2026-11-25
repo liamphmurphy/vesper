@@ -1,9 +1,21 @@
 import Foundation
 import Observation
 
-// The public surface the app target uses to run the bundled `vesper app` (docs/dev/native-mac-app.md,
-// "Shell ↔ Go"). The window code depends only on this file's public API; the implementation fills
-// in the bodies.
+/// A signed-in connection to the running stack.
+public struct StackSession: Sendable, Equatable {
+    /// e.g. http://127.0.0.1:8080
+    public var baseURL: URL
+    /// The `vesper_session` cookie value. Put it into each web view's cookie store and send it on
+    /// the shell's own API calls. Never log it.
+    public var sessionToken: String
+
+    public init(baseURL: URL, sessionToken: String) {
+        self.baseURL = baseURL
+        self.sessionToken = sessionToken
+    }
+
+    public static let cookieName = "vesper_session"
+}
 
 /// Health phases, as desktop/src/stack-health.ts (minus "remote": the app is local only).
 public enum StackPhase: String, Sendable, Codable {
@@ -43,21 +55,10 @@ public struct StackHealth: Sendable, Equatable {
     public static let initial = StackHealth(phase: .starting, title: "Starting…")
 }
 
-/// A signed-in connection to the running stack.
-public struct StackSession: Sendable, Equatable {
-    /// e.g. http://127.0.0.1:8080
-    public var baseURL: URL
-    /// The `vesper_session` cookie value. Put it into each web view's cookie store and send it on
-    /// the shell's own API calls. Never log it.
-    public var sessionToken: String
-
-    public init(baseURL: URL, sessionToken: String) {
-        self.baseURL = baseURL
-        self.sessionToken = sessionToken
-    }
-
-    public static let cookieName = "vesper_session"
-}
+#if os(macOS)
+// The public surface the app target uses to run the bundled `vesper app` (docs/dev/native-mac-app.md,
+// "Shell ↔ Go"). The window code depends only on this file's public API; the implementation fills
+// in the bodies.
 
 /// Knobs for the controller. The defaults are what the app uses; tests and the integration test override them.
 public struct StackOptions: Sendable {
@@ -691,3 +692,4 @@ public enum StackSignIn {
             .map(\.value)
     }
 }
+#endif

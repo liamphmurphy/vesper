@@ -1,3 +1,4 @@
+#if os(macOS)
 import Foundation
 
 // Scheduled export and Time Machine exclusion (desktop/src/native.ts "backups"), plus the small
@@ -162,3 +163,4 @@ public enum TimeMachine {
         return all
     }
 }
+#endif

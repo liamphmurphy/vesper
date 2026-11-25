@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// Vertical spacing and container dimensions reserved for one paragraph's inline embed group.
@@ -116,3 +117,4 @@ public enum KnowledgeInlineEmbedLayout {
         return ceil(max(textHeight, embedHeight))
     }
 }
+#endif

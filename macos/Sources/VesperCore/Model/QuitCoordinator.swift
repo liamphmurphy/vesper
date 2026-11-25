@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 
 /// Answers `applicationShouldTerminate` for a quit that needs async cleanup first (unsaved pages,
@@ -86,3 +87,4 @@ public final class QuitCoordinator {
         reply(false)
     }
 }
+#endif

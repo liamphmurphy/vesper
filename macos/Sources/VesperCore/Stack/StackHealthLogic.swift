@@ -1,10 +1,11 @@
 import Foundation
 
+public enum StackAction: String, Sendable, Codable { case restart, logs, retry, settings, storage }
+
+#if os(macOS)
 // Port of desktop/src/stack-health.ts: the health of the bundled `vesper app` stack, derived from
 // what the shell can observe. Pure, so every state has a unit test. (The Electron "remote" and
 // "external" modes are dropped: the Swift app is local only.)
-
-public enum StackAction: String, Sendable, Codable { case restart, logs, retry, settings, storage }
 
 public struct StackExitInfo: Sendable, Equatable {
     public var code: Int32?
@@ -220,3 +221,4 @@ public enum StackHealthLogic {
         return Int64(free)
     }
 }
+#endif
