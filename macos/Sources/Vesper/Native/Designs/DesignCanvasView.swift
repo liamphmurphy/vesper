@@ -73,35 +73,6 @@ enum DesignTool: String, CaseIterable, Identifiable {
     }
 }
 
-struct DesignCamera: Equatable {
-    var x: Double // world x at top-left of viewport
-    var y: Double // world y at top-left of viewport
-    var z: Double // zoom scale (0.1 ... 8.0)
-
-    static let initial = DesignCamera(x: -80, y: -80, z: 1)
-
-    func worldToScreen(_ pt: CGPoint) -> CGPoint {
-        CGPoint(x: (pt.x - x) * z, y: (pt.y - y) * z)
-    }
-
-    func screenToWorld(_ pt: CGPoint) -> CGPoint {
-        CGPoint(x: pt.x / z + x, y: pt.y / z + y)
-    }
-
-    static func fit(box: DesignBox, viewport: CGSize, pad: Double = 64) -> DesignCamera {
-        guard viewport.width > 10, viewport.height > 10 else { return .initial }
-        guard box.w > 0 && box.h > 0 else {
-            return DesignCamera(x: -viewport.width / 2, y: -viewport.height / 2, z: 1)
-        }
-        let zx = max(0.1, (viewport.width - pad * 2) / box.w)
-        let zy = max(0.1, (viewport.height - pad * 2) / box.h)
-        let z = min(1.5, min(zx, zy))
-        let cx = box.x + box.w / 2
-        let cy = box.y + box.h / 2
-        return DesignCamera(x: cx - viewport.width / (2 * z), y: cy - viewport.height / (2 * z), z: z)
-    }
-}
-
 // MARK: - Static Frame Canvas (Used by Prototype Present Mode & Review Previews)
 
 struct DesignFrameCanvas: View {
@@ -135,6 +106,8 @@ struct DesignFrameCanvas: View {
 struct InteractiveDesignCanvas: View {
     enum Handle: CaseIterable { case nw, n, ne, e, se, s, sw, w }
 
+    @Environment(\.vesperTheme) private var theme
+
     let design: DesignDocument
     let page: DesignPage
     let laid: DesignLaidPage
@@ -151,6 +124,7 @@ struct InteractiveDesignCanvas: View {
 
     @State private var draftDesign: DesignDocument?
     @State private var panOriginCamera: DesignCamera?
+    @State private var magnifyOriginCamera: DesignCamera?
     @State private var dragStartPositions: [String: (x: Double, y: Double)] = [:]
     @State private var drawBoxStart: CGPoint?
     @State private var drawBoxCurrent: CGPoint?
@@ -170,10 +144,11 @@ struct InteractiveDesignCanvas: View {
 
     var body: some View {
         let curLaid = shownLaid
-        let bgColor: Color = {
-            if let hex = curLaid.background { return Color(cgColor: SlideCGDrawer.cgColor(hex)) }
-            return design.mode == .dark ? Color(red: 0.06, green: 0.06, blue: 0.08) : Color(red: 0.94, green: 0.94, blue: 0.96)
-        }()
+        let backdrop = CanvasBackdropLogic.resolveDesignBackdrop(pageBackgroundHex: curLaid.background)
+        let bgColor: Color = switch backdrop {
+        case .explicitHex(let hex): Color(cgColor: SlideCGDrawer.cgColor(hex))
+        case .themeSurfaceSunken: theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface)
+        }
 
         GeometryReader { geo in
             ZStack(alignment: .topLeading) {
@@ -185,7 +160,7 @@ struct InteractiveDesignCanvas: View {
                         ctx.saveGState()
                         // Subtle dot grid at zoomed-in scales
                         if camera.z >= 0.45 {
-                            drawDotGrid(in: ctx, size: size)
+                            drawDotGrid(in: ctx, size: size, backdrop: backdrop)
                         }
                         ctx.scaleBy(x: camera.z, y: camera.z)
                         ctx.translateBy(x: -camera.x, y: -camera.y)
@@ -206,7 +181,7 @@ struct InteractiveDesignCanvas: View {
                         let pt = camera.worldToScreen(CGPoint(x: b.x, y: b.y))
                         Text(frame.name ?? "Frame")
                             .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(frame.type == .component ? Color.purple : Color.secondary)
+                            .foregroundStyle(frame.type == .component ? Color.purple : theme.palette.secondaryText)
                             .position(x: pt.x + 40, y: pt.y - 10)
                             .allowsHitTesting(false)
                     }
@@ -288,7 +263,11 @@ struct InteractiveDesignCanvas: View {
                         .font(.system(size: max(11, (found.node.paragraphs?.first?.runs.first?.size ?? 14) * camera.z)))
                         .scrollContentBackground(.hidden)
                         .padding(4)
-                        .background(found.node.type == .sticky ? Color(red: 0.99, green: 0.90, blue: 0.54) : Color.black.opacity(0.08))
+                        .background(
+                            found.node.type == .sticky
+                                ? Color(red: 0.99, green: 0.90, blue: 0.54)
+                                : (theme.mode == .dark ? Color.white.opacity(0.10) : Color.black.opacity(0.08))
+                        )
                         .overlay(RoundedRectangle(cornerRadius: 4).stroke(Color.accentColor, lineWidth: 1.5))
                         .focused($inlineFocused)
                         .frame(width: w, height: h)
@@ -296,16 +275,32 @@ struct InteractiveDesignCanvas: View {
                         .onExitCommand { commitInlineText() }
                 }
             }
+            .clipped()
             .contentShape(Rectangle())
+            .onCanvasScrollWheel { action in
+                switch action {
+                case .zoom(let factor, let ax, let ay):
+                    camera = camera.zoomed(by: factor, around: CGPoint(x: ax, y: ay))
+                    return true
+                case .pan(let dx, let dy):
+                    guard editingNodeId == nil else { return false }
+                    camera = camera.panned(dx: dx, dy: dy)
+                    return true
+                case .ignore:
+                    return false
+                }
+            }
             .gesture(mainGesture(viewport: geo.size, laid: curLaid))
             .simultaneousGesture(
-                MagnifyGesture().onChanged { val in
-                    let factor = Double(val.magnification)
-                    let nextZ = max(0.1, min(8.0, camera.z * pow(factor, 0.08)))
-                    let mid = CGPoint(x: geo.size.width / 2, y: geo.size.height / 2)
-                    let worldMid = camera.screenToWorld(mid)
-                    camera = DesignCamera(x: worldMid.x - mid.x / nextZ, y: worldMid.y - mid.y / nextZ, z: nextZ)
-                }
+                MagnifyGesture()
+                    .onChanged { val in
+                        let base = magnifyOriginCamera ?? camera
+                        if magnifyOriginCamera == nil { magnifyOriginCamera = base }
+                        camera = base.zoomed(by: Double(val.magnification), around: val.startLocation)
+                    }
+                    .onEnded { _ in
+                        magnifyOriginCamera = nil
+                    }
             )
             .simultaneousGesture(
                 SpatialTapGesture(count: 2).onEnded { val in
@@ -330,12 +325,24 @@ struct InteractiveDesignCanvas: View {
         }
     }
 
-    private func drawDotGrid(in ctx: CGContext, size: CGSize) {
+    private func drawDotGrid(in ctx: CGContext, size: CGSize, backdrop: CanvasBackdropColor) {
         let step = 20.0 * camera.z
         guard step >= 8 else { return }
-        ctx.setFillColor(design.mode == .dark ? CGColor(gray: 1, alpha: 0.08) : CGColor(gray: 0, alpha: 0.08))
-        let offX = (-camera.x * camera.z).truncatingRemainder(dividingBy: step)
-        let offY = (-camera.y * camera.z).truncatingRemainder(dividingBy: step)
+        let dotColor: CGColor = switch backdrop {
+        case .explicitHex(let hex):
+            CanvasBackdropLogic.isHexDark(hex) ? CGColor(gray: 1, alpha: 0.14) : CGColor(gray: 0, alpha: 0.10)
+        case .themeSurfaceSunken:
+            if let c = theme.color("text-tertiary") {
+                CGColor(red: c.red, green: c.green, blue: c.blue, alpha: 0.35)
+            } else {
+                theme.mode == .dark ? CGColor(gray: 1, alpha: 0.14) : CGColor(gray: 0, alpha: 0.10)
+            }
+        }
+        ctx.setFillColor(dotColor)
+        let rawOffX = (-camera.x * camera.z).truncatingRemainder(dividingBy: step)
+        let rawOffY = (-camera.y * camera.z).truncatingRemainder(dividingBy: step)
+        let offX = rawOffX < 0 ? rawOffX + step : rawOffX
+        let offY = rawOffY < 0 ? rawOffY + step : rawOffY
         var x = offX
         while x < size.width {
             var y = offY

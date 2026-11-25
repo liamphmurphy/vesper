@@ -122,6 +122,41 @@ public struct KnowledgeGraphViewport: Sendable, Equatable {
         KnowledgeGraphViewport(panX: panX, panY: panY, scale: Self.clampScale(scale * factor))
     }
 
+    /// Zooms by `factor` keeping the world point under screen `(anchorX, anchorY)` stationary.
+    public func zoomed(
+        by factor: Double,
+        aroundX anchorX: Double,
+        aroundY anchorY: Double,
+        bounds: KnowledgeGraphBounds,
+        canvasWidth: Double,
+        canvasHeight: Double
+    ) -> KnowledgeGraphViewport {
+        let nextScale = Self.clampScale(scale * factor)
+        let world = screenToWorld(
+            x: anchorX,
+            y: anchorY,
+            bounds: bounds,
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight
+        )
+        let nextPpu = Self.pixelsPerWorldUnit(
+            bounds: bounds,
+            canvasWidth: canvasWidth,
+            canvasHeight: canvasHeight,
+            scale: nextScale
+        )
+        guard nextPpu > 0 else {
+            return KnowledgeGraphViewport(panX: panX, panY: panY, scale: nextScale)
+        }
+        let nextCenterWorldX = world.x - (anchorX - canvasWidth * 0.5) / nextPpu
+        let nextCenterWorldY = world.y - (anchorY - canvasHeight * 0.5) / nextPpu
+        return KnowledgeGraphViewport(
+            panX: nextCenterWorldX - (bounds.x + bounds.width * 0.5),
+            panY: nextCenterWorldY - (bounds.y + bounds.height * 0.5),
+            scale: nextScale
+        )
+    }
+
     public func panned(
         deltaX: Double,
         deltaY: Double,

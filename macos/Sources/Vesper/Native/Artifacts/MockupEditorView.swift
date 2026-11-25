@@ -237,6 +237,7 @@ private struct MockupCanvasWebView: NSViewRepresentable {
         cfg.websiteDataStore = .nonPersistent()
         cfg.userContentController.add(context.coordinator, name: "vesperMockup")
         let wv = WKWebView(frame: .zero, configuration: cfg)
+        wv.setValue(false, forKey: "drawsBackground")
         context.coordinator.webView = wv
         context.coordinator.pendingSource = source
         context.coordinator.pendingZoom = zoomArg(zoom)

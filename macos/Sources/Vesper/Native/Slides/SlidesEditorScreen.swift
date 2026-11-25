@@ -176,7 +176,7 @@ struct SlidesEditorView: View {
                             }
                         )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
-                        .background(p.surface.opacity(0.45))
+                        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
 
                         if showNotes {
                             Divider().overlay(p.border)

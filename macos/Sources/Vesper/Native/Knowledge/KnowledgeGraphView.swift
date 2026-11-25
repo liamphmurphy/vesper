@@ -175,6 +175,31 @@ struct KnowledgeGraphView: View {
                 }
             }
             .contentShape(Rectangle())
+            .onCanvasScrollWheel { action in
+                switch action {
+                case .zoom(let factor, let ax, let ay):
+                    viewport = viewport.zoomed(
+                        by: factor,
+                        aroundX: ax,
+                        aroundY: ay,
+                        bounds: snapshot.bounds,
+                        canvasWidth: Double(proxy.size.width),
+                        canvasHeight: Double(proxy.size.height)
+                    )
+                    return true
+                case .pan(let dx, let dy):
+                    viewport = viewport.panned(
+                        deltaX: dx,
+                        deltaY: dy,
+                        canvasWidth: Double(proxy.size.width),
+                        canvasHeight: Double(proxy.size.height),
+                        bounds: snapshot.bounds
+                    )
+                    return true
+                case .ignore:
+                    return false
+                }
+            }
             .onContinuousHover { phase in
                 switch phase {
                 case .active(let loc):
@@ -380,7 +405,7 @@ struct KnowledgeGraphView: View {
                 }
             }
 
-            Text("Drag to pan, pinch to zoom, click a node to open.")
+            Text("Drag or scroll to pan, pinch or ⌘+scroll to zoom, click a node to open.")
                 .font(.system(size: theme.pointSize(.micro)))
                 .foregroundStyle(p.tertiaryText)
         }

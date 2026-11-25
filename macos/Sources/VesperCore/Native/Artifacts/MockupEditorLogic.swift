@@ -190,6 +190,7 @@ public enum MockupEditorLogic {
 
           let currentSource = "";
           let currentZoom = "fit";
+          let customScale = null;
           let selectedPath = null;
           let svgEl = null;
           let outlineEl = null;
@@ -305,22 +306,35 @@ public enum MockupEditorLogic {
             return { x: 0, y: 0, w, h };
           }
 
-          function applyZoom() {
-            if (!svgEl) return;
-            const vb = viewBoxOf(svgEl);
+          function currentScaleFor(vb) {
+            if (customScale !== null) return customScale;
             if (currentZoom === "fit") {
               const availW = Math.max(240, stage.clientWidth - 40);
               const availH = Math.max(200, stage.clientHeight - 40);
-              const scale = Math.min(availW / vb.w, availH / vb.h, 1);
-              svgEl.style.width = Math.round(vb.w * scale) + "px";
-              svgEl.style.height = Math.round(vb.h * scale) + "px";
-            } else {
-              const factor = currentZoom === "200" ? 2 : 1;
-              svgEl.style.width = Math.round(vb.w * factor) + "px";
-              svgEl.style.height = Math.round(vb.h * factor) + "px";
+              return Math.min(availW / vb.w, availH / vb.h, 1);
             }
+            return currentZoom === "200" ? 2 : 1;
+          }
+
+          function applyZoom() {
+            if (!svgEl) return;
+            const vb = viewBoxOf(svgEl);
+            const scale = currentScaleFor(vb);
+            svgEl.style.width = Math.round(vb.w * scale) + "px";
+            svgEl.style.height = Math.round(vb.h * scale) + "px";
             updateOutline();
           }
+
+          stage.addEventListener("wheel", (e) => {
+            if (!(e.metaKey || e.ctrlKey) || !svgEl) return;
+            e.preventDefault();
+            const vb = viewBoxOf(svgEl);
+            const scale = e.deltaMode === 1 ? 16 : 1;
+            const expArg = Math.max(-0.5, Math.min(0.5, -e.deltaY * scale * 0.0035));
+            const next = Math.max(0.1, Math.min(8, currentScaleFor(vb) * Math.exp(expArg)));
+            customScale = next;
+            applyZoom();
+          }, { passive: false });
 
           function updateOutline() {
             if (!outlineEl || !svgEl) return;
@@ -524,7 +538,7 @@ public enum MockupEditorLogic {
           }));
 
           window.__vesperSetSource = (src) => { if (src !== currentSource) { currentSource = src; render(); } };
-          window.__vesperSetZoom = (z) => { currentZoom = z; applyZoom(); };
+          window.__vesperSetZoom = (z) => { currentZoom = z; customScale = null; applyZoom(); };
           window.__vesperSetTheme = (dark) => { document.documentElement.dataset.theme = dark ? "dark" : "light"; };
           window.addEventListener("resize", applyZoom);
           post({ type: "ready" });
