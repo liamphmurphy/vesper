@@ -13,7 +13,54 @@ final class NativeMermaidChartTypesTests: XCTestCase {
         "Fish" : 0
     """
 
+    static let ganttSample = """
+    gantt
+        title Vesper 2.0 launch
+        dateFormat YYYY-MM-DD
+        axisFormat %b %e
+        excludes weekends
+        todayMarker off
+        section Design
+        Research users          :done, des1, 2024-01-08, 2024-01-12
+        Wireframes              :active, des2, after des1, 5d
+        Visual design review    :crit, after des2, 3d
+        section Build
+        API                     :api, 2024-01-15, 2w
+        Native app              :app, after api, 15d
+        Docs                    :10d
+        section Launch
+        Code freeze             :milestone, freeze, after app, 0d
+        Release candidate QA    :crit, active, after freeze, 4d
+        Ship it                 :milestone, after freeze, 6d
+    """
+
+    static let ganttHours = """
+    gantt
+        title Deploy day
+        dateFormat HH:mm
+        axisFormat %H:%M
+        Prepare      :p, 09:00, 45m
+        Migrate DB   :crit, m, after p, 1h
+        Roll out     :after m, 2h
+        Smoke tests  :done, 12:30, 30m
+        Done         :milestone, 15:00, 0m
+    """
+
+    static let ganttYear = """
+    gantt
+        dateFormat YYYY-MM-DD
+        section Q1
+        A long-running research effort with a long name :2025-01-06, 70d
+        section Q2-Q4
+        Pilot     :pilot, 2025-04-01, 3M
+        Rollout   :after pilot, 2025-12-15
+        Tiny      :2025-12-20, 1d
+    """
+
     static let samples: [(String, String)] = [
+        ("gantt", ganttSample),
+        ("gantt-hours", ganttHours),
+        ("gantt-year", ganttYear),
         ("pie", pieSample),
         ("pie-single", "pie\n\"Everything\" : 1"),
         ("pie-many", "---\ntitle: Browser share\n---\npie\n" + ["Chrome": 64.2, "Safari": 18.6, "Edge": 5.2, "Firefox": 2.8, "Opera": 2.3,
@@ -78,6 +125,101 @@ final class NativeMermaidChartTypesTests: XCTestCase {
 
     func testPieTooManySlicesIsTooLarge() {
         let src = "pie\n" + (0...NativeMermaid.maxRows).map { "\"s\($0)\" : 1" }.joined(separator: "\n")
+        XCTAssertThrowsError(try NativeMermaid.svg(src, palette: .light)) { e in
+            XCTAssertEqual(e as? NativeMermaidError, .tooLarge)
+        }
+    }
+
+    // MARK: Gantt
+
+    func testGanttProjectPlan() throws {
+        let d = try assertRenders(Self.ganttSample, labels: [
+            "Vesper 2.0 launch", "Design", "Build", "Launch", "Research users", "Wireframes", "Visual design review", "API",
+            "Native app", "Docs", "Code freeze", "Release candidate QA", "Ship it", "Jan 14",
+        ])
+        XCTAssertEqual(d.nodeFrames.count, 9)
+        for i in d.nodeFrames.indices.dropFirst() {
+            XCTAssertGreaterThanOrEqual(d.nodeFrames[i].minY, d.nodeFrames[i - 1].maxY, "one task per row")
+        }
+        XCTAssertTrue(d.svg.contains("<polygon"), "milestones are diamonds")
+    }
+
+    func testGanttTimeOfDayAndYearLongCharts() throws {
+        try assertRenders(Self.ganttHours, labels: ["Deploy day", "Prepare", "Migrate DB", "Roll out", "Smoke tests", "Done", "10:00"])
+        try assertRenders(Self.ganttYear,
+                          labels: ["Q1", "Q2-Q4", "A long-running research effort with a long name", "Pilot", "Rollout", "Tiny"])
+    }
+
+    func gantt(_ src: String) throws -> MermaidGantt {
+        try MermaidGantt.parse(try MermaidSource(src))
+    }
+
+    func at(_ s: String) -> Int64 {
+        GanttDateFormat("YYYY-MM-DD HH:mm").parse(s)!
+    }
+
+    func testGanttDateArithmetic() throws {
+        let g = try gantt("""
+        gantt
+          A : a1, 2024-01-01, 3d
+          B : after a1, 1w
+          C : 12h
+          D : d1, after a1 f1, 2024-03-01
+          E : 2024-01-31, 1M
+          F : f1, 2024-02-01, 1d
+          G : 2024-01-01, until a1
+          H : 2024-01-01T06:30, 90m
+        """)
+        let spans = g.tasks.map { [$0.start, $0.end] }
+        XCTAssertEqual(spans, [
+            [at("2024-01-01 00:00"), at("2024-01-04 00:00")],
+            [at("2024-01-04 00:00"), at("2024-01-11 00:00")],
+            [at("2024-01-11 00:00"), at("2024-01-11 12:00")],
+            [at("2024-02-02 00:00"), at("2024-03-01 00:00")],
+            [at("2024-01-31 00:00"), at("2024-02-29 00:00")],
+            [at("2024-02-01 00:00"), at("2024-02-02 00:00")],
+            [at("2024-01-01 00:00"), at("2024-01-01 00:00")],
+            [at("2024-01-01 06:30"), at("2024-01-01 08:00")],
+        ])
+    }
+
+    func testGanttExcludesInclusiveEndsAndTimeFormats() throws {
+        // Thu 4 Jan 2024 + 3 working days ends on Tue 9 Jan; a Friday 1d task runs over the weekend to Monday.
+        var g = try gantt("gantt\nexcludes weekends\nA : 2024-01-04, 3d\nB : 2024-01-05, 1d\nC : 2024-01-05, 2024-01-08")
+        XCTAssertEqual(g.tasks.map(\.end), [at("2024-01-09 00:00"), at("2024-01-08 00:00"), at("2024-01-08 00:00")])
+        g = try gantt("gantt\nexcludes 2024-01-02, wednesday\nincludes 2024-01-03\nA : 2024-01-01, 3d")
+        XCTAssertEqual(g.tasks[0].end, at("2024-01-05 00:00"), "only the excluded Tuesday pushes the end")
+        g = try gantt("gantt\ninclusiveEndDates\nA : 2024-01-01, 2024-01-03")
+        XCTAssertEqual(g.tasks[0].end, at("2024-01-04 00:00"))
+        g = try gantt("gantt\ndateFormat HH:mm\nA : 09:00, 90m")
+        XCTAssertEqual(g.tasks.map { [$0.start, $0.end] }, [[9 * GanttTime.hour, 10 * GanttTime.hour + 30 * GanttTime.minute]])
+        g = try gantt("gantt\ndateFormat DD/MM/YYYY HH:mm\nA : 29/02/2024 13:05, 1h")
+        XCTAssertEqual(g.tasks[0].start, at("2024-02-29 13:05"))
+        XCTAssertEqual(GanttTime.format(at("2024-03-05 07:08"), "%b %e %Y %H:%M %-m/%d %a %q"), "Mar 5 2024 07:08 3/05 Tue %q")
+    }
+
+    func testGanttTicksAreAlignedAndReadable() {
+        let ticks = GanttTime.ticks(from: at("2024-01-03 00:00"), to: at("2024-03-20 00:00"), width: 800, fixed: nil, format: nil)
+        XCTAssertGreaterThanOrEqual(ticks.times.count, 4)
+        XCTAssertLessThanOrEqual(ticks.times.count, 24)
+        XCTAssertTrue(ticks.times.allSatisfy { GanttTime.weekday(GanttTime.dayNumber($0)) == 0 }, "weekly ticks fall on Sundays")
+        let monthly = GanttTime.ticks(from: at("2024-01-03 00:00"), to: at("2024-12-20 00:00"), width: 800, fixed: .months(1), format: "%b")
+        XCTAssertEqual(monthly.times.map { GanttTime.format($0, monthly.format) }, ["Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"])
+    }
+
+    func testGanttSyntaxErrors() {
+        assertSyntax("gantt\nA : a, after b, 1d\nB : b, after a, 1d", line: 2)
+        assertSyntax("gantt\nA : 2024-01-01, 1d\nB : after nope, 1d", line: 3)
+        assertSyntax("gantt\nsection S\nA : 3d", line: 3)
+        assertSyntax("---\ntitle: T\n---\ngantt\nA : 2024-13-01, 1d", line: 5)
+        assertSyntax("gantt\nA : 2024-01-01, 3 days", line: 2)
+        assertSyntax("gantt\nA 2024-01-01", line: 2)
+        assertSyntax("gantt\ntickInterval often\nA : 2024-01-01, 1d", line: 2)
+        assertSyntax("gantt\ntitle Empty", line: 1)
+    }
+
+    func testGanttTooManyTasksIsTooLarge() {
+        let src = "gantt\nA : 2024-01-01, 1d\n" + (0..<NativeMermaid.maxRows).map { "T\($0) : 1d" }.joined(separator: "\n")
         XCTAssertThrowsError(try NativeMermaid.svg(src, palette: .light)) { e in
             XCTAssertEqual(e as? NativeMermaidError, .tooLarge)
         }
