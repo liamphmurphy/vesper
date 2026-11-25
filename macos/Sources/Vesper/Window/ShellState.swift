@@ -63,7 +63,7 @@ final class ShellState {
     /// The area the area bar and tab icon mark.
     var currentArea: AreaId? { native?.areaOverride ?? nativeArea }
 
-    // Playground web view navigation state.
+    // Tab navigation state (native history stack for Vesper tabs, WKWebView for playgrounds).
     var canGoBack = false
     var canGoForward = false
     var isLoading = false

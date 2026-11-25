@@ -69,7 +69,7 @@ struct ArtifactDetailScreen: View {
         }
         .onChange(of: entry.data) { _, artifact in
             if let artifact, let redirect = ArtifactDetailLogic.wikiRedirectPath(type: artifact.type, path: artifact.path, showVersions: showVersions) {
-                context.navigate(redirect)
+                context.navigate(redirect, replace: true)
                 return
             }
             syncChrome(artifact: artifact, backlinks: backlinks)

@@ -208,8 +208,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func zoomIn(_ sender: Any?) { if let web { web.pageZoom = min(web.pageZoom + 0.1, 3) } }
     @objc func zoomOut(_ sender: Any?) { if let web { web.pageZoom = max(web.pageZoom - 0.1, 0.3) } }
     @objc func zoomReset(_ sender: Any?) { web?.pageZoom = 1 }
-    @objc func goBack(_ sender: Any?) { web?.goBack() }
-    @objc func goForward(_ sender: Any?) { web?.goForward() }
+    @objc func goBack(_ sender: Any?) { app.keyController?.content.goBack() }
+    @objc func goForward(_ sender: Any?) { app.keyController?.content.goForward() }
 
     /// Opens Web Inspector. WebKit has no public API for this; "Inspect Element" in the page's
     /// context menu (isInspectable) is the supported route, so this only uses the SPI if present.
@@ -289,8 +289,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
         case #selector(reopenClosedTab(_:)): return app.canReopenClosedTab
-        case #selector(goBack(_:)): return web?.canGoBack ?? false
-        case #selector(goForward(_:)): return web?.canGoForward ?? false
+        case #selector(goBack(_:)): return app.keyController?.content.canGoBack ?? false
+        case #selector(goForward(_:)): return app.keyController?.content.canGoForward ?? false
         case #selector(toggleSidebarAction(_:)):
             guard let controller = app.keyController, controller.hasSidebar, let sidebar = controller.split.splitViewItems.first else { return false }
             item.title = sidebar.isCollapsed ? "Show Sidebar" : "Hide Sidebar"

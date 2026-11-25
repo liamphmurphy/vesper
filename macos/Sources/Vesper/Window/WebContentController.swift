@@ -18,6 +18,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
 
     /// Path (vesper) or full URL (playground) to load first.
     private(set) var pendingPath: String
+    /// Per-tab navigation history for native `.vesper` tabs.
+    private var history: NavigationHistory
     private var base: URL?
     private var playgroundURL: URL?
     private var observations: [NSKeyValueObservation] = []
@@ -29,7 +31,9 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         self.app = app
         self.kind = kind
         self.state = state
-        self.pendingPath = path
+        let initialHistory = NavigationHistory(initial: path)
+        self.history = initialHistory
+        self.pendingPath = kind == .vesper ? initialHistory.current : path
         if kind == .playground {
             self.webView = WebViewFactory.makePlaygroundWebView()
             self.playgroundURL = URL(string: path)
@@ -49,7 +53,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             ]
             webView.load(URLRequest(url: playgroundURL ?? URL(string: "about:blank")!))
         }
-        syncNativeScreen(path: path)
+        syncHistoryState()
+        syncNativeScreen(path: pendingPath)
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
@@ -118,12 +123,50 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         state.loadError = nil
     }
 
-    func navigate(path: String) {
+    var canGoBack: Bool {
+        kind == .playground ? (webView?.canGoBack ?? false) : history.canGoBack
+    }
+
+    var canGoForward: Bool {
+        kind == .playground ? (webView?.canGoForward ?? false) : history.canGoForward
+    }
+
+    func navigate(path: String, replace: Bool = false) {
         guard kind == .vesper else { return }
         if app.handleSettingsPath(path, from: ownerWindow) { return }
+        history.navigate(to: path, replace: replace)
+        applyNativeNavigation(path: history.current)
+    }
+
+    func goBack() {
+        if kind == .playground {
+            webView?.goBack()
+            return
+        }
+        guard let path = history.goBack() else { return }
+        applyNativeNavigation(path: path)
+    }
+
+    func goForward() {
+        if kind == .playground {
+            webView?.goForward()
+            return
+        }
+        guard let path = history.goForward() else { return }
+        applyNativeNavigation(path: path)
+    }
+
+    private func applyNativeNavigation(path: String) {
         pendingPath = path
+        syncHistoryState()
         syncNativeScreen(path: path)
         app.scheduleSessionSave()
+    }
+
+    private func syncHistoryState() {
+        guard kind == .vesper else { return }
+        state.canGoBack = history.canGoBack
+        state.canGoForward = history.canGoForward
     }
 
     func retry() {
@@ -199,6 +242,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
                 guard let self else { return }
                 if newTab { self.app.openVesperTab(path: path, nextTo: self.ownerWindow) } else { self.navigate(path: path) }
             }
+            context.replaceRoute = { [weak self] path in self?.navigate(path: path, replace: true) }
             context.onChromeChange = { [weak self] chrome in self?.state.native = chrome }
             context.onSidebarViewChange = { [weak self] view in self?.state.nativeSidebar = view }
             context.onInspectorViewChange = { [weak self] builder in self?.state.nativeInspectorView = builder }

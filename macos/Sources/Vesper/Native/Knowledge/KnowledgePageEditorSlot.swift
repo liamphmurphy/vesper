@@ -97,7 +97,7 @@ struct KnowledgePageEditorSlot: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .task(id: destination) {
-            context.navigate(destination)
+            context.navigate(destination, replace: true)
         }
     }
 }

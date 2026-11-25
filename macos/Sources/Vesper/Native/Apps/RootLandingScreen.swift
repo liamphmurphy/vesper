@@ -28,7 +28,7 @@ struct RootLandingScreen: View {
         .onAppear {
             if let redirect = AppsHomeLogic.knowledgeRedirectPath(for: context.match.path) {
                 redirected = true
-                context.navigate(redirect)
+                context.navigate(redirect, replace: true)
                 return
             }
             context.store.load(Self.bootRequest)
@@ -44,7 +44,7 @@ struct RootLandingScreen: View {
         guard !redirected else { return }
         if let redirect = AppsHomeLogic.knowledgeRedirectPath(for: context.match.path) {
             redirected = true
-            context.navigate(redirect)
+            context.navigate(redirect, replace: true)
             return
         }
         guard let boot, !personasFetching else { return }
@@ -54,6 +54,6 @@ struct RootLandingScreen: View {
             personas: personas?.personas ?? [],
             defaultPersonaId: personas?.defaultPersonaId
         )
-        context.navigate(target)
+        context.navigate(target, replace: true)
     }
 }
