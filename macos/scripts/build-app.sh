@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Assembles and signs macos/build/Vesper.app (docs/dev/native-mac-app.md, "Processes and files").
 #
-#   make -C macos app                 stage resources (slow: web build, Postgres, vesper) then assemble
+#   make -C macos app                 stage resources (slow: design worker, Postgres, vesper) then assemble
 #   make -C macos app SKIP_STAGE=1    reuse macos/staged as it is
 #
 # Environment:
@@ -48,14 +48,14 @@ xcrun swiftc -O -swift-version 5 -module-name VesperSafari \
   "${safari_src}"/Bridge/*.swift "${safari_src}"/Handler/*.swift \
   -o "${safari_bin}"
 
-# 2. Resources (bin/vesper, postgres, web, images).
+# 2. Resources (bin/vesper, postgres, design-worker, images).
 if [[ "${SKIP_STAGE:-}" != "1" ]]; then
   log "staging resources"
   bash "${repo_root}/scripts/stage-mac-resources.sh"
 else
   log "SKIP_STAGE=1: reusing ${res_src}"
 fi
-for sub in bin postgres web images; do
+for sub in bin postgres design-worker images; do
   [[ -d "${res_src}/${sub}" ]] || { echo "Missing ${res_src}/${sub} (run without SKIP_STAGE=1)" >&2; exit 1; }
 done
 [[ -x "${res_src}/bin/vesper" ]] || { echo "Missing ${res_src}/bin/vesper" >&2; exit 1; }
