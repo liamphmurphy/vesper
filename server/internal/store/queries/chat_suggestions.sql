@@ -33,6 +33,9 @@ WHERE workspace_id = @workspace_id AND user_id = @user_id
   AND generated_at > now() - interval '14 days';
 
 -- name: ClearChatSuggestions :exec
--- The person forgot something a batch may have drawn on.
-UPDATE chat_suggestions SET items = '[]', generated_at = NULL, attempted_at = now()
+-- The person forgot a memory or deleted a chat a batch may have drawn on.
+-- Deleting the row clears what's on screen, discards any in-flight save (which
+-- requires its claimed attempted_at row to still exist), and lets the next
+-- sweep regenerate without waiting out the retry window.
+DELETE FROM chat_suggestions
 WHERE workspace_id = @workspace_id AND user_id = @user_id;
