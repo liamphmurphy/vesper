@@ -125,6 +125,12 @@ func TestSignInLinkWorksOnce(t *testing.T) {
 			t.Errorf("GET %s set a cookie", path)
 		}
 	}
+	if rec := getWithCookie(h, SignInPage, nil); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Sign in to Vesper") {
+		t.Errorf("GET %s = %d %q, want 200 embedded sign-in page", SignInPage, rec.Code, rec.Body.String())
+	}
+	if rec := getWithCookie(h, SignInPage+"?error=invalid", nil); rec.Code != http.StatusOK || !strings.Contains(rec.Header().Get("Content-Type"), "text/html") {
+		t.Errorf("GET %s?error=invalid = %d ct=%q, want 200 text/html", SignInPage, rec.Code, rec.Header().Get("Content-Type"))
+	}
 }
 
 // A playground is served from Vesper's own host on another port, so the

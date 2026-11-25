@@ -413,7 +413,7 @@ func buildAppMux(apiHandler, webHandler http.Handler, imgMgr *ImageManager) http
 			_ = json.NewEncoder(w).Encode(imgMgr.Status())
 			return
 		}
-		if strings.HasPrefix(p, "/api/") || p == "/mcp" || strings.HasPrefix(p, "/mcp/") || p == "/events" {
+		if strings.HasPrefix(p, "/api/") || p == "/mcp" || strings.HasPrefix(p, "/mcp/") || p == "/events" || p == httpapi.SignInPage {
 			apiHandler.ServeHTTP(w, r)
 			return
 		}

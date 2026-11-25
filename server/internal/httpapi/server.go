@@ -217,6 +217,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET "+connectors.CallbackPath, s.connectorCallback)
 	mux.Handle("/api/v1/agent/", agentapi.RESTHandler(deps))
 	mux.HandleFunc("GET "+SignInPath, s.signIn)
+	mux.HandleFunc("GET "+SignInPage, s.signInPage)
 	mux.HandleFunc("GET "+AuthStatusPath, s.authStatus)
 	mux.HandleFunc("POST "+AuthSetupPath, s.authSetup)
 	mux.HandleFunc("POST "+AuthLoginPath, s.authLogin)

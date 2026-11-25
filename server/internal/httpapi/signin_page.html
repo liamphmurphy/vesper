@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Sign in · Vesper</title>
+<style>
+  :root {
+    --bg: #111114; --surface: #19191f; --border: #2b2b34; --text: #f4f4f5;
+    --muted: #a1a1aa; --accent: #6366f1; --danger: #f87171;
+  }
+  @media (prefers-color-scheme: light) {
+    :root {
+      --bg: #f5f6f8; --surface: #ffffff; --border: #e4e4e7; --text: #18181b;
+      --muted: #52525b; --accent: #4f46e5; --danger: #dc2626;
+    }
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; min-height: 100dvh; display: grid; place-items: center; padding: 24px;
+    background: var(--bg); color: var(--text);
+    font: 14px/1.5 -apple-system, BlinkMacSystemFont, "SF Pro Text", system-ui, sans-serif;
+  }
+  main {
+    width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border);
+    border-radius: 12px; padding: 24px; display: flex; flex-direction: column; gap: 16px;
+  }
+  h1 { margin: 0; font-size: 18px; font-weight: 600; }
+  p { margin: 0; color: var(--muted); }
+  code { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 12.5px; }
+  form { display: flex; flex-direction: column; gap: 12px; }
+  label { display: flex; flex-direction: column; gap: 5px; font-size: 12.5px; color: var(--muted); }
+  input {
+    width: 100%; padding: 8px 10px; border-radius: 7px; border: 1px solid var(--border);
+    background: var(--bg); color: var(--text); font: inherit;
+  }
+  button {
+    padding: 9px 14px; border: 0; border-radius: 7px; background: var(--accent); color: #fff;
+    font: 500 13.5px/1.2 inherit; cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: default; }
+  .error { color: var(--danger); font-size: 12.5px; }
+  .hint { font-size: 12px; color: var(--muted); text-align: center; }
+</style>
+</head>
+<body>
+<main id="root">
+  <h1>Sign in to Vesper</h1>
+  <p>Loading…</p>
+</main>
+<script>
+(() => {
+  const root = document.getElementById("root");
+  const params = new URLSearchParams(location.search);
+  const linkFailed = params.get("error") === "invalid";
+  const makeHelp = 'Run <code>make signin</code> where Vesper runs and open the link it prints. Each link works once and keeps this browser signed in for a year.';
+
+  if (linkFailed) {
+    root.innerHTML = '<h1>That sign-in link didn\u2019t work</h1><p>It was already used or has expired (links last 15 minutes). ' + makeHelp + '</p>';
+    return;
+  }
+
+  fetch("/api/v1/auth/status", { credentials: "same-origin" })
+    .then((r) => (r.ok ? r.json() : Promise.reject(new Error("status"))))
+    .then((status) => {
+      if (status.signed_in) {
+        location.assign("/");
+        return;
+      }
+      if (status.claimed && !status.password_set) {
+        root.innerHTML = '<h1>Sign in to Vesper</h1><p>' + makeHelp + '</p>';
+        return;
+      }
+      const settingUp = !status.claimed;
+      const endpoint = settingUp ? "/api/v1/auth/setup" : "/api/v1/auth/login";
+      root.innerHTML = `
+        <h1>${settingUp ? "Set up Vesper" : "Sign in to Vesper"}</h1>
+        <p>${settingUp ? "Choose the username and password you\u2019ll sign in with." : "Enter your username and password."}</p>
+        <form id="f">
+          <label>Username<input name="username" autocomplete="username" required autofocus></label>
+          <label>Password<input name="password" type="password" autocomplete="${settingUp ? "new-password" : "current-password"}" required></label>
+          <div class="error" id="err" hidden></div>
+          <button type="submit">${settingUp ? "Create sign-in" : "Sign in"}</button>
+        </form>
+        ${settingUp ? "" : '<p class="hint">Forgot it? Run <code>make signin</code> where Vesper runs for a one-time link.</p>'}
+      `;
+      const form = document.getElementById("f");
+      const errEl = document.getElementById("err");
+      form.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errEl.hidden = true;
+        const btn = form.querySelector("button");
+        btn.disabled = true;
+        try {
+          const data = Object.fromEntries(new FormData(form).entries());
+          const res = await fetch(endpoint, {
+            method: "POST",
+            credentials: "same-origin",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(data),
+          });
+          if (res.ok) {
+            location.assign("/");
+            return;
+          }
+          const body = await res.json().catch(() => ({}));
+          errEl.textContent = body.message || "Sign in failed.";
+          errEl.hidden = false;
+        } catch {
+          errEl.textContent = "Couldn\u2019t reach Vesper.";
+          errEl.hidden = false;
+        } finally {
+          btn.disabled = false;
+        }
+      });
+    })
+    .catch(() => {
+      root.innerHTML = '<h1>Sign in to Vesper</h1><p>' + makeHelp + '</p>';
+    });
+})();
+</script>
+</body>
+</html>
