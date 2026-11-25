@@ -4,9 +4,12 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http/httptest"
+	"net/url"
 	"strconv"
 	"testing"
+	"time"
 
 	"github.com/google/uuid"
 
@@ -345,5 +348,172 @@ func TestListRunEventsAndBatchHydration(t *testing.T) {
 		!gotSJ.BatchId.IsSpecified() || gotSJ.BatchId.MustGet() != batchID || gotSJ.Status != "completed" ||
 		gotSJ.ToolCalls != 4 || gotSJ.InputTokens != 1200 || gotSJ.OutputTokens != 150 || gotSJ.CachedTokens != 400 {
 		t.Fatalf("subagent job hydration wrong: %+v", gotSJ)
+	}
+}
+
+// Long multi-turn chats reuse one run_id across turns (and auto-compaction), so
+// run_events grows past 1000 rows. Without a cursor, GET /runs/{id}/events and
+// GET /runs/{id} must return the newest 1000 events (ascending by seq), while
+// ?since=<RFC3339> returns only the active turn's window and ?after=<seq> keeps
+// paginating forward from the cursor.
+func TestListRunEventsLongRunAndSince(t *testing.T) {
+	pool := testdb.New(t)
+	ctx := context.Background()
+	q := store.New(pool)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true, Artifacts: &artifacts.Service{Pool: pool}}); err != nil {
+		t.Fatal(err)
+	}
+	tr := &tracker.Service{Pool: pool}
+	s := &Server{AnonymousAPI: true, Pool: pool, Q: q, Tracker: tr, Runs: &runs.Service{Pool: pool, Tracker: tr}}
+	handler := s.Handler()
+
+	user, err := q.GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ws := user.WorkspaceID
+	atlas, err := q.GetAgentByHandle(ctx, store.GetAgentByHandleParams{WorkspaceID: ws, Handle: "atlas"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	chatRun, err := q.CreateRun(ctx, store.CreateRunParams{
+		WorkspaceID: ws, AgentID: atlas.ID, Mode: "managed", State: "running",
+		ResolvedSpec: json.RawMessage(`{}`), Harness: "antigravity", Model: "m", Purpose: "chat",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var chatID uuid.UUID
+	if err := pool.QueryRow(ctx, `INSERT INTO chat_sessions (workspace_id, title, created_by, agent_id, harness, model, current_run_id) VALUES ($1, 'Long chat', $2, $3, 'antigravity', 'm', $4) RETURNING id`, ws, user.ID, atlas.ID, chatRun.ID).Scan(&chatID); err != nil {
+		t.Fatal(err)
+	}
+
+	const oldCount = 1015
+	const liveCount = 12
+	turnStart := time.Date(2026, 11, 25, 4, 55, 13, 123456000, time.UTC)
+	oldBase := turnStart.Add(-10 * time.Minute)
+
+	// Insert 1015 older events followed by 12 live-turn events (1027 total > 1000).
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_events (run_id, type, payload, at)
+		SELECT $1, 'tool_call', jsonb_build_object('id', 'old-' || g, 'tool', 'Bash'), $2::timestamptz + (g * interval '1 millisecond')
+		FROM generate_series(1, $3) AS g
+	`, chatRun.ID, oldBase, oldCount); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_events (run_id, type, payload, at)
+		SELECT $1,
+			CASE WHEN g = 1 THEN 'message' WHEN g = 2 THEN 'lifecycle' ELSE 'tool_call' END,
+			CASE
+				WHEN g = 1 THEN jsonb_build_object('role', 'assistant', 'text', 'On it.')
+				WHEN g = 2 THEN jsonb_build_object('state', 'plan', 'steps', jsonb_build_array(jsonb_build_object('id', '1', 'title', 'Fix bug', 'status', 'in_progress')))
+				ELSE jsonb_build_object('id', 'live-' || g, 'tool', 'Read')
+			END,
+			$2::timestamptz + ((g - 1) * interval '10 millisecond')
+		FROM generate_series(1, $3) AS g
+	`, chatRun.ID, turnStart, liveCount); err != nil {
+		t.Fatal(err)
+	}
+
+	fetch := func(query string) api.RunEventList {
+		t.Helper()
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, httptest.NewRequest("GET", "/api/v1/runs/"+chatRun.ID.String()+"/events"+query, nil))
+		if rec.Code != 200 {
+			t.Fatalf("GET %s status=%d body=%s", query, rec.Code, rec.Body.String())
+		}
+		var out api.RunEventList
+		if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+			t.Fatal(err)
+		}
+		return out
+	}
+
+	// 1. Default (no after, no since) returns the newest 1000 events, ascending by seq,
+	// so live-turn events past seq 1000 are visible.
+	latest := fetch("")
+	if len(latest.Events) != 1000 {
+		t.Fatalf("latest len=%d, want 1000", len(latest.Events))
+	}
+	for i := 1; i < len(latest.Events); i++ {
+		if latest.Events[i].Seq <= latest.Events[i-1].Seq {
+			t.Fatalf("latest not ascending at %d: %d <= %d", i, latest.Events[i].Seq, latest.Events[i-1].Seq)
+		}
+	}
+	if got := latest.Events[len(latest.Events)-1].Payload["id"]; got != fmt.Sprintf("live-%d", liveCount) {
+		t.Fatalf("latest last event id=%v, want live-%d", got, liveCount)
+	}
+	if got := latest.Events[0].Payload["id"]; got != "old-28" {
+		t.Fatalf("latest first event id=%v, want old-28", got)
+	}
+
+	// 2. ?since=<RFC3339Nano> returns only the 12 current-turn events (opening line + plan + tools).
+	sinceQ := "?since=" + url.QueryEscape(turnStart.Format(time.RFC3339Nano))
+	live := fetch(sinceQ)
+	if len(live.Events) != liveCount {
+		t.Fatalf("since len=%d, want %d", len(live.Events), liveCount)
+	}
+	if live.Events[0].Type != "message" || live.Events[0].Payload["text"] != "On it." {
+		t.Fatalf("since[0]=%+v, want opening message", live.Events[0])
+	}
+	if live.Events[1].Type != "lifecycle" || live.Events[1].Payload["state"] != "plan" {
+		t.Fatalf("since[1]=%+v, want plan lifecycle", live.Events[1])
+	}
+
+	// 3. Explicit ?after=0 still paginates forward from the beginning of the run
+	// (and takes precedence over ?since).
+	fromStart := fetch("?after=0&since=" + url.QueryEscape(turnStart.Format(time.RFC3339Nano)))
+	if len(fromStart.Events) != 1000 {
+		t.Fatalf("after=0 len=%d, want 1000", len(fromStart.Events))
+	}
+	if got := fromStart.Events[0].Payload["id"]; got != "old-1" {
+		t.Fatalf("after=0 first event id=%v, want old-1", got)
+	}
+	if got := fromStart.Events[999].Payload["id"]; got != "old-1000" {
+		t.Fatalf("after=0 last event id=%v, want old-1000", got)
+	}
+	rest := fetch("?after=" + strconv.FormatInt(fromStart.Events[999].Seq, 10))
+	if len(rest.Events) != (oldCount+liveCount)-1000 {
+		t.Fatalf("after=1000th len=%d, want %d", len(rest.Events), (oldCount+liveCount)-1000)
+	}
+
+	// 4. GET /runs/{id} without ?after also returns the newest 1000 events.
+	getRec := httptest.NewRecorder()
+	handler.ServeHTTP(getRec, httptest.NewRequest("GET", "/api/v1/runs/"+chatRun.ID.String(), nil))
+	if getRec.Code != 200 {
+		t.Fatalf("getRun status=%d body=%s", getRec.Code, getRec.Body.String())
+	}
+	var detail api.RunDetail
+	if err := json.Unmarshal(getRec.Body.Bytes(), &detail); err != nil {
+		t.Fatal(err)
+	}
+	if len(detail.Events) != 1000 || detail.Events[len(detail.Events)-1].Payload["id"] != fmt.Sprintf("live-%d", liveCount) {
+		t.Fatalf("getRun events tail wrong: len=%d last=%+v", len(detail.Events), detail.Events[len(detail.Events)-1])
+	}
+
+	// 5. Invalid ?since is rejected with 400.
+	badRec := httptest.NewRecorder()
+	handler.ServeHTTP(badRec, httptest.NewRequest("GET", "/api/v1/runs/"+chatRun.ID.String()+"/events?since=not-a-timestamp", nil))
+	if badRec.Code != 400 {
+		t.Fatalf("invalid since status=%d, want 400 (body=%s)", badRec.Code, badRec.Body.String())
+	}
+
+	// 6. A single mega-turn with >1000 events after since still returns the newest 1000 (ascending)
+	// rather than stalling at event 1000.
+	megaStart := turnStart.Add(5 * time.Minute)
+	if _, err := pool.Exec(ctx, `
+		INSERT INTO run_events (run_id, type, payload, at)
+		SELECT $1, 'tool_call', jsonb_build_object('id', 'mega-' || g, 'tool', 'Read'), $2::timestamptz + (g * interval '1 millisecond')
+		FROM generate_series(1, 1020) AS g
+	`, chatRun.ID, megaStart); err != nil {
+		t.Fatal(err)
+	}
+	mega := fetch("?since=" + url.QueryEscape(megaStart.Format(time.RFC3339Nano)))
+	if len(mega.Events) != 1000 {
+		t.Fatalf("mega len=%d, want 1000", len(mega.Events))
+	}
+	if mega.Events[0].Payload["id"] != "mega-21" || mega.Events[999].Payload["id"] != "mega-1020" {
+		t.Fatalf("mega window=[%v .. %v], want [mega-21 .. mega-1020]", mega.Events[0].Payload["id"], mega.Events[999].Payload["id"])
 	}
 }

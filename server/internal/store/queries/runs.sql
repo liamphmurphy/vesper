@@ -84,6 +84,18 @@ ORDER BY t.i;
 -- name: ListRunEvents :many
 SELECT * FROM run_events WHERE run_id = $1 AND seq > $2 ORDER BY seq LIMIT 1000;
 
+-- name: ListLatestRunEvents :many
+SELECT * FROM (
+    SELECT * FROM run_events WHERE run_id = $1 ORDER BY seq DESC LIMIT 1000
+) recent
+ORDER BY seq ASC;
+
+-- name: ListRunEventsSince :many
+SELECT * FROM (
+    SELECT * FROM run_events WHERE run_id = $1 AND at >= $2 ORDER BY seq DESC LIMIT 1000
+) recent
+ORDER BY seq ASC;
+
 -- name: DeletePlan :exec
 DELETE FROM plan_steps WHERE run_id = $1;
 

@@ -1365,6 +1365,40 @@ func (q *Queries) ListApprovalsForRun(ctx context.Context, runID uuid.UUID) ([]A
 	return items, nil
 }
 
+const listLatestRunEvents = `-- name: ListLatestRunEvents :many
+SELECT id, run_id, seq, type, payload, at FROM (
+    SELECT id, run_id, seq, type, payload, at FROM run_events WHERE run_id = $1 ORDER BY seq DESC LIMIT 1000
+) recent
+ORDER BY seq ASC
+`
+
+func (q *Queries) ListLatestRunEvents(ctx context.Context, runID uuid.UUID) ([]RunEvent, error) {
+	rows, err := q.db.Query(ctx, listLatestRunEvents, runID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunEvent{}
+	for rows.Next() {
+		var i RunEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Seq,
+			&i.Type,
+			&i.Payload,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listMockupWaitingRuns = `-- name: ListMockupWaitingRuns :many
 SELECT r.id, r.workspace_id, r.ticket_id, r.agent_id, r.mode, r.state, r.wait_reason, r.resolved_spec, r.definition_version_id, r.harness, r.model, r.harness_session_id, r.outcome, r.tool_calls, r.input_tokens, r.output_tokens, r.cost_usd_micros, r.cost_source, r.started_at, r.ended_at, r.created_at, r.updated_at, r.dispatched_by_user_id, r.runner_id, r.workspace_volume, r.idle_turns, r.parent_run_id, r.purpose, r.contract, r.checks, r.setup_ms, r.harness_ms, r.checks_ms, r.hold_until, r.hold_started_at, r.hold_attempts, r.hold_reset_known, r.checkpoint_branch, r.checkpoint_at, r.checkpoint_error, r.workspace_host_path, r.execution_token, r.execution_expires_at, r.context_tokens, r.report, r.rollover_requested, r.chat_tool_names FROM runs r
 WHERE r.workspace_id = $1 AND r.parent_run_id IS NULL AND r.state = 'waiting' AND r.wait_reason = 'mockup_review'
@@ -1523,6 +1557,45 @@ type ListRunEventsParams struct {
 
 func (q *Queries) ListRunEvents(ctx context.Context, arg ListRunEventsParams) ([]RunEvent, error) {
 	rows, err := q.db.Query(ctx, listRunEvents, arg.RunID, arg.Seq)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []RunEvent{}
+	for rows.Next() {
+		var i RunEvent
+		if err := rows.Scan(
+			&i.ID,
+			&i.RunID,
+			&i.Seq,
+			&i.Type,
+			&i.Payload,
+			&i.At,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listRunEventsSince = `-- name: ListRunEventsSince :many
+SELECT id, run_id, seq, type, payload, at FROM (
+    SELECT id, run_id, seq, type, payload, at FROM run_events WHERE run_id = $1 AND at >= $2 ORDER BY seq DESC LIMIT 1000
+) recent
+ORDER BY seq ASC
+`
+
+type ListRunEventsSinceParams struct {
+	RunID uuid.UUID
+	At    time.Time
+}
+
+func (q *Queries) ListRunEventsSince(ctx context.Context, arg ListRunEventsSinceParams) ([]RunEvent, error) {
+	rows, err := q.db.Query(ctx, listRunEventsSince, arg.RunID, arg.At)
 	if err != nil {
 		return nil, err
 	}
