@@ -41,9 +41,9 @@ public enum CompanionTLSPinning {
     }
 }
 
-/// `URLSessionDelegate` that trusts a server certificate iff its leaf DER SHA-256 matches the
-/// fingerprint exchanged during QR pairing. Fails closed for everything else.
-public final class PinnedTLSSessionDelegate: NSObject, URLSessionDelegate, @unchecked Sendable {
+/// `URLSessionDelegate` + `URLSessionTaskDelegate` that trusts a server certificate iff its leaf
+/// DER SHA-256 matches the fingerprint exchanged during QR pairing. Fails closed for everything else.
+public final class PinnedTLSSessionDelegate: NSObject, URLSessionDelegate, URLSessionTaskDelegate, @unchecked Sendable {
     public let expectedFingerprintSHA256: String
 
     public init(expectedFingerprintSHA256: String) {
@@ -54,6 +54,22 @@ public final class PinnedTLSSessionDelegate: NSObject, URLSessionDelegate, @unch
     public func urlSession(
         _ session: URLSession,
         didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        evaluate(challenge: challenge, completionHandler: completionHandler)
+    }
+
+    public func urlSession(
+        _ session: URLSession,
+        task: URLSessionTask,
+        didReceive challenge: URLAuthenticationChallenge,
+        completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
+    ) {
+        evaluate(challenge: challenge, completionHandler: completionHandler)
+    }
+
+    private func evaluate(
+        challenge: URLAuthenticationChallenge,
         completionHandler: @escaping (URLSession.AuthChallengeDisposition, URLCredential?) -> Void
     ) {
         guard challenge.protectionSpace.authenticationMethod == NSURLAuthenticationMethodServerTrust,

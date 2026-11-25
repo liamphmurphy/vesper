@@ -11,17 +11,24 @@ public final class CompanionConnectionManager {
     public private(set) var apiClient: APIClient?
     public private(set) var eventStream: EventStream?
     public private(set) var lastError: String?
+    /// Monotonically incremented on every SSE event from the Mac (and on foreground resume).
+    /// Views observe this directly via `@Observable` so pushed `NavigationStack` views always update.
+    public private(set) var eventVersion: Int = 0
+    public private(set) var lastEvent: ServerEvent?
 
     private let store: CompanionCredentialStore
     private let bonjour = CompanionBonjourBrowser()
     private let probeOverride: CompanionEndpointResolver.HealthProbe?
+    private let sseConnectorOverride: SSEConnector?
 
     public init(
         store: CompanionCredentialStore = KeychainCompanionStore(),
-        probeOverride: CompanionEndpointResolver.HealthProbe? = nil
+        probeOverride: CompanionEndpointResolver.HealthProbe? = nil,
+        sseConnectorOverride: SSEConnector? = nil
     ) {
         self.store = store
         self.probeOverride = probeOverride
+        self.sseConnectorOverride = sseConnectorOverride
         if let host = store.loadHost(), store.loadToken() != nil {
             self.pairedHost = host
             self.state = .connecting
@@ -137,6 +144,12 @@ public final class CompanionConnectionManager {
         activateConnection(host: host, token: token, endpoint: endpoint)
     }
 
+    /// Triggers a refresh across active views when the app returns to the foreground.
+    public func notifyForeground() {
+        guard state.isConnected else { return }
+        eventVersion += 1
+    }
+
     /// Clears saved credentials and returns to `.unpaired`.
     public func unpair() {
         eventStream?.stop()
@@ -147,6 +160,7 @@ public final class CompanionConnectionManager {
         try? store.deleteHost()
         pairedHost = nil
         lastError = nil
+        lastEvent = nil
         state = .unpaired
     }
 
@@ -172,8 +186,13 @@ public final class CompanionConnectionManager {
         )
         let stream = EventStream(
             reconnectDelay: .seconds(5),
-            connector: SSE.urlSessionConnector(session: sseSession)
+            connector: sseConnectorOverride ?? SSE.urlSessionConnector(session: sseSession)
         )
+        stream.onServerEvent = { [weak self] event in
+            guard let self else { return }
+            self.lastEvent = event
+            self.eventVersion += 1
+        }
         eventStream?.stop()
         apiClient = client
         eventStream = stream

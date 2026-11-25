@@ -95,4 +95,62 @@ final class CompanionTests: XCTestCase {
         XCTAssertEqual(req.value(forHTTPHeaderField: "Authorization"), "Bearer vcd_secret")
         XCTAssertNil(req.value(forHTTPHeaderField: "Cookie"))
     }
+
+    @MainActor
+    func testConnectionManagerPublishesSSEEventsToEventVersion() async throws {
+        final class MemoryStore: CompanionCredentialStore, @unchecked Sendable {
+            var token: String? = "vcd_testtoken"
+            var host: CompanionPairedHost? = CompanionPairedHost(
+                deviceId: "dev-1",
+                deviceName: "Test iPhone",
+                hostName: "Test-Mac",
+                port: 8443,
+                certSHA256: String(repeating: "b", count: 64),
+                lanHosts: ["192.168.1.42"],
+                tailscaleHosts: [],
+                bonjourService: "_vesper._tcp"
+            )
+            func loadToken() -> String? { token }
+            func saveToken(_ token: String) throws { self.token = token }
+            func deleteToken() throws { token = nil }
+            func loadHost() -> CompanionPairedHost? { host }
+            func saveHost(_ host: CompanionPairedHost) throws { self.host = host }
+            func deleteHost() throws { host = nil }
+        }
+
+        let manager = CompanionConnectionManager(
+            store: MemoryStore(),
+            probeOverride: { _ in true },
+            sseConnectorOverride: { _ in
+                AsyncThrowingStream { continuation in
+                    continuation.yield(#"data: {"type":"chat.updated","ids":["chat-1"]}"#)
+                    continuation.finish()
+                }
+            }
+        )
+        await manager.reconnect()
+        try await Task.sleep(for: .milliseconds(100))
+        XCTAssertGreaterThanOrEqual(manager.eventVersion, 1)
+        XCTAssertEqual(manager.lastEvent?.type, "chat.updated")
+        XCTAssertEqual(manager.lastEvent?.ids, ["chat-1"])
+        manager.unpair()
+    }
+
+    func testUploadLibraryItemPostsMultipartAndDecodesItem() async throws {
+        final class Seen: @unchecked Sendable { var request: URLRequest? }
+        let seen = Seen()
+        let json = """
+        {"id":"item-1","kind":"image","title":"Desk","filename":"desk.jpg","content_type":"image/jpeg","size_bytes":3,"created_at":"2026-11-25T00:00:00Z"}
+        """
+        let client = APIClient(baseURL: URL(string: "https://192.168.1.42:8443")!, auth: .bearer("vcd_tok")) { req in
+            seen.request = req
+            return (Data(json.utf8), HTTPURLResponse(url: req.url!, statusCode: 201, httpVersion: nil, headerFields: nil)!)
+        }
+        let item = try await client.uploadLibraryItem(fileName: "desk.jpg", mime: "image/jpeg", data: Data([0xFF, 0xD8, 0xFF]))
+        XCTAssertEqual(item.id, "item-1")
+        XCTAssertEqual(item.filename, "desk.jpg")
+        XCTAssertEqual(seen.request?.url?.path, "/api/v1/library")
+        XCTAssertEqual(seen.request?.value(forHTTPHeaderField: "Authorization"), "Bearer vcd_tok")
+        XCTAssertTrue(seen.request?.value(forHTTPHeaderField: "Content-Type")?.hasPrefix("multipart/form-data; boundary=") == true)
+    }
 }
