@@ -315,7 +315,7 @@ final class KnowledgeShellController {
     }
 
     func openPage(_ row: KnowledgePageRow, in context: NativeScreenContext, newTab: Bool = false) {
-        let href = KnowledgeShellLogic.pageHref(id: row.id, title: row.title)
+        let href = KnowledgeShellLogic.pageHref(for: row)
         if newTab {
             context.openInNewTab(href)
         } else {
@@ -417,12 +417,7 @@ final class KnowledgeShellController {
                 let qs = APIQuery.encode(queryItems)
                 let suffix = qs.isEmpty ? "" : "?\(qs)"
 
-                if let client = context.store.client,
-                   let pageRef = try? await client.send(API.getCanvasPage(canvasId: canvas.id)) {
-                    context.navigate(KnowledgeShellLogic.pageHref(id: pageRef.id, title: pageRef.title) + suffix)
-                } else {
-                    context.navigate("/apps/slides/\(canvas.id)\(suffix)")
-                }
+                context.navigate("/apps/slides/\(canvas.id)\(suffix)")
             } catch {
                 showErrorToast(id: "knowledge.deck", title: "Couldn\u{2019}t make the deck", error: error, in: context)
             }
@@ -451,12 +446,7 @@ final class KnowledgeShellController {
                 let qs = brief.map { APIQuery.encode([URLQueryItem(name: "brief", value: $0)]) } ?? ""
                 let suffix = qs.isEmpty ? "" : "?\(qs)"
 
-                if let client = context.store.client,
-                   let pageRef = try? await client.send(API.getCanvasPage(canvasId: canvas.id)) {
-                    context.navigate(KnowledgeShellLogic.pageHref(id: pageRef.id, title: pageRef.title) + suffix)
-                } else {
-                    context.navigate("/apps/designs/\(canvas.id)\(suffix)")
-                }
+                context.navigate("/apps/designs/\(canvas.id)\(suffix)")
             } catch {
                 showErrorToast(id: "knowledge.design", title: "Couldn\u{2019}t make the design", error: error, in: context)
             }

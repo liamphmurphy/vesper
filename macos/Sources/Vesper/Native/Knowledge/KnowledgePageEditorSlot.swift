@@ -4,8 +4,8 @@ import VesperCore
 /// Editor content slot for a Knowledge page.
 ///
 /// Switches on `KnowledgeShellLogic.editorTarget(for:query:)` and renders:
-/// - `.deck` -> native `SlidesEditorView(canvasId:embedded: true)`
-/// - `.design` -> native `DesignEditorView(canvasId:embedded: true)`
+/// - `.deck` -> redirects to full-screen `/apps/slides/<canvasId>`
+/// - `.design` -> redirects to full-screen `/apps/designs/<canvasId>`
 /// - standalone PDF page -> native `PDFViewerView`
 /// - Docs (`page.kind == .document` with `page.canvasId != nil`) -> native `DocEditorView(canvasId:embedded: true)`
 /// - Standard Knowledge markdown pages (`page.kind == .document`, `page.canvasId == nil`, non-PDF) -> native `KnowledgeEditorView`
@@ -24,14 +24,10 @@ struct KnowledgePageEditorSlot: View {
     var body: some View {
         let target = KnowledgeShellLogic.editorTarget(for: page, query: query)
         switch target {
-        case .deck(let canvasId, _):
-            SlidesEditorView(canvasId: canvasId, embedded: true)
-                .id(canvasId)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-        case .design(let canvasId, _):
-            DesignEditorView(canvasId: canvasId, embedded: true, initialReviewing: query["review"] == "1")
-                .id(canvasId)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        case .deck(_, let hostedPath):
+            canvasRedirectView(label: "Opening presentation\u{2026}", destination: hostedPath)
+        case .design(_, let hostedPath):
+            canvasRedirectView(label: "Opening design\u{2026}", destination: hostedPath)
         case .pdf(let sourcePath, let title):
             VStack(spacing: 0) {
                 HStack(spacing: 10) {
@@ -88,6 +84,20 @@ struct KnowledgePageEditorSlot: View {
                     .id(page.id)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+        }
+    }
+
+    @ViewBuilder
+    private func canvasRedirectView(label: String, destination: String) -> some View {
+        VStack(spacing: 10) {
+            ProgressView().controlSize(.small)
+            Text(label)
+                .vesperText(.small, theme)
+                .foregroundStyle(theme.palette.secondaryText)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .task(id: destination) {
+            context.navigate(destination)
         }
     }
 }

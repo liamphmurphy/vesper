@@ -601,6 +601,26 @@ struct SlidesEditorView: View {
     private func slidesThumbnailsStrip(deck: SlideDeck, readOnly: Bool, chatId: String) -> some View {
         let p = theme.palette
         VStack(spacing: 0) {
+            if !embedded {
+                Button {
+                    context.navigate("/knowledge")
+                } label: {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Knowledge")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                    }
+                    .foregroundStyle(p.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back to Knowledge")
+                Divider().overlay(p.border)
+            }
             HStack {
                 Text("SLIDES (\(deck.slides.count))")
                     .font(.system(size: 10, weight: .semibold))

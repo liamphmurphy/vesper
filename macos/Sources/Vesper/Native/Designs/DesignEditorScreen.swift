@@ -499,7 +499,8 @@ struct DesignEditorView: View {
                     onSelectPage: { pid in activePageId = pid; selectedIds = [] },
                     onAddPage: { addPage() },
                     onToggleVisible: { id in toggleNodeVisible(id) },
-                    onToggleLocked: { id in toggleNodeLocked(id) }
+                    onToggleLocked: { id in toggleNodeLocked(id) },
+                    onBackToKnowledge: { context.navigate("/knowledge") }
                 )
             )
         }
@@ -1028,11 +1029,30 @@ private struct DesignLayersSidebarView: View {
     let onAddPage: () -> Void
     let onToggleVisible: (String) -> Void
     let onToggleLocked: (String) -> Void
+    var onBackToKnowledge: (() -> Void)? = nil
 
     var body: some View {
         let p = theme.palette
         let activePage = design.pages.first { $0.id == activePageId } ?? design.pages.first
         VStack(alignment: .leading, spacing: 0) {
+            if let onBackToKnowledge {
+                Button(action: onBackToKnowledge) {
+                    HStack(spacing: 5) {
+                        Image(systemName: "chevron.left")
+                            .font(.system(size: 10, weight: .semibold))
+                        Text("Knowledge")
+                            .font(.system(size: 12, weight: .medium))
+                        Spacer()
+                    }
+                    .foregroundStyle(p.secondaryText)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 7)
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .help("Back to Knowledge")
+                Divider().overlay(p.border)
+            }
             HStack {
                 Text("PAGES").font(.system(size: 10, weight: .semibold)).foregroundStyle(p.tertiaryText)
                 Spacer()
