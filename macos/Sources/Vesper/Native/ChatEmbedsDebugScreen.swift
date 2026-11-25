@@ -77,8 +77,8 @@ struct ChatEmbedsDebugScreen: View {
         flowchart LR
           A[Request] --> B{Cached?}
           B -- yes --> C[Serve image]
-          B -- no --> D[Render off-screen]
-          D --> E[(PDF cache)]
+          B -- no --> D[Draw natively]
+          D --> E[(Image cache)]
           E --> C
         """),
         ("Mermaid sequence", .mermaid, """
@@ -86,7 +86,7 @@ struct ChatEmbedsDebugScreen: View {
           participant T as Transcript
           participant R as Renderer
           T->>R: render(key, job)
-          R-->>T: vector PDF
+          R-->>T: vector image
         """),
         ("Broken mermaid (shows code)", .mermaid, "flowchart LR\n  A --> \n  ((("),
         ("Themed svg-image", .svgImage, """
@@ -95,7 +95,7 @@ struct ChatEmbedsDebugScreen: View {
         <rect x="24" y="48" width="180" height="64" rx="8" fill="var(--viz-1-soft)" stroke="var(--viz-1)" stroke-width="1.5"/>
         <text x="114" y="85" text-anchor="middle" font-size="13" fill="var(--viz-ink)">Fence</text>
         <rect x="250" y="48" width="180" height="64" rx="8" fill="var(--viz-panel)" stroke="var(--viz-line)" stroke-width="1.5"/>
-        <text x="340" y="85" text-anchor="middle" font-size="13" fill="var(--viz-ink)">Off-screen WKWebView</text>
+        <text x="340" y="85" text-anchor="middle" font-size="13" fill="var(--viz-ink)">MockupSVGRenderer</text>
         <rect x="476" y="48" width="180" height="64" rx="8" fill="var(--viz-3-soft)" stroke="var(--viz-3)" stroke-width="1.5"/>
         <text x="566" y="85" text-anchor="middle" font-size="13" fill="var(--viz-ink)">Vector image</text>
         <path d="M204,80 L248,80" stroke="var(--viz-line)" stroke-width="1.5" marker-end="url(#a)"/>

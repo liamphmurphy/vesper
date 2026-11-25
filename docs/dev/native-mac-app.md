@@ -286,7 +286,7 @@ macos/Sources/VesperCore/           logic with no AppKit UI (unit-tested)
   API/          APIClient (session cookie), InboxMonitor, RunMonitor, EventStream (SSE), APIRuntime,
                 QueryStore + LiveUpdates (native screens' cache), Generated/ (from api/openapi.yaml)
   Settings/     NativeSettings (config.json "native"), SessionStore (session.json)
-  ChatEmbeds/   chat embeds: classification, cache keys, render cache, app pool ledger, CSP (Native chat embeds)
+  ChatEmbeds/   chat embeds: classification, cache keys, render cache, app pool ledger, app CSP, NativeMath, NativeMermaid (Native chat embeds)
   Model/        DeepLinks, Routing, InspectorLogic, FindLogic, ShortcutsCatalog, ToastQueueLogic, QuickLookLogic, NotificationPolicy, TrayModel, DockModel, Capture, Drop, Power, Thermal, Backups, Updates, WorkspaceOpen
 macos/Sources/Vesper/               the app (AppKit + SwiftUI)
   App/          main.swift, AppDelegate, AppModel
@@ -521,8 +521,8 @@ the header, Shiki and the fold of `code-fence.tsx`).
 - **Find**: give the view its row (`findRow`) in `context.find.texts`; it tints the matches and scrolls
   the current row's first match into view.
 
-Math is drawn by the chat embeds' render-once path (KaTeX, see "Native chat embeds"); its TeX shows
-until it has drawn and stays when it can't be. Not matching the web yet: the chat's special fences
+Math is drawn natively with SwiftMath (`MathRendering`, see "Native chat embeds"); TeX it can't lay out
+shows as its source. Not matching the web yet: the chat's special fences
 (app, canvas, pdf, mermaid, charts, choices, recommend, dispatch, workflow runs) show as plain code
 blocks inside `MarkdownView` until the transcript hands them to their views (`EmbeddedBlockView` for
 app, mermaid, svg-image and svg-steps); wiki links have no kind mark (status glyph, page icon); hover underlines
@@ -673,7 +673,7 @@ All 59 `ChatStatusKind` activity scenes (`56` unique definitions plus `3` split 
 
 - **Activity scenes (`VesperCore/Native/` + `ActivitySceneView.swift`).** `MotionPrimitives` implements CSS easing (`linear`, `ease`, `ease-in`, `ease-out`, `ease-in-out`, `--motion-ease` `cubic-bezier(0.16, 1, 0.3, 1)`, `steps(N)`), per-property keyframe channel interpolation, and `ActivitySceneTransitioner` (`800 ms` minimum hold skipping transient kinds, `240 ms` crossfade, `600 ms` linear deceleration to `0` on stop). `SVGPathParser` parses `M/m`, `L/l`, `H/h`, `V/v`, `C/c`, `S/s`, `Q/q`, `T/t`, `A/a`, `Z/z` and trims `pathLength=1` paths for `stroke-dashoffset` animations. `ActivitySceneRenderer` draws into CoreGraphics (called by SwiftUI `Canvas` and bitmap snapshot tests), applying the theme's `ActivityScenePalette` and `blur(3px)` focus transitions, and freezing at the resting pose under Reduce Motion.
 - **Fixtures (`protocol/activity-scenes/`).** `web/scripts/activity-scene-fixtures.mjs` extracts all 59 kinds, split aliases, transition timings, and 193 scene animations from `web/lib/chat-ui.ts`, `activity-scene.tsx`, and `globals.css` into `fixtures.json`; `ActivitySceneTests` verifies 100% parity and bitmap motion/freeze snapshots for every kind. (`activity-scene.tsx` stays for the web until chat moves over.)
-- **Pooled persona characters (`PersonaCharacterSanitizer.swift`, `PersonaCharacterView.swift` + `PersonaCharacterPlatformView.swift`).** `PersonaCharacterSanitizer` ports `web/lib/svg-sanitize.ts` (`character: true`, `XMLParser` whitelist rejecting `<script>`, `<style>`, `<image>`, nested `<svg>`, external `url(...)`, and `javascript:`, prefixing IDs) and `web/lib/persona-character.ts` (`characterStateForStatus`, `characterStateForDock`, `resolveCharacterNodeStyle`), emitting self-contained HTML with CSP `default-src 'none'; style-src 'unsafe-inline'` and the `.persona-character` keyframes. `PersonaCharacterView` stays pure SwiftUI; `PersonaCharacterPlatformView` isolates the macOS `NSViewRepresentable` host and `PersonaCharacterPool`, which owns **one** live pooled `WKWebView` (JS disabled, non-persistent data store, navigation restricted to `about:blank`) for `active: true` cards, plus **one** offscreen snapshotter writing `NSImage` into `NSCache` for `active: false` list/avatar rows (`WorkPersonaAvatarView` uses `active: false` when `characterSvg` is set and `avatarUrl` is absent).
+- **Persona characters (`PersonaCharacterSanitizer.swift`, `PersonaCharacterAnimator.swift`, `PersonaCharacterView.swift`).** `PersonaCharacterSanitizer` ports `web/lib/svg-sanitize.ts` (`character: true`, `XMLParser` whitelist rejecting `<script>`, `<style>`, `<image>`, nested `<svg>`, external `url(...)`, and `javascript:`, prefixing IDs) and `web/lib/persona-character.ts` (`characterStateForStatus`, `characterStateForDock`, `resolveCharacterNodeStyle`, the 18 `CharacterMotion` keyframe sets). No WebKit: `PersonaCharacterRig` compiles a sanitized character once and evaluates those keyframes per node at time *t* (CSS cubic-bezier easing, implicit 0%/100% stops, transform-origin, delay, speed, `data-show` layers, `currentColor`); `MockupSVGRenderer` draws it with per-node overrides in a `TimelineView` + `Canvas` at the display's refresh rate, with no cap on how many animate. Reduce Motion, hidden windows and Low Power Mode show the static frame. `PersonaCharacterWebKitParityTests` (test target only) keeps the old WebKit page as the reference and diffs frames of every state.
 
 Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/scenes`:
 
@@ -783,26 +783,23 @@ app sandbox's CSP and the ports of `web/lib/chat-svg.ts` and `web/lib/chat-app.t
   says the same), or `EmbeddedBlockView(kind:source:messageID:info:index:)`. `messageID` is the
   assistant reply's id (render cache key; diagrams offer Save to Library only with it), `index` the
   block's position in the message. `$$` math inside markdown needs nothing: `MarkdownView` draws it.
-- **Render once** (`EmbedRenderer`). One hidden `WKWebView` in an off-screen window loads
-  `EmbedRendererPage` (bundled KaTeX and its fonts inline; mermaid evaluated on first use) and draws
-  one job at a time: mermaid renders its SVG there (it needs a DOM to measure text), every SVG is
-  drawn through an `<img>` from a `data:` URL at its intrinsic size, and `WKWebView.pdf(configuration:)`
-  exports the stage as a one-page PDF. `NSImage` with `NSPDFImageRep` shows it as vectors at any
-  scale. Results go into `EmbedRenderCache` (LRU, 400 entries or 96 MB) keyed by `EmbedCacheKey`:
-  kind, message, theme (`VizPalette.fingerprint`, or "plain" for an SVG that doesn't use
-  `var(--viz-*)`, or math's colour and size), SHA-256 of the source, and variant (step frame,
-  display/inline). A job that takes over 8 s restarts the renderer.
-- **Math.** `MathRendering.shared` is `FallbackMathRenderer(primary:fallback:)`: a native engine first,
-  the render-once KaTeX path (`WebMathRenderer`) for what it can't lay out. SwiftMath couldn't be
-  vendored (no copy offline on either machine, and the VM has no network), so `primary` is nil and all
-  math takes the KaTeX path today; vendoring SwiftMath under `macos/Vendor/SwiftMath/` and adding a
-  `MathRenderer` for it is the drop-in. Inline math sits on the text's baseline (KaTeX's measured
-  ascent); a TeX error keeps the source.
+- **Drawn natively, cached.** Nothing in a chat message but an `app` fence uses WebKit. svg-image and
+  svg-steps frames that pass mockup SVG profile v1 (after the CSS normalizer and simplifier) draw with
+  `MockupSVGRenderer`; mermaid lays out with `NativeMermaid` into a profile-v1 SVG drawn the same way;
+  math lays out with SwiftMath (`NativeMath`, vendored under `macos/Vendor/SwiftMath/`). Results go
+  into `EmbedRenderCache` (LRU, 400 entries or 96 MB) keyed by `EmbedCacheKey`: kind, message, theme
+  (`VizPalette.fingerprint`, or "plain" for an SVG that doesn't use `var(--viz-*)`, or math's colour
+  and size), SHA-256 of the source, and variant (step frame, display/inline).
+- **Math.** `MathRendering` draws display and inline math with SwiftMath at 1.21× the surrounding text
+  (KaTeX's proportion, kept so old chats look the same). Inline math sits on the text's baseline; TeX
+  SwiftMath can't parse shows its source.
 - **Diagrams.** svg-image and svg-steps theme `var(--viz-*)` with the page's `--viz-*` tokens as the web
   does, render each step-through frame on demand (and the next one ahead), and offer Image/Code,
   Save to Library (`POST /library/diagrams`, the web's request, with `exportSvg` of the last frame) and
-  Download. Mermaid uses the web's `initialize` options and shows its code when it can't draw (or over
-  20,000 characters); its Save to Library sends mermaid's own SVG.
+  Download. Mermaid (`NativeMermaid`: flowchart and sequence) uses the
+  colours the web's mermaid.js theme gave diagrams, and shows its code for any other diagram type, a
+  syntax error, or a fence over `NativeMermaid.maxSource` (20,000 characters); its Save to Library
+  sends the laid-out SVG.
 - **Apps** (`AppEmbedView`, `AppWebViewPool`). Web views are created only when a block scrolls on
   screen (`onScrollVisibilityChange`), at most 4 (`EmbedPoolLedger`); scrolling off takes a snapshot,
   blanks the view and returns it to the pool, and the snapshot stands in until the block is back. When
@@ -823,16 +820,9 @@ app sandbox's CSP and the ports of `web/lib/chat-svg.ts` and `web/lib/chat-app.t
   its handler live in an isolated content world); a compiled content rule list blocks every load but
   the three CDNs and `data:`/`blob:`/`about:`, failing closed if it doesn't compile;
   `ChatApp.allowsNavigation` allows only the shell's own `about:blank`; no new windows, dialogs, file
-  pickers or media capture. The renderer page loads nothing remote (CSP `default-src 'none'`, fonts
-  and images only from `data:`), takes agent text only as `callAsyncJavaScript` arguments, runs
-  mermaid with `securityLevel: "strict"` and KaTeX with `trust: false`, and draws every SVG through
-  `<img>`, where it can't script or load anything. SVG diagrams don't go through
-  `PersonaCharacterSanitizer`: its character whitelist drops what the svg-images skill tells agents
-  to use (`data-step`, `data:` images) and anything an `<img>` would show (filters, `<style>`), so the
-  isolation is the web's own (image rendering, plus the page's CSP and navigation lock).
-- **Bundle.** `macos/scripts/build-embeds-bundle.mjs` writes `Sources/VesperCore/Resources/embeds/`
-  (mermaid's IIFE build, KaTeX with woff2 fonts inlined) from `web/node_modules`; checked in, re-run
-  after upgrading mermaid or katex.
+  pickers or media capture. SVG diagrams, mermaid and math never reach a web engine: the native renderer
+  only draws the profile-v1 elements it knows, runs no script and loads nothing (images only from
+  `data:`), and an SVG outside the profile shows its source instead.
 
 Not matching the web yet: no zoom dialog; an app's state resets when it scrolls back (the snapshot
 shows its last look meanwhile); the transcript doesn't route fences here until Native 16 plugs it in.
@@ -841,10 +831,10 @@ Manual click-through (with `VESPER_NATIVE_DEBUG=1`), on `/native-debug/embeds`:
 
 1. The header line shows the app pool (live, views/capacity, idle, snapshots, parked) and the render
    cache's size.
-2. Display math draws in KaTeX's fonts, centred, in the text colour; "Bad TeX" shows its source.
+2. Display math draws in SwiftMath's Latin Modern, centred, in the text colour; "Bad TeX" shows its source.
    On `/native-debug/markdown`, `$$e^{i\pi}+1=0$$` sits inline on the baseline and the display
    integral is centred.
-3. The mermaid flowchart and sequence diagrams draw in the palette; "Broken mermaid" shows its code.
+3. The mermaid diagrams draw in the palette; "Broken mermaid" shows its code.
    Code shows the source; Image goes back.
 4. Themed svg-image follows Settings → Appearance (Light/Dark, palette) after a moment; the plain one
    keeps its white background and isn't redrawn. Both are sharp on a Retina display (vectors, not bitmaps).

@@ -9,7 +9,7 @@ public enum NativeMermaidError: Error, Equatable, Sendable {
     case unsupportedDiagram(String)
     /// The source doesn't parse. `line` is 1-based in the fence as written, front matter included.
     case syntax(line: Int, message: String)
-    /// Longer than `EmbedRendererPage.mermaidMaxSource`, or more nodes, edges or rows than a chat
+    /// Longer than `NativeMermaid.maxSource`, or more nodes, edges or rows than a chat
     /// diagram can sensibly lay out.
     case tooLarge
 }
@@ -29,6 +29,8 @@ public enum NativeMermaid {
     static let maxEdges = 800
     /// Sequence messages, gantt tasks, pie slices.
     static let maxRows = 600
+    /// A longer fence stays code: the web's limit, kept so the same fence behaves the same everywhere.
+    public static let maxSource = 20_000
 
     /// The diagram as an SVG string sized to its content.
     public static func svg(_ source: String, palette: VizPalette) throws(NativeMermaidError) -> String {
@@ -37,7 +39,7 @@ public enum NativeMermaid {
 
     /// The SVG and what was drawn, for tests.
     static func render(_ source: String, palette: VizPalette) throws(NativeMermaidError) -> MermaidDrawing {
-        guard source.count <= EmbedRendererPage.mermaidMaxSource else { throw .tooLarge }
+        guard source.count <= maxSource else { throw .tooLarge }
         let doc = try MermaidSource(source)
         let theme = MermaidTheme(palette)
         switch doc.keyword {
@@ -123,8 +125,8 @@ struct MermaidSource {
     }
 }
 
-/// The palette mapped the way `EmbedRendererPage.mermaidConfig` themes mermaid.js, so native
-/// diagrams keep the colours the web and the old WebKit renderer used.
+/// The palette mapped the way the web themed mermaid.js (its "base" theme's variables), so native
+/// diagrams keep the colours chat diagrams have always had.
 struct MermaidTheme {
     let background: String
     let nodeFill: String

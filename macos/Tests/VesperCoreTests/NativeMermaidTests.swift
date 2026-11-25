@@ -139,7 +139,7 @@ final class NativeMermaidTests: XCTestCase {
     }
 
     func testOversizedSourceIsTooLarge() {
-        let src = "flowchart TD\n" + String(repeating: "A --> B\n", count: EmbedRendererPage.mermaidMaxSource / 8 + 1)
+        let src = "flowchart TD\n" + String(repeating: "A --> B\n", count: NativeMermaid.maxSource / 8 + 1)
         XCTAssertThrowsError(try NativeMermaid.svg(src, palette: .light)) { e in
             XCTAssertEqual(e as? NativeMermaidError, .tooLarge)
         }
