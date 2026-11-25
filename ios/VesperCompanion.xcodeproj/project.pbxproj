@@ -3,7 +3,7 @@
 	archiveVersion = 1;
 	classes = {
 	};
-	objectVersion = 56;
+	objectVersion = 60;
 	objects = {
 
 /* Begin PBXBuildFile section */
@@ -197,6 +197,7 @@
 		220000030000000000000003 /* Debug */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				DEVELOPMENT_TEAM = 9NF7WHQFMQ;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = VesperCompanion/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = com.liamphmurphy.vesper.companion;
@@ -209,6 +210,7 @@
 		220000040000000000000004 /* Release */ = {
 			isa = XCBuildConfiguration;
 			buildSettings = {
+				DEVELOPMENT_TEAM = 9NF7WHQFMQ;
 				GENERATE_INFOPLIST_FILE = NO;
 				INFOPLIST_FILE = VesperCompanion/Info.plist;
 				PRODUCT_BUNDLE_IDENTIFIER = com.liamphmurphy.vesper.companion;
