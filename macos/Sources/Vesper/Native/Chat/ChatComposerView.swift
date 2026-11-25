@@ -82,9 +82,16 @@ struct ChatComposerView: View {
     @State private var micPressStart: Date?
     @State private var micWasListeningBeforePress = false
     @State private var pendingReleaseStop = false
+    @State private var watchedFollowupsKey: QueryKey?
 
     private var isRunning: Bool { session?.state == .running }
     private var personaName: String { activePersona?.name ?? session?.agent.name ?? "Vesper" }
+    private var speakerName: String {
+        session?.speaker?.name ?? session?.persona?.name ?? activePersona?.name ?? session?.agent.name ?? "Vesper"
+    }
+    private var followupsRequest: APIRequest<API.ChatFollowupList>? {
+        chatId.map { API.listChatFollowups(id: $0) }
+    }
     private var activeHarnessId: String {
         selectedHarness?.rawValue ?? session?.harness.rawValue ?? activePersona?.defaultHarness?.rawValue ?? "claude-code"
     }
@@ -109,12 +116,31 @@ struct ChatComposerView: View {
 
     var body: some View {
         let p = theme.palette
+        let followups = followupsRequest.flatMap { context.store.entry($0).data?.followups } ?? []
+        let messages = chatId.flatMap { context.store.entry(API.listChatMessages(id: $0, limit: 200)).data?.messages } ?? []
 
         VStack(alignment: .leading, spacing: 8) {
             if isRunning, let livePlanProgress {
                 ChatPinnedPlanChecklistBar(
                     progress: livePlanProgress,
                     turnKey: livePlanTurnKey
+                )
+            }
+
+            if let chatId, session?.archived != true, !followups.isEmpty {
+                ChatFollowupTrayView(
+                    chatId: chatId,
+                    items: followups,
+                    speakerName: speakerName,
+                    isRunning: isRunning,
+                    isHeld: ChatFollowupLogic.isHeld(state: session?.state, lastMessageRole: messages.last?.role),
+                    disabled: isSending,
+                    onSendNow: { body in
+                        await sendFollowupNow(body)
+                    },
+                    onEdit: { body in
+                        editFollowupInComposer(body)
+                    }
                 )
             }
 
@@ -206,10 +232,17 @@ struct ChatComposerView: View {
             loadDraft(for: chatId)
             applyPrefill()
         }
+        .task(id: chatId) { syncFollowupsWatch() }
+        .onChange(of: session?.state) { oldState, newState in
+            if oldState == .running && newState != .running, let req = followupsRequest {
+                Task { _ = await context.store.refetch(req) }
+            }
+        }
         .onChange(of: prefill?.token) { _, _ in applyPrefill() }
         .onDisappear {
             cancelDictation()
             saveDraftImmediately(for: chatId)
+            stopWatchingFollowups()
         }
         .onChange(of: chatId) { oldId, newId in
             cancelDictation()
@@ -1332,6 +1365,39 @@ struct ChatComposerView: View {
         saveDraftImmediately(for: chatId)
         onPrefillApplied?(prefill.token)
         // The text view may not be in a window yet on first appear.
+        DispatchQueue.main.async { editor.focus() }
+    }
+
+    private func syncFollowupsWatch() {
+        stopWatchingFollowups()
+        guard let req = followupsRequest else { return }
+        context.store.observe(req)
+        context.store.load(req)
+        watchedFollowupsKey = req.key
+    }
+
+    private func stopWatchingFollowups() {
+        if let key = watchedFollowupsKey {
+            context.store.stopObserving(key)
+            watchedFollowupsKey = nil
+        }
+    }
+
+    private func sendFollowupNow(_ body: String) async -> String? {
+        await onSend(ChatComposerSubmission(
+            body: body,
+            mode: isRunning ? .interrupt : .send,
+            attachmentIds: [],
+            contextRefs: nil,
+            research: false
+        ))
+    }
+
+    private func editFollowupInComposer(_ body: String) {
+        let merged = ChatFollowupLogic.mergeIntoDraft(body, existingDraft: editor.text)
+        setDraftProgrammatically(merged, save: false)
+        saveDraftImmediately(for: chatId)
+        sendModeWhileRunning = .queue
         DispatchQueue.main.async { editor.focus() }
     }
 
