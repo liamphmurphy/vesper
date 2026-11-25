@@ -1131,10 +1131,17 @@ struct ChatScreen: View {
                     )
                     return nil
                 case .queue:
-                    _ = try await context.store.mutate(
-                        API.queueChatFollowup(id: chatId, body: API.ChatMessageEdit(body: submission.body)),
-                        invalidating: QueryInvalidation(resources: ["chats"])
+                    let queued = try await context.store.mutate(
+                        API.queueChatFollowup(id: chatId, body: API.ChatMessageEdit(body: submission.body))
                     )
+                    if context.store.entry(API.getChat(id: chatId)).data?.state == .running {
+                        let followupsReq = API.listChatFollowups(id: chatId)
+                        context.store.setData(
+                            ChatFollowupLogic.appending(queued, to: context.store.entry(followupsReq).data),
+                            for: followupsReq
+                        )
+                    }
+                    context.store.invalidate(QueryInvalidation(resources: ["chats"]))
                     return nil
                 case .aside:
                     _ = try await context.store.mutate(
