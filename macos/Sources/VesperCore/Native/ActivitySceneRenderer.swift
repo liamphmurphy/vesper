@@ -323,12 +323,9 @@ public enum ActivitySceneRenderer {
         switch node {
         case .rect(let x, let y, let width, let height, let rx, let ry, _):
             let rect = CGRect(x: x, y: y, width: width, height: height)
-            let crx = min(rx, width * 0.5)
-            let cry = min(ry ?? rx, height * 0.5)
-            if crx > 0 || cry > 0 {
-                return CGPath(roundedRect: rect, cornerWidth: crx, cornerHeight: cry, transform: nil)
-            }
-            return CGPath(rect: rect, transform: nil)
+            let crx = rx
+            let cry = ry ?? rx
+            return SlideCGDrawer.safeRoundedRectPath(rect, cornerWidth: crx, cornerHeight: cry)
         case .circle(let cx, let cy, let r, _):
             return CGPath(ellipseIn: CGRect(x: cx - r, y: cy - r, width: r * 2, height: r * 2), transform: nil)
         case .ellipse(let cx, let cy, let rx, let ry, _):

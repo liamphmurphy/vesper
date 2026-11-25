@@ -372,11 +372,10 @@ struct InteractiveDesignCanvas: View {
     @ViewBuilder
     private func selectionOverlay(laid: DesignLaidPage) -> some View {
         let selBoxes = selectedIds.compactMap { laid.boxes[$0] }
-        if !selBoxes.isEmpty {
-            let l = selBoxes.map(\.x).min()!
-            let t = selBoxes.map(\.y).min()!
-            let r = selBoxes.map { $0.x + $0.w }.max()!
-            let b = selBoxes.map { $0.y + $0.h }.max()!
+        if let l = selBoxes.map(\.x).min(),
+           let t = selBoxes.map(\.y).min(),
+           let r = selBoxes.map({ $0.x + $0.w }).max(),
+           let b = selBoxes.map({ $0.y + $0.h }).max() {
             let p0 = camera.worldToScreen(CGPoint(x: l, y: t))
             let w = max(6, (r - l) * camera.z)
             let h = max(6, (b - t) * camera.z)
@@ -446,10 +445,10 @@ struct InteractiveDesignCanvas: View {
                             } else if !selectedIds.contains(hit.id) {
                                 selectedIds = [hit.id]
                             }
-                            dragStartPositions = Dictionary(uniqueKeysWithValues: selectedIds.compactMap { id -> (String, (Double, Double))? in
+                            dragStartPositions = Dictionary(selectedIds.compactMap { id -> (String, (Double, Double))? in
                                 guard let f = DesignEditLogic.find(design, id: id), f.node.type != .connector else { return nil }
                                 return (id, (f.node.x, f.node.y))
-                            })
+                            }, uniquingKeysWith: { _, latest in latest })
                         } else {
                             selectedIds = []
                             drawBoxStart = wStart
