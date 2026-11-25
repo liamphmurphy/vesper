@@ -742,6 +742,26 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertEqual(ChatTurnActivity.longTurnUsageRefreshDelayMs(sinceEpochMs: 100_000, nowEpochMs: 195_000), 0)
     }
 
+    func testLiveEventsRequestScopesBySinceAndMatchesRunEventsInvalidation() {
+        let since = "2026-11-25T04:55:13.123456Z"
+        let scoped = ChatTurnActivity.liveEventsRequest(runId: "run-1", since: since)
+        XCTAssertEqual(scoped.path, "/api/v1/runs/run-1/events")
+        XCTAssertEqual(scoped.query, [URLQueryItem(name: "since", value: since)])
+
+        let unscopedNil = ChatTurnActivity.liveEventsRequest(runId: "run-1", since: nil)
+        XCTAssertTrue(unscopedNil.query.isEmpty)
+
+        let unscopedBlank = ChatTurnActivity.liveEventsRequest(runId: "run-1", since: "   ")
+        XCTAssertTrue(unscopedBlank.query.isEmpty)
+        XCTAssertEqual(unscopedNil.key, unscopedBlank.key)
+
+        // Live SSE `run.events` hints must still invalidate the ?since=... cached entry.
+        let inv = LiveUpdates.invalidation(for: ServerEvent(type: "run.events", ids: ["run-1"]))
+        XCTAssertTrue(inv.matches(scoped.key))
+        XCTAssertTrue(inv.matches(unscopedNil.key))
+        XCTAssertFalse(inv.matches(ChatTurnActivity.liveEventsRequest(runId: "run-2", since: since).key))
+    }
+
     // MARK: - ChatNav
 
     func testChatNavGroupingIndicatorsFiltersAndActions() {

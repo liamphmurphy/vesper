@@ -161,7 +161,7 @@ struct ChatScreen: View {
         let liveActivity: ChatTurnActivity? = {
             guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
             if messages.isEmpty && (session?.messageCount ?? 0) > 0 { return nil }
-            let events = store.entry(API.listRunEvents(id: runId)).data?.events ?? []
+            let events = store.entry(ChatTurnActivity.liveEventsRequest(runId: runId, since: liveSince)).data?.events ?? []
             guard !events.isEmpty else { return nil }
             return ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: liveSince)
         }()
@@ -332,7 +332,7 @@ struct ChatScreen: View {
                 applyInspectorQuery(context.match.query, canvases: updatedCanvases)
             }
         }
-        .task(id: watchKey(session: session)) { watch(session: session) }
+        .task(id: watchKey(session: session, liveSince: liveSince)) { watch(session: session, liveSince: liveSince) }
         .task(id: windowVisible && AppPowerState.shared.isActive) {
             // Usage readings land in the background with no SSE event, so keep the composer's
             // harness usage popover fresh only while Chat is visible and Vesper is active.
@@ -1369,13 +1369,14 @@ struct ChatScreen: View {
 
     // MARK: - Observation
 
-    private func watchKey(session: API.ChatSession?) -> String {
+    private func watchKey(session: API.ChatSession?, liveSince: String?) -> String {
         let activeRunId = session?.state == .running ? (session?.currentRunId ?? "") : ""
+        let activeSince = session?.state == .running ? (liveSince ?? "") : ""
         let spaceId = session?.space?.id ?? ""
-        return "\(chatId ?? "")|\(spaceId)|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)|\(activeRunId)"
+        return "\(chatId ?? "")|\(spaceId)|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)|\(activeRunId)|\(activeSince)"
     }
 
-    private func watch(session: API.ChatSession?) {
+    private func watch(session: API.ChatSession?, liveSince: String?) {
         let store = context.store
         for key in watched { store.stopObserving(key) }
         var keys: [QueryKey] = []
@@ -1404,7 +1405,7 @@ struct ChatScreen: View {
         if let messagesRequest { track(messagesRequest) }
         if let costsRequest { track(costsRequest) }
         if session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty {
-            track(API.listRunEvents(id: runId))
+            track(ChatTurnActivity.liveEventsRequest(runId: runId, since: liveSince))
         }
         if let searchRequest { track(searchRequest) }
         watched = keys
