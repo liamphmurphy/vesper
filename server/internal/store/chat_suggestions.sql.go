@@ -36,7 +36,7 @@ func (q *Queries) ClaimChatSuggestions(ctx context.Context, arg ClaimChatSuggest
 }
 
 const clearChatSuggestions = `-- name: ClearChatSuggestions :exec
-UPDATE chat_suggestions SET items = '[]', generated_at = NULL, attempted_at = now()
+DELETE FROM chat_suggestions
 WHERE workspace_id = $1 AND user_id = $2
 `
 
@@ -45,7 +45,10 @@ type ClearChatSuggestionsParams struct {
 	UserID      uuid.UUID
 }
 
-// The person forgot something a batch may have drawn on.
+// The person forgot a memory or deleted a chat a batch may have drawn on.
+// Deleting the row clears what's on screen, discards any in-flight save (which
+// requires its claimed attempted_at row to still exist), and lets the next
+// sweep regenerate without waiting out the retry window.
 func (q *Queries) ClearChatSuggestions(ctx context.Context, arg ClearChatSuggestionsParams) error {
 	_, err := q.db.Exec(ctx, clearChatSuggestions, arg.WorkspaceID, arg.UserID)
 	return err

@@ -1644,8 +1644,12 @@ func deleteChat(ctx context.Context, q *store.Queries, chat store.ChatSession) e
 			return err
 		}
 	}
-	if err := q.ClearChatSuggestions(ctx, store.ClearChatSuggestionsParams{WorkspaceID: chat.WorkspaceID, UserID: chat.CreatedBy}); err != nil {
-		return err
+	// Temporary and hidden chats never feed into suggestions, so deleting or
+	// sweeping them shouldn't blank out the person's starters.
+	if !chat.Temporary && !chat.Hidden {
+		if err := q.ClearChatSuggestions(ctx, store.ClearChatSuggestionsParams{WorkspaceID: chat.WorkspaceID, UserID: chat.CreatedBy}); err != nil {
+			return err
+		}
 	}
 	if err := stopResearchForChat(ctx, q, chat.ID); err != nil {
 		return err

@@ -10,6 +10,8 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
+	"github.com/liamphmurphy/vesper/server/internal/runner"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -182,5 +184,123 @@ func TestForgetClearsSuggestionsAndDiscardsInFlightBatch(t *testing.T) {
 	}
 	if n, err := e.q.SaveChatSuggestions(e.ctx, store.SaveChatSuggestionsParams{Items: items, WorkspaceID: e.ws, UserID: e.me.ID, AttemptedAt: claimed}); err != nil || n != 0 {
 		t.Fatalf("in-flight batch saved: %d %v", n, err)
+	}
+}
+
+// Deleting a chat or forgetting a memory clears the current batch, and the
+// next sweep regenerates fresh starters without waiting out the 6h retry window.
+func TestClearingSuggestionsRegeneratesOnNextSweep(t *testing.T) {
+	e := setup(t)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	keep := e.startChat("Keep working on the renderer")
+	gone := e.startChat("Throwaway question")
+	e.until("replies", func() bool {
+		return e.chat(keep.ID).State == "idle" && e.chat(gone.ID).State == "idle"
+	})
+
+	t.Setenv("FAKE_HARNESS_MODE", "suggestions")
+	e.backdateChats()
+	e.runner.Sweep(e.ctx)
+	e.runner.Wait()
+	if got := e.suggestions(); len(got) != 4 {
+		t.Fatalf("initial suggestions %+v", got)
+	}
+
+	// Deleting a regular chat clears the batch immediately, and the next sweep
+	// replaces it instead of backing off for 6 hours.
+	if err := e.runs.DeleteChat(e.ctx, e.ws, e.me.ID, gone.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.suggestions(); got != nil {
+		t.Fatalf("still showing after delete: %+v", got)
+	}
+	e.runner.Sweep(e.ctx)
+	e.runner.Wait()
+	if got := e.suggestions(); len(got) != 4 {
+		t.Fatalf("did not regenerate after chat delete: %+v", got)
+	}
+
+	// Same after forgetting a memory.
+	o := memory.Owner{WorkspaceID: e.ws, UserID: e.me.ID}
+	saved, err := memory.New(e.q).Save(e.ctx, o, memory.Input{Title: "Old project", Summary: "s", Body: "b", Type: "project"}, memory.Source{Label: "manual"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.New(e.q).Forget(e.ctx, o, saved.Memory.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.suggestions(); got != nil {
+		t.Fatalf("still showing after forget: %+v", got)
+	}
+	e.runner.Sweep(e.ctx)
+	e.runner.Wait()
+	if got := e.suggestions(); len(got) != 4 {
+		t.Fatalf("did not regenerate after forget: %+v", got)
+	}
+}
+
+// Temporary and hidden chats never feed into suggestions, so deleting or
+// sweeping them leaves the current batch intact.
+func TestDeletingTemporaryOrHiddenChatKeepsSuggestions(t *testing.T) {
+	e := setup(t)
+	e.runner.Scheduled = e.runs
+	log := filepath.Join(e.dir, "harness.log")
+	t.Setenv("FAKE_HARNESS_LOG", log)
+	t.Setenv("FAKE_HARNESS_MODE", "chat")
+	keep := e.startChat("Regular conversation")
+	tempManual, err := e.runs.StartChat(e.ctx, e.ws, e.me.ID, runs.ChatInput{Project: "PAY", Title: "Temp manual", Temporary: true, Message: &runs.ChatMessageInput{Body: "Ephemeral 1"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tempExpired, err := e.runs.StartChat(e.ctx, e.ws, e.me.ID, runs.ChatInput{Project: "PAY", Title: "Temp expired", Temporary: true, Message: &runs.ChatMessageInput{Body: "Ephemeral 2"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hidden, err := e.runs.StartChat(e.ctx, e.ws, e.me.ID, runs.ChatInput{Project: "PAY", Title: "Hidden chat", Hidden: true, Message: &runs.ChatMessageInput{Body: "Internal"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e.until("all idle", func() bool {
+		return e.chat(keep.ID).State == "idle" &&
+			e.chat(tempManual.ID).State == "idle" &&
+			e.chat(tempExpired.ID).State == "idle" &&
+			e.chat(hidden.ID).State == "idle"
+	})
+
+	t.Setenv("FAKE_HARNESS_MODE", "suggestions")
+	e.backdateChats()
+	e.runner.Sweep(e.ctx)
+	e.runner.Wait()
+	if got := e.suggestions(); len(got) != 4 {
+		t.Fatalf("initial suggestions %+v", got)
+	}
+	callsAfterGen := len(harnessCalls(t, log))
+
+	if err := e.runs.DeleteChat(e.ctx, e.ws, e.me.ID, hidden.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := e.runs.DeleteChat(e.ctx, e.ws, e.me.ID, tempManual.ID); err != nil {
+		t.Fatal(err)
+	}
+	if got := e.suggestions(); len(got) != 4 {
+		t.Fatalf("suggestions cleared by hidden/temporary delete: %+v", got)
+	}
+
+	// Expire tempExpired past TemporaryChatTTL and sweep: it should be deleted
+	// without clearing or regenerating suggestions.
+	expiredAt := time.Now().Add(-(runner.TemporaryChatTTL + time.Hour))
+	if _, err := e.pool.Exec(e.ctx, "UPDATE chat_sessions SET last_message_at = $1 WHERE id = $2", expiredAt, tempExpired.ID); err != nil {
+		t.Fatal(err)
+	}
+	e.runner.Sweep(e.ctx)
+	e.runner.Wait()
+	if _, err := e.q.GetChatSession(e.ctx, store.GetChatSessionParams{ID: tempExpired.ID, WorkspaceID: e.ws}); err == nil {
+		t.Fatal("expired temporary chat was not swept")
+	}
+	if got := e.suggestions(); len(got) != 4 {
+		t.Fatalf("suggestions cleared by temporary chat sweep: %+v", got)
+	}
+	if n := len(harnessCalls(t, log)); n != callsAfterGen {
+		t.Fatalf("unexpected regeneration after temporary chat sweep: %d calls, want %d", n, callsAfterGen)
 	}
 }
