@@ -31,6 +31,7 @@ struct DesignEditorView: View {
     var initialReviewing: Bool = false
 
     @State private var design: DesignDocument?
+    @State private var designRevision: Int = 0
     @State private var savedDesign: DesignDocument?
     @State private var savedSeq: Int = 0
     @State private var past: [DesignDocument] = []
@@ -42,11 +43,11 @@ struct DesignEditorView: View {
     @State private var activePageId: String = ""
     @State private var selectedIds: [String] = []
     @State private var tool: DesignTool = .select
-    @State private var camera: DesignCamera = .initial
+    @State private var cameraState = DesignCameraState()
     @State private var hasFittedCamera = false
-    @State private var viewportSize: CGSize = CGSize(width: 1000, height: 700)
     @State private var editingNodeId: String?
     @State private var assetCache = DesignAssetCache()
+    @State private var layoutCache = DesignEditorLayoutCache()
     @State private var notice: String?
 
     // Inspector & Review
@@ -86,30 +87,30 @@ struct DesignEditorView: View {
         let readOnly = (chat?.archived ?? false) || reviewing
         let title = ref?.title ?? "Design"
 
-        let reviewChanges: [DesignReviewChange] = {
-            guard let base = design, let prop = activeProposal else { return [] }
-            return DesignReviewLogic.classify(before: base, ops: prop.ops, deps: prop.deps)
-        }()
+        let reviewChanges: [DesignReviewChange] = layoutCache.reviewChanges(
+            design: design,
+            designRevision: designRevision,
+            proposal: activeProposal
+        )
 
-        let shownDesign: DesignDocument? = {
-            guard let base = design else { return nil }
-            if reviewing, let prop = activeProposal, reviewMode != .before {
-                return DesignReviewLogic.applyOps(base, ops: prop.ops) { i in
-                    reviewDecisions[i]?.state != .rejected
-                }
-            }
-            return base
-        }()
+        let shownDesign: DesignDocument? = layoutCache.shownDesign(
+            design: design,
+            designRevision: designRevision,
+            reviewing: reviewing,
+            isBeforeMode: reviewMode == .before,
+            proposal: activeProposal,
+            decisions: reviewDecisions
+        )
 
         let shownPage: DesignPage? = {
             guard let sd = shownDesign else { return nil }
             return sd.pages.first { $0.id == activePageId } ?? sd.pages.first
         }()
 
-        let laidPage: DesignLaidPage? = {
-            guard let sd = shownDesign, let sp = shownPage else { return nil }
-            return DesignLayoutEngine(design: sd).layoutPage(sp)
-        }()
+        let laidPage: DesignLaidPage? = layoutCache.laidPage(
+            shownDesign: shownDesign,
+            shownPage: shownPage
+        )
 
         VStack(spacing: 0) {
             if let err = refEntry.error ?? versionEntry?.error {
@@ -150,7 +151,7 @@ struct DesignEditorView: View {
                         Text("This design changed while you were editing.").font(.system(size: 12))
                         Spacer()
                         Button("Use latest") {
-                            design = c.theirs
+                            setDesign(c.theirs)
                             savedDesign = c.theirs
                             savedSeq = c.seq
                             conflictState = nil
@@ -174,7 +175,7 @@ struct DesignEditorView: View {
                             activePageId: shownPage.id,
                             selectedIds: $selectedIds,
                             readOnly: readOnly,
-                            onSelectPage: { pid in activePageId = pid; selectedIds = []; hasFittedCamera = false },
+                            onSelectPage: { pid in activePageId = pid; selectedIds = [] },
                             onAddPage: { addPage() },
                             onToggleVisible: { id in toggleNodeVisible(id) },
                             onToggleLocked: { id in toggleNodeLocked(id) }
@@ -193,16 +194,16 @@ struct DesignEditorView: View {
                             readOnly: readOnly,
                             showPrototypeWires: activeInspectorTab == "prototype",
                             reviewChanges: reviewing ? reviewChanges : [],
+                            cameraState: cameraState,
                             selectedIds: $selectedIds,
                             tool: $tool,
-                            camera: $camera,
                             editingNodeId: $editingNodeId,
                             onCommitDesign: { nextDoc in commitDesign(nextDoc) },
                             onViewportChange: { sz in
-                                viewportSize = sz
+                                cameraState.viewportSize = sz
                                 if !hasFittedCamera && sz.width > 40 {
                                     hasFittedCamera = true
-                                    camera = DesignCamera.fit(box: laidPage.box, viewport: sz)
+                                    cameraState.camera = DesignCamera.fit(box: laidPage.box, viewport: sz)
                                 }
                             }
                         )
@@ -220,7 +221,7 @@ struct DesignEditorView: View {
                             }
                             .padding(.horizontal, 10)
                             .padding(.vertical, 6)
-                            .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .background(p.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
                             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .top)
                             .padding(.top, 12)
@@ -253,26 +254,19 @@ struct DesignEditorView: View {
                                 .help("Add image")
                             }
                             .padding(4)
-                            .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 10))
+                            .background(p.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 10))
                             .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
                             .shadow(color: .black.opacity(0.15), radius: 8, y: 3)
 
                             Spacer(minLength: 0)
 
-                            HStack(spacing: 4) {
-                                Button { zoomBy(0.8) } label: { Image(systemName: "minus").font(.system(size: 10)).frame(width: 20, height: 20) }.buttonStyle(.borderless)
-                                Button("\(Int((camera.z * 100).rounded()))%") {
-                                    camera = DesignCamera.fit(box: laidPage.box, viewport: viewportSize)
+                            DesignZoomPillView(
+                                cameraState: cameraState,
+                                onZoom: { factor in zoomBy(factor) },
+                                onFit: {
+                                    cameraState.camera = DesignCamera.fit(box: laidPage.box, viewport: cameraState.viewportSize)
                                 }
-                                .buttonStyle(.borderless)
-                                .font(.system(size: 11, design: .monospaced))
-                                .frame(minWidth: 42)
-                                Button { zoomBy(1.25) } label: { Image(systemName: "plus").font(.system(size: 10)).frame(width: 20, height: 20) }.buttonStyle(.borderless)
-                            }
-                            .padding(.horizontal, 6)
-                            .padding(.vertical, 4)
-                            .background(.ultraThickMaterial, in: RoundedRectangle(cornerRadius: 8))
-                            .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+                            )
                         }
                         .padding(.horizontal, 14)
                         .padding(.bottom, 12)
@@ -304,6 +298,10 @@ struct DesignEditorView: View {
         }
         .onChange(of: versionEntry?.data?.seq) { _, _ in
             if let v = versionEntry?.data { syncFromServer(version: v) }
+        }
+        .onChange(of: activePageId) { _, _ in
+            guard hasFittedCamera, let lp = laidPage, cameraState.viewportSize.width > 40 else { return }
+            cameraState.camera = DesignCamera.fit(box: lp.box, viewport: cameraState.viewportSize)
         }
         .onChange(of: design?.assets.keys.sorted().joined(separator: ",")) { _, _ in
             if let d = design { assetCache.ensureLoaded(canvasId: canvasId, assetIds: Array(d.assets.keys), client: context.store.client) }
@@ -498,7 +496,7 @@ struct DesignEditorView: View {
                     activePageId: shownPage.id,
                     selectedIds: $selectedIds,
                     readOnly: readOnly,
-                    onSelectPage: { pid in activePageId = pid; selectedIds = []; hasFittedCamera = false },
+                    onSelectPage: { pid in activePageId = pid; selectedIds = [] },
                     onAddPage: { addPage() },
                     onToggleVisible: { id in toggleNodeVisible(id) },
                     onToggleLocked: { id in toggleNodeLocked(id) }
@@ -577,7 +575,7 @@ struct DesignEditorView: View {
                 if !chatId.isEmpty {
                     let pageId = shownPage?.id
                     let sel = selectedIds
-                    let vp = API.ChatDesignSelection.Viewport(h: viewportSize.height / camera.z, w: viewportSize.width / camera.z, x: camera.x, y: camera.y, zoom: camera.z)
+                    let camState = cameraState
                     return AnyView(
                         DockedChatView(
                             chatId: chatId,
@@ -597,6 +595,9 @@ struct DesignEditorView: View {
                             prepareContextRefs: { existing in
                                 var refs = existing ?? []
                                 if let pageId, !pageId.isEmpty {
+                                    let cam = camState.camera
+                                    let sz = camState.viewportSize
+                                    let vp = API.ChatDesignSelection.Viewport(h: sz.height / cam.z, w: sz.width / cam.z, x: cam.x, y: cam.y, zoom: cam.z)
                                     refs.append(API.ChatContextRef(id: canvasId, kind: .canvas, selection: API.ChatDesignSelection(nodes: Array(sel.prefix(100)), page: pageId, viewport: vp)))
                                 }
                                 return refs.isEmpty ? nil : refs
@@ -639,10 +640,15 @@ struct DesignEditorView: View {
 
     // MARK: - Sync, Save, Undo/Redo & Actions
 
+    private func setDesign(_ next: DesignDocument) {
+        design = next
+        designRevision &+= 1
+    }
+
     private func syncFromServer(version: API.DesignVersion) {
         guard let parsed = try? DesignSchema.parse(version.body) else { return }
         if design == nil {
-            design = parsed
+            setDesign(parsed)
             savedDesign = parsed
             savedSeq = version.seq
             activePageId = parsed.pages.first?.id ?? ""
@@ -652,12 +658,12 @@ struct DesignEditorView: View {
         }
         guard version.seq > savedSeq else { return }
         if design == savedDesign {
-            design = parsed
+            setDesign(parsed)
             savedDesign = parsed
             savedSeq = version.seq
             saveState = .saved
         } else if let base = savedDesign, let cur = design, let merged = DesignMergeLogic.mergeDesigns(base: base, mine: cur, theirs: parsed) {
-            design = merged
+            setDesign(merged)
             savedDesign = parsed
             savedSeq = version.seq
             saveState = .unsaved
@@ -672,21 +678,21 @@ struct DesignEditorView: View {
         past.append(cur)
         if past.count > 80 { past.removeFirst() }
         future.removeAll()
-        design = next
+        setDesign(next)
         scheduleAutosave()
     }
 
     private func undo() {
         guard let prev = past.popLast(), let cur = design else { return }
         future.append(cur)
-        design = prev
+        setDesign(prev)
         scheduleAutosave()
     }
 
     private func redo() {
         guard let next = future.popLast(), let cur = design else { return }
         past.append(cur)
-        design = next
+        setDesign(next)
         scheduleAutosave()
     }
 
@@ -720,7 +726,7 @@ struct DesignEditorView: View {
                let latestVer = await context.store.refetch(versionRequest(seq: seq)).data,
                let theirs = try? DesignSchema.parse(latestVer.body) {
                 if let base = savedDesign, let merged = DesignMergeLogic.mergeDesigns(base: base, mine: settled, theirs: theirs) {
-                    design = merged
+                    setDesign(merged)
                     savedDesign = theirs
                     savedSeq = seq
                     await saveNow(forceSeq: seq)
@@ -738,8 +744,8 @@ struct DesignEditorView: View {
     }
 
     private func zoomBy(_ factor: Double) {
-        let mid = CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2)
-        camera = camera.zoomed(by: factor, around: mid)
+        let mid = CGPoint(x: cameraState.viewportSize.width / 2, y: cameraState.viewportSize.height / 2)
+        cameraState.camera = cameraState.camera.zoomed(by: factor, around: mid)
     }
 
     private func addPage() {
@@ -749,7 +755,6 @@ struct DesignEditorView: View {
         commitDesign(d)
         activePageId = page.id
         selectedIds = []
-        hasFittedCamera = false
     }
 
     private func toggleNodeVisible(_ id: String) {
@@ -796,7 +801,7 @@ struct DesignEditorView: View {
                 d.assets[asset.id] = DesignAsset(mime: asset.mime.rawValue, w: asset.w, h: asset.h)
                 let w = min(Double(asset.w), 480)
                 let h = w * Double(asset.h) / max(1, Double(asset.w))
-                let center = camera.screenToWorld(CGPoint(x: viewportSize.width / 2, y: viewportSize.height / 2))
+                let center = cameraState.camera.screenToWorld(CGPoint(x: cameraState.viewportSize.width / 2, y: cameraState.viewportSize.height / 2))
                 let img = DesignNode(id: DesignSchema.newId(prefix: "n"), type: .image, name: url.deletingPathExtension().lastPathComponent, x: DesignSchema.round2(center.x - w / 2), y: DesignSchema.round2(center.y - h / 2), w: DesignSchema.round2(w), h: DesignSchema.round2(h), asset: asset.id, fit: "cover")
                 commitDesign(DesignLayoutEngine.settle(DesignEditLogic.insertNodes(d, parent: pageId, nodes: [img])))
                 selectedIds = [img.id]
@@ -877,6 +882,137 @@ struct DesignEditorView: View {
         } catch {
             notice = "Saving to Library failed: \((error as? APIError)?.userMessage ?? error.localizedDescription)"
         }
+    }
+}
+
+// MARK: - Memoized Layout & Review Cache
+
+@MainActor
+private final class DesignEditorLayoutCache {
+    private struct ReviewKey: Equatable {
+        let designRevision: Int
+        let proposalId: String
+    }
+
+    private struct ShownKey: Equatable {
+        let designRevision: Int
+        let reviewing: Bool
+        let isBeforeMode: Bool
+        let proposalId: String?
+        let decisions: [Int: DesignOpDecision]
+    }
+
+    private struct LaidKey: Equatable {
+        let shownRevision: Int
+        let pageId: String
+    }
+
+    private var lastReviewKey: ReviewKey?
+    private var cachedReviewChanges: [DesignReviewChange] = []
+
+    private var lastShownKey: ShownKey?
+    private var shownRevision: Int = 0
+    private var cachedShownDesign: DesignDocument?
+
+    private var lastLaidKey: LaidKey?
+    private var cachedLaidPage: DesignLaidPage?
+
+    func reviewChanges(
+        design: DesignDocument?,
+        designRevision: Int,
+        proposal: API.DesignProposal?
+    ) -> [DesignReviewChange] {
+        guard let base = design, let prop = proposal else {
+            lastReviewKey = nil
+            cachedReviewChanges = []
+            return []
+        }
+        let key = ReviewKey(designRevision: designRevision, proposalId: prop.id)
+        if lastReviewKey == key { return cachedReviewChanges }
+        let computed = DesignReviewLogic.classify(before: base, ops: prop.ops, deps: prop.deps)
+        lastReviewKey = key
+        cachedReviewChanges = computed
+        return computed
+    }
+
+    func shownDesign(
+        design: DesignDocument?,
+        designRevision: Int,
+        reviewing: Bool,
+        isBeforeMode: Bool,
+        proposal: API.DesignProposal?,
+        decisions: [Int: DesignOpDecision]
+    ) -> DesignDocument? {
+        guard let base = design else {
+            lastShownKey = nil
+            cachedShownDesign = nil
+            lastLaidKey = nil
+            cachedLaidPage = nil
+            return nil
+        }
+        let key = ShownKey(
+            designRevision: designRevision,
+            reviewing: reviewing,
+            isBeforeMode: isBeforeMode,
+            proposalId: reviewing ? proposal?.id : nil,
+            decisions: reviewing ? decisions : [:]
+        )
+        if lastShownKey == key, let cached = cachedShownDesign {
+            return cached
+        }
+        let computed: DesignDocument
+        if reviewing, let prop = proposal, !isBeforeMode {
+            computed = DesignReviewLogic.applyOps(base, ops: prop.ops) { i in
+                decisions[i]?.state != .rejected
+            }
+        } else {
+            computed = base
+        }
+        lastShownKey = key
+        shownRevision &+= 1
+        cachedShownDesign = computed
+        return computed
+    }
+
+    func laidPage(shownDesign: DesignDocument?, shownPage: DesignPage?) -> DesignLaidPage? {
+        guard let sd = shownDesign, let sp = shownPage else {
+            lastLaidKey = nil
+            cachedLaidPage = nil
+            return nil
+        }
+        let key = LaidKey(shownRevision: shownRevision, pageId: sp.id)
+        if lastLaidKey == key, let cached = cachedLaidPage {
+            return cached
+        }
+        let computed = DesignLayoutEngine(design: sd).layoutPage(sp)
+        lastLaidKey = key
+        cachedLaidPage = computed
+        return computed
+    }
+}
+
+// MARK: - Isolated Zoom Pill (observes only zoomPercent, never pan deltas)
+
+private struct DesignZoomPillView: View {
+    @Environment(\.vesperTheme) private var theme
+    let cameraState: DesignCameraState
+    let onZoom: (Double) -> Void
+    let onFit: () -> Void
+
+    var body: some View {
+        let p = theme.palette
+        HStack(spacing: 4) {
+            Button { onZoom(0.8) } label: { Image(systemName: "minus").font(.system(size: 10)).frame(width: 20, height: 20) }.buttonStyle(.borderless)
+            Button("\(cameraState.zoomPercent)%") { onFit() }
+                .buttonStyle(.borderless)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(minWidth: 42)
+            Button { onZoom(1.25) } label: { Image(systemName: "plus").font(.system(size: 10)).frame(width: 20, height: 20) }.buttonStyle(.borderless)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+        .background(p.surface.opacity(0.95), in: RoundedRectangle(cornerRadius: 8))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
     }
 }
 

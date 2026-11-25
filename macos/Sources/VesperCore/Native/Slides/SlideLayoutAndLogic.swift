@@ -1,6 +1,7 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import os
 
 // MARK: - Slide Display List & Layout Engine (parity with web/lib/slides/layout.ts)
 
@@ -1052,10 +1053,31 @@ public enum SlideCGDrawer {
         ctx.fillPath()
     }
 
+    private struct SendableColorBox: @unchecked Sendable {
+        let color: CGColor
+    }
+
+    private struct ColorCacheKey: Hashable {
+        let hex: String
+        let alphaBits: UInt64
+    }
+
+    private static let colorCache = OSAllocatedUnfairLock<[ColorCacheKey: SendableColorBox]>(initialState: [:])
+
     public static func cgColor(_ hex: String, alpha: Double = 1) -> CGColor {
+        let key = ColorCacheKey(hex: hex, alphaBits: alpha.isFinite ? alpha.bitPattern : UInt64.max)
+        if let hit = colorCache.withLock({ $0[key] }) {
+            return hit.color
+        }
         let (r, g, b, a) = SlideSchema.parseHexRGBA(hex)
         let clampedAlpha = alpha.isFinite ? min(1, max(0, a * alpha)) : a
-        return CGColor(red: r, green: g, blue: b, alpha: clampedAlpha)
+        let color = CGColor(red: r, green: g, blue: b, alpha: clampedAlpha)
+        let box = SendableColorBox(color: color)
+        colorCache.withLock { cache in
+            if cache.count >= 1024 { cache.removeAll(keepingCapacity: true) }
+            cache[key] = box
+        }
+        return color
     }
 }
 
