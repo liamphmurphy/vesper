@@ -121,6 +121,9 @@ type Server struct {
 	// RunnerStarting reports whether an in-process runner (vesper app) is
 	// still initializing before its first heartbeat.
 	RunnerStarting func() bool
+	// Companion describes the opt-in LAN/Tailscale TLS listener for paired
+	// mobile devices; nil when companion access is disabled.
+	Companion *CompanionRuntimeInfo
 
 	// MediaRegistry overrides the registered media providers (tests inject fake).
 	MediaRegistry *media.Registry
@@ -152,6 +155,7 @@ func (s *Server) mountAPIRoutes(mux *http.ServeMux) {
 	s.httpClientRoutes(mux)
 	s.browserExtensionRoutes(mux)
 	s.speechRoutes(mux)
+	s.companionRoutes(mux)
 	strict := api.NewStrictHandlerWithOptions(s, nil, api.StrictHTTPServerOptions{
 		RequestErrorHandlerFunc: func(w http.ResponseWriter, r *http.Request, err error) {
 			writeError(w, http.StatusBadRequest, api.Invalid, err.Error(), "")
@@ -229,7 +233,7 @@ func personFacing(path string) bool {
 		return true
 	case !strings.HasPrefix(path, "/api/"):
 		return false
-	case path == "/api/v1/health", path == SignInPath, path == AuthStatusPath, path == AuthSetupPath, path == AuthLoginPath, path == connectors.CallbackPath, strings.HasPrefix(path, "/api/v1/agent/"):
+	case path == "/api/v1/health", path == SignInPath, path == AuthStatusPath, path == AuthSetupPath, path == AuthLoginPath, path == CompanionPairPath, path == connectors.CallbackPath, strings.HasPrefix(path, "/api/v1/agent/"):
 		return false
 	case strings.HasPrefix(path, browserExtensionPrefix):
 		// The Safari extension: its own bearer token (browserExtensionAuth), not a session.

@@ -32,6 +32,8 @@ var excluded = map[string]string{
 	"custom_app_nix_jobs":       "custom-app Nix job state and scratch paths: ephemeral per-machine runs",
 	"chat_steers":               "ephemeral mid-turn steering messages scoped to a live chat turn",
 	"pr_feedback":               "cached GitHub PR check runs, review threads and ETags, refreshed by prsync",
+	"companion_pairing_codes":   "one-time companion pairing codes",
+	"companion_devices":         "paired mobile companion credentials: devices re-pair with the new machine",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own
