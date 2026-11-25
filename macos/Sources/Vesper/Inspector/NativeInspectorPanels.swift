@@ -886,7 +886,7 @@ private struct PlaygroundPreviewWebView: NSViewRepresentable {
     func makeCoordinator() -> Coordinator { Coordinator() }
 
     func makeNSView(context: Context) -> WKWebView {
-        let webView = WebViewFactory.makeWebView(kind: .playground, bridge: nil)
+        let webView = WebViewFactory.makePlaygroundWebView()
         context.coordinator.lastURL = url
         context.coordinator.lastReloadToken = reloadToken
         webView.load(URLRequest(url: url))

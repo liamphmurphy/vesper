@@ -95,7 +95,7 @@ final class NativeRailStore {
             nativeActive: tab.state.native != nil,
             inspector: inspector,
             poppedOut: poppedOut,
-            pageRailTop: tab.state.rail?.top
+            pageRailTop: nil
         )
         let pathname = tab.state.route ?? tab.pendingPath
         let reviewsData = store.entry(Self.reviewRequestsRequest).data

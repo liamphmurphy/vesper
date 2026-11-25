@@ -5,18 +5,15 @@ import WebKit
 
 enum WindowKind { case vesper, playground }
 
-/// The content area of one window/tab: one WKWebView, the offline/error overlay, and the
-/// navigation policy (routing.ts: same origin stays, playground and external leave).
+/// The content area of one window/tab: either a native SwiftUI screen (`.vesper`) or a sandboxed
+/// playground `WKWebView` (`.playground`), plus the offline/error overlay.
 @MainActor
 final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDelegate {
     let app: AppModel
     let kind: WindowKind
     let state: ShellState
-    let bridge: ShellBridge?
-    let services: WebPageServices?
-    let osBridge: CustomAppOSBridge?
-    let standaloneSlug: String?
-    let webView: WKWebView
+    /// Non-nil only for `.playground` tabs; `.vesper` tabs render exclusively via native screens.
+    let webView: WKWebView?
     weak var host: MainWindowController?
 
     /// Path (vesper) or full URL (playground) to load first.
@@ -25,52 +22,33 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     private var playgroundURL: URL?
     private var observations: [NSKeyValueObservation] = []
     private var overlay: NSHostingView<OfflineView>?
-    /// The native screen drawn over the web view for the current path, if one is registered.
+    /// The native screen shown for `.vesper` tabs.
     private var nativeHost: NativeScreenHostController?
 
-    init(app: AppModel, kind: WindowKind, state: ShellState, path: String, standaloneSlug: String? = nil) {
+    init(app: AppModel, kind: WindowKind, state: ShellState, path: String) {
         self.app = app
         self.kind = kind
         self.state = state
         self.pendingPath = path
-        self.standaloneSlug = standaloneSlug
-        if kind == .vesper {
-            let bridge = ShellBridge(
-                state: state,
-                appearanceCommand: { [weak app] in
-                    if let cmd = app?.currentAppearanceCommand() { return cmd }
-                    let (accent, mode) = AppearanceMonitor.current()
-                    return .appearance(accent: accent, mode: mode)
-                },
-                ownsAppearance: { [weak app] in app?.ownsAppearance ?? false }
-            )
-            self.bridge = bridge
-            let services = WebPageServices()
-            self.services = services
-            let osBridge = CustomAppOSBridge(app: app)
-            self.osBridge = osBridge
-            self.webView = WebViewFactory.makeWebView(kind: .vesper, bridge: bridge, services: services, osBridge: osBridge)
-            bridge.webView = webView
-            services.webView = webView
-            osBridge.webView = webView
-        } else {
-            self.bridge = nil
-            self.services = nil
-            self.osBridge = nil
-            self.webView = WebViewFactory.makeWebView(kind: .playground, bridge: nil)
+        if kind == .playground {
+            self.webView = WebViewFactory.makePlaygroundWebView()
             self.playgroundURL = URL(string: path)
+        } else {
+            self.webView = nil
         }
         super.init(nibName: nil, bundle: nil)
-        webView.navigationDelegate = self
-        webView.uiDelegate = self
-        observations = [
-            webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoBack = wv.canGoBack } },
-            webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoForward = wv.canGoForward } },
-            webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.isLoading = wv.isLoading } },
-            webView.observe(\.title, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.documentTitleChanged() } },
-            webView.observe(\.url, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.urlChanged() } },
-        ]
-        if kind == .playground { webView.load(URLRequest(url: playgroundURL ?? URL(string: "about:blank")!)) }
+        if let webView {
+            webView.navigationDelegate = self
+            webView.uiDelegate = self
+            observations = [
+                webView.observe(\.canGoBack, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoBack = wv.canGoBack } },
+                webView.observe(\.canGoForward, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.canGoForward = wv.canGoForward } },
+                webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in MainActor.assumeIsolated { self?.state.isLoading = wv.isLoading } },
+                webView.observe(\.title, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.documentTitleChanged() } },
+                webView.observe(\.url, options: [.new]) { [weak self] _, _ in MainActor.assumeIsolated { self?.urlChanged() } },
+            ]
+            webView.load(URLRequest(url: playgroundURL ?? URL(string: "about:blank")!))
+        }
         syncNativeScreen(path: path)
     }
 
@@ -79,7 +57,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     /// The window this tab is in (a background tab's view is detached, so ask the host).
     var ownerWindow: NSWindow? { host?.window ?? (isViewLoaded ? view.window : nil) }
 
-    /// What the tab strip and the window title show: the page's title, else the document's.
+    /// What the tab strip and the window title show: the screen's title, else the document's.
     var displayTitle: String {
         if let title = state.title { return cleanTabTitle(title) }
         if let doc = state.documentTitle, !doc.isEmpty { return cleanTabTitle(doc) }
@@ -87,21 +65,23 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     }
 
     private func documentTitleChanged() {
-        state.documentTitle = webView.title
+        state.documentTitle = webView?.title
         host?.tabTitleChanged(self)
     }
 
     override func loadView() {
         let container = NSView()
-        webView.translatesAutoresizingMaskIntoConstraints = false
-        container.addSubview(webView)
-        // Content starts below the unified toolbar (the window extends under it).
-        NSLayoutConstraint.activate([
-            webView.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
-            webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
-        ])
+        if let webView {
+            webView.translatesAutoresizingMaskIntoConstraints = false
+            container.addSubview(webView)
+            // Content starts below the unified toolbar (the window extends under it).
+            NSLayoutConstraint.activate([
+                webView.topAnchor.constraint(equalTo: container.safeAreaLayoutGuide.topAnchor),
+                webView.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+                webView.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+                webView.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+            ])
+        }
         let overlay = NSHostingView(rootView: OfflineView(
             app: app, state: state, kind: kind,
             retry: { [weak self] in self?.retry() },
@@ -134,78 +114,54 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     /// Called once the server is reachable and signed in (and again after a stack restart).
     func connect(_ conn: Connection) {
         guard kind == .vesper else { return }
-        let sameServer = base == conn.baseURL
         base = conn.baseURL
-        bridge?.baseURL = conn.baseURL
-        services?.baseURL = conn.baseURL
-        osBridge?.baseURL = conn.baseURL
         state.loadError = nil
-        // Native screens fetch directly via APIClient; skip loading the hidden WKWebView when a native screen owns the route.
-        guard nativeHost == nil else { return }
-        if sameServer, webView.url != nil {
-            webView.reload()
-        } else if let url = URL(string: pendingPath, relativeTo: conn.baseURL)?.absoluteURL {
-            vlog("loading \(url.path)")
-            webView.load(URLRequest(url: url))
-        }
     }
 
     func navigate(path: String) {
         guard kind == .vesper else { return }
         if app.handleSettingsPath(path, from: ownerWindow) { return }
-        let wasNative = nativeHost != nil
         pendingPath = path
-        // Show the native screen now rather than after the page's router changes the URL.
         syncNativeScreen(path: path)
-        if nativeHost != nil {
-            return
-        }
-        if wasNative || !state.ready,
-           let base, let url = URL(string: path, relativeTo: base)?.absoluteURL {
-            webView.load(URLRequest(url: url))
-        } else if state.ready {
-            bridge?.send(.navigate(path: path))
-        } else if let base, let url = URL(string: path, relativeTo: base)?.absoluteURL {
-            webView.load(URLRequest(url: url))
-        }
+        app.scheduleSessionSave()
     }
 
     func retry() {
         state.loadError = nil
-        if webView.url != nil { webView.reload() } else if let conn = app.connection { connect(conn) }
+        if let webView, webView.url != nil {
+            webView.reload()
+        } else if let conn = app.connection {
+            connect(conn)
+        }
     }
 
     /// The URL this tab would restore to.
     var currentURLString: String? {
-        if let url = webView.url, url.scheme == "http" || url.scheme == "https" { return url.absoluteString }
+        if let url = webView?.url, url.scheme == "http" || url.scheme == "https" { return url.absoluteString }
         if kind == .vesper, let base, let url = URL(string: pendingPath, relativeTo: base) { return url.absoluteURL.absoluteString }
         return nil
     }
 
     private func urlChanged() {
-        if kind == .vesper, let url = webView.url, let base, BridgeOrigin.matches(url: url, base: base) {
-            var path = url.path.isEmpty ? "/" : url.path
-            if let q = url.query { path += "?" + q }
-            pendingPath = path
-            syncNativeScreen(path: path)
-        }
         app.scheduleSessionSave()
     }
 
     // MARK: Native screens
 
-    /// The native screen or the web view, whichever shows: the find bar searches it.
+    /// The native screen or the playground web view, whichever shows: the find bar searches it.
     var findTarget: (any FindTarget)? { nativeHost?.context.find ?? webView }
 
     /// What takes keyboard focus when the tab's content should have it.
-    var focusView: NSView { nativeHost?.view ?? webView }
+    var focusView: NSView { nativeHost?.view ?? webView ?? view }
 
-    /// Sends a shell command to the screen it belongs to: the native screen's toolbar, title-menu,
-    /// inspector and own navigator commands go to it while it shows; everything else goes to the page.
+    /// Sends a shell command to the active native screen.
     func dispatch(_ command: NativeCommand) {
         if case .navigate(let path) = command {
             navigate(path: path)
-        } else if nativeHost != nil, state.usesDefaultCompanion {
+            return
+        }
+        guard let nativeHost else { return }
+        if state.usesDefaultCompanion {
             switch command {
             case .inspectorVisibility(let open):
                 state.setDefaultCompanionOpen(open)
@@ -218,24 +174,16 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             default:
                 break
             }
-            if let nativeHost, NativeCommandRouting.isScreenCommand(command, navigatorId: nativeHost.context.chrome.navigator?.id) {
-                nativeHost.context.onCommand?(command)
-            } else {
-                bridge?.send(command)
-            }
-        } else if let nativeHost, NativeCommandRouting.isScreenCommand(command, navigatorId: nativeHost.context.chrome.navigator?.id) {
+        }
+        if NativeCommandRouting.isScreenCommand(command, navigatorId: nativeHost.context.chrome.navigator?.id) {
             nativeHost.context.onCommand?(command)
-        } else {
-            bridge?.send(command)
         }
     }
 
-    /// Shows the native screen registered for `path` over the web view, or removes it when there's
-    /// none. The web view keeps running underneath, so history, the sidebar and the page's own
-    /// chrome stay current for when it shows again.
+    /// Shows the native screen registered for `path` (falling back to `/` if an unknown path arrives).
     private func syncNativeScreen(path: String) {
-        guard kind == .vesper, standaloneSlug == nil else { return }
-        let match = app.nativeRoutes.resolve(path)
+        guard kind == .vesper else { return }
+        let match = app.nativeRoutes.resolve(path) ?? app.nativeRoutes.resolve("/")
         if let match {
             state.route = match.path
         }
@@ -281,37 +229,31 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             hosted.trailingAnchor.constraint(equalTo: view.trailingAnchor),
             hosted.bottomAnchor.constraint(equalTo: view.bottomAnchor),
         ])
-        webView.isHidden = true
-        if view.window?.firstResponder === webView { view.window?.makeFirstResponder(hosted) }
     }
 
     private func removeNativeHost() {
         guard let host = nativeHost else { return }
         nativeHost = nil
-        let hadFocus = host.isViewLoaded && (view.window?.firstResponder as? NSView)?.isDescendant(of: host.view) == true
         host.view.removeFromSuperview()
         host.removeFromParent()
         state.native = nil
         state.nativeSidebar = nil
         state.nativeInspectorView = nil
-        webView.isHidden = false
-        if hadFocus { view.window?.makeFirstResponder(webView) }
     }
 
     func teardown() {
         removeNativeHost()
-        bridge?.teardown(from: webView.configuration.userContentController)
-        services?.teardown(from: webView.configuration.userContentController)
-        osBridge?.teardown(from: webView.configuration.userContentController)
-        webView.navigationDelegate = nil
-        webView.uiDelegate = nil
+        if let webView {
+            webView.navigationDelegate = nil
+            webView.uiDelegate = nil
+            webView.stopLoading()
+        }
         observations.removeAll()
-        webView.stopLoading()
     }
 
-    // MARK: Link policy
+    // MARK: Playground link policy
 
-    /// What to do with a link from this view. Returns true when it should load here.
+    /// What to do with a link from a playground view. Returns true when it should load here.
     private func route(_ url: URL, openingTab: Bool) -> Bool {
         guard let base = app.connection?.baseURL ?? base else { return false }
         let target = url.absoluteString
@@ -325,14 +267,6 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             if let q = url.query { path += "?" + q }
             if let f = url.fragment { path += "#" + f }
             if app.handleSettingsPath(path, from: ownerWindow) { return false }
-            if let standaloneSlug {
-                if !openingTab && CustomAppStandaloneLogic.shouldStayInStandaloneWindow(url: url, baseURL: base, slug: standaloneSlug) {
-                    return true
-                }
-                app.aux.openInMainWindow(path)
-                return false
-            }
-            if kind == .vesper && !openingTab { return true }
             app.openVesperTab(path: path, nextTo: ownerWindow)
         case .playground:
             app.openPlayground(url: url, nextTo: ownerWindow)
@@ -345,13 +279,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-        // <a download>, including blob: and data: URLs, goes to ~/Downloads (before any link routing,
-        // which would hand a blob: URL to the workspace).
         if navigationAction.shouldPerformDownload { return .download }
         guard let url = navigationAction.request.url else { return .cancel }
-        // A file dropped on the window that the page didn't take: offer it to a chat, as the
-        // Electron app did (drop.ts), instead of navigating to file://. Only a browser-initiated
-        // main-frame navigation counts: a page's own link, redirect or subframe never reaches a chat.
         if url.isFileURL {
             if navigationAction.navigationType == .other,
                navigationAction.targetFrame?.isMainFrame == true,
@@ -360,10 +289,6 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             }
             return .cancel
         }
-        let scheme = url.scheme?.lowercased() ?? ""
-        // The page's own blob:/data:/about: documents open in a popup (target=_blank) or here.
-        if ["blob", "data", "about"].contains(scheme) && kind == .vesper { return .allow }
-        // Subframes (e.g. embedded previews) are governed by the page's own policy.
         guard navigationAction.targetFrame?.isMainFrame ?? true else { return .allow }
         if navigationAction.targetFrame == nil {
             _ = route(url, openingTab: true)
@@ -387,13 +312,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     func webView(_ webView: WKWebView, createWebViewWith configuration: WKWebViewConfiguration, for navigationAction: WKNavigationAction,
                  windowFeatures: WKWindowFeatures) -> WKWebView? {
         let url = navigationAction.request.url
-        let scheme = url?.scheme?.lowercased() ?? ""
         vlog("createWebView url=\(url?.absoluteString ?? "nil")")
-        // window.open("") / about:blank and blob:/data: targets need a real window the opener can
-        // write to or navigate later (connector sign-in); links to pages open as tabs.
-        if kind == .vesper, url == nil || url?.absoluteString.isEmpty == true || ["about", "blob", "data"].contains(scheme) {
-            return WebPopup.make(configuration: configuration, features: windowFeatures, parent: ownerWindow)
-        }
         if let url { _ = route(url, openingTab: true) }
         return nil
     }
@@ -402,52 +321,10 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         if let host { host.closeTab(self) } else { ownerWindow?.performClose(nil) }
     }
 
-    // MARK: Unsaved changes
-
-    /// Whether the page reports unsaved changes (web/lib/leave-guard.ts). WKWebView never runs
-    /// beforeunload prompts, so the shell asks. A page that doesn't answer within a second counts
-    /// as having none, so a hung page can always be closed.
-    func hasUnsavedChanges() async -> Bool {
-        if nativeHost != nil { return false }
-        let web = webView
-        let check = Task { @MainActor () -> Bool in
-            let result = try? await web.callAsyncJavaScript(
-                "return typeof window.__vesperHasUnsavedChanges === 'function' && window.__vesperHasUnsavedChanges() === true;",
-                contentWorld: .page)
-            return (result as? Bool) ?? false
-        }
-        let timeout = Task { try? await Task.sleep(for: .seconds(1)); check.cancel() }
-        let value = await check.value
-        timeout.cancel()
-        return value
-    }
-
-    /// Asks "Leave without saving?" when the page has unsaved changes. true = go ahead.
-    func confirmLeavingUnsavedChanges() async -> Bool {
-        guard await hasUnsavedChanges() else { return true }
-        let alert = NSAlert()
-        alert.messageText = "Leave without saving?"
-        alert.informativeText = "Changes you made on this page may not be saved."
-        alert.addButton(withTitle: "Leave")
-        alert.addButton(withTitle: "Stay")
-        if let window = ownerWindow {
-            window.makeKeyAndOrderFront(nil)
-            return await alert.beginSheetModal(for: window) == .alertFirstButtonReturn
-        }
-        return alert.runModal() == .alertFirstButtonReturn
-    }
-
-    /// Screen/camera/microphone capture (getDisplayMedia in the frame-capture feature): only the
-    /// Vesper origin's main frame is offered the system prompt; everything else is refused.
     func webView(_ webView: WKWebView, decideMediaCapturePermissionsFor origin: WKSecurityOrigin, initiatedBy frame: WKFrameInfo,
                  type: WKMediaCaptureType) async -> WKPermissionDecision {
-        guard kind == .vesper, frame.isMainFrame, let base = app.connection?.baseURL ?? base,
-              BridgeOrigin.matches(scheme: origin.protocol, host: origin.host, port: origin.port, base: base) else {
-            vlog("media capture denied for \(origin.protocol)://\(origin.host)")
-            return .deny
-        }
-        vlog("media capture prompt for type \(type.rawValue)")
-        return .prompt
+        vlog("media capture denied for \(origin.protocol)://\(origin.host)")
+        return .deny
     }
 
     // MARK: Navigation results
@@ -456,39 +333,6 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         state.loadError = nil
         vlog("didFinish \(webView.url?.path ?? "?")")
         app.scheduleSessionSave()
-        if debugLoggingEnabled, ProcessInfo.processInfo.environment["VESPER_DEBUG_SELFTEST"] == "1", kind == .vesper {
-            runBridgeSelfTest()
-        }
-        runDebugScript()
-    }
-
-    /// Debug only: VESPER_DEBUG_JS=<file> runs that file's JavaScript (as an async function body) after
-    /// each load and logs the result, to exercise WebKit behaviour without the page's help.
-    private func runDebugScript() {
-        guard debugLoggingEnabled, kind == .vesper, let path = ProcessInfo.processInfo.environment["VESPER_DEBUG_JS"],
-              let source = try? String(contentsOfFile: path, encoding: .utf8) else { return }
-        webView.callAsyncJavaScript(source, arguments: [:], in: nil, in: .page) { result in
-            MainActor.assumeIsolated { vlog("debug js: \(result)") }
-        }
-    }
-
-    /// Debug only: posts messages as a page would and answers the first command, to exercise the
-    /// bridge when the web side does not speak it yet.
-    private func runBridgeSelfTest() {
-        let js = """
-        const post = (m) => window.webkit.messageHandlers.vesper.postMessage(m);
-        window.addEventListener("vesper-native", (e) => post({v:1, type:"title", title:"got " + e.detail.type}));
-        post({v:1, type:"ready", path:"/chat"});
-        post({v:1, type:"route", path:"/chat", area:"chat"});
-        post({v:1, type:"shell", model:{areas:[{id:"chat",label:"Chat",icon:"msg",href:"/chat"}], apps:[], currentArea:"chat"}});
-        post({v:1, type:"bogus"});
-        """
-        webView.evaluateJavaScript(js) { [weak self] _, error in
-            MainActor.assumeIsolated {
-                vlog("selftest injected error=\(String(describing: error))")
-                self?.bridge?.send(.command(.find))
-            }
-        }
     }
 
     func webView(_ webView: WKWebView, didFailProvisionalNavigation navigation: WKNavigation!, withError error: Error) {
@@ -513,7 +357,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         webView.reload()
     }
 
-    // MARK: JavaScript dialogs and file pickers
+    // MARK: JavaScript dialogs and file pickers (playground pages)
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
         let alert = NSAlert()
@@ -541,8 +385,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
         return await presentDialog(alert) == .alertFirstButtonReturn ? field.stringValue : nil
     }
 
-    /// A page's dialog as a sheet on its own window, so it blocks that tab rather than the whole
-    /// app; app-modal only when the tab has no window or one already shows a sheet.
+    /// A playground's dialog as a sheet on its own window, so it blocks that tab rather than the
+    /// whole app; app-modal only when the tab has no window or one already shows a sheet.
     private func presentDialog(_ alert: NSAlert) async -> NSApplication.ModalResponse {
         guard let window = ownerWindow, window.attachedSheet == nil else { return alert.runModal() }
         window.makeKeyAndOrderFront(nil)

@@ -3,40 +3,24 @@ import Observation
 import SwiftUI
 import VesperCore
 
-/// What the page has told one window about itself; the sidebar, toolbar and title read it.
+/// Per-tab shell state read by the sidebar, toolbar, inspector, and window title.
 @MainActor
 @Observable
 final class ShellState {
-    var shell: ShellModel?
-    /// The sidebar's list: the native screen's when it publishes one, else the page's.
+    /// The sidebar's list published by the active native screen.
     private(set) var navigator: NavModel? {
         didSet { dropStaleOverrides(old: oldValue, new: navigator) }
     }
-    /// The list the page describes; it keeps updating under a native screen's.
-    var pageNavigator: NavModel? {
-        didSet { syncNavigator() }
-    }
-    /// The page's effective color mode (it may differ from macOS's when the person forces Dark or Light).
+    /// The tab's effective color mode (may differ from macOS's when the person forces Dark or Light).
     var pageMode: ColorMode?
-    /// True while the page draws a screen's list in its own fallback column.
-    var navigatorFallback = false
-    /// The page asked for the sidebar to fold (theater mode); per tab, so switching tabs restores it.
+    /// Screen requested the sidebar to fold (e.g. Dev terminal theater mode); per tab, so switching tabs restores it.
     var sidebarHidden = false
-    /// The web view's own document title, used until the page sends its `title` message.
+    /// Playground web view's document title.
     var documentTitle: String?
-    /// The right rail the page describes; nil when it has none.
-    var rail: RailModel?
-    /// The page's palette and text size, for native screens; nil until the page sends them.
+    /// Active palette and text size for native screens.
     var theme: ThemeTokens?
 
-    // What the page describes (title, toolbar, inspector). While a native screen shows, its own
-    // chrome replaces these; they keep updating underneath and return when it goes away.
-    var pageTitle: String?
-    var pageSubtitle: String?
-    var pageTitleMenu: [MenuItem]?
-    var pageToolbarItems: [ShellToolbarItem] = []
-    var pageInspector: InspectorModel?
-    /// The native screen showing in this tab and the chrome it describes; nil while the web view shows.
+    /// The native screen showing in this tab and the chrome it describes; nil for playground tabs.
     var native: NativeChrome? {
         didSet { syncNavigator() }
     }
@@ -57,43 +41,36 @@ final class ShellState {
 
     var usesDefaultCompanion: Bool { native != nil && native?.inspector == nil }
 
-    var title: String? { native.map(\.title) ?? pageTitle }
-    var subtitle: String? { native.map(\.subtitle) ?? pageSubtitle }
+    var title: String? { native?.title }
+    var subtitle: String? { native?.subtitle }
     /// The title's own menu (rename, archive…).
-    var titleMenu: [MenuItem]? { native.map(\.titleMenu) ?? pageTitleMenu }
-    var toolbarItems: [ShellToolbarItem] { native?.toolbarItems ?? pageToolbarItems }
+    var titleMenu: [MenuItem]? { native?.titleMenu }
+    var toolbarItems: [ShellToolbarItem] { native?.toolbarItems ?? [] }
     /// The native inspector the screen describes; native screens without a custom inspector fall back
-    /// to the default companion (`WorkChat`), while web screens keep `pageInspector`.
+    /// to the default companion (`WorkChat`).
     var inspector: InspectorModel? {
         InspectorLogic.effectiveInspector(
             nativeActive: native != nil,
             nativeInspector: native?.inspector,
-            pageInspector: pageInspector,
+            pageInspector: nil,
             defaultCompanionOpen: defaultCompanionOpen,
             path: route
         )
     }
     var route: String?
-    /// The area the page last reported with its route.
-    var area: AreaId?
     /// The native screen's area, set with it by the shell.
     var nativeArea: AreaId?
-    /// The area the area bar and tab icon mark. Under a native screen the web view is hidden and
-    /// its reported route can lag or stick (it kept Knowledge lit after going back to Chat), so the
-    /// shown screen's own area wins.
-    var currentArea: AreaId? { native != nil ? (native?.areaOverride ?? nativeArea) : area }
-    /// The page has sent `ready`: commands will be heard.
-    var ready = false
+    /// The area the area bar and tab icon mark.
+    var currentArea: AreaId? { native?.areaOverride ?? nativeArea }
 
-    // Native window state.
+    // Playground web view navigation state.
     var canGoBack = false
     var canGoForward = false
     var isLoading = false
-    /// A failed navigation, shown over the page with Retry.
+    /// A failed navigation, shown over the tab with Retry.
     var loadError: String?
 
-    // Local expand/collapse taps, until the page's own value for that row or section changes
-    // (a page-driven "Collapse all" must win over an earlier tap).
+    // Local expand/collapse taps, until the screen's own value for that row or section changes.
     var expandedOverrides: [String: Bool] = [:]
     var collapsedOverrides: [String: Bool] = [:]
 
@@ -123,7 +100,7 @@ final class ShellState {
     }
 
     private func syncNavigator() {
-        let next = native?.navigator ?? pageNavigator
+        let next = native?.navigator
         if next != navigator { navigator = next }
     }
 
@@ -156,7 +133,7 @@ final class ShellState {
         return out
     }
 
-    /// Fixed top of the sidebar until the page describes its own.
+    /// Fixed top-level areas shown in the sidebar and tab icons.
     static let fallbackShell = ShellModel(
         areas: [
             ShellArea(id: .chat, label: "Chat", icon: "msg", href: "/chat"),

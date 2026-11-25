@@ -2,22 +2,8 @@ import AppKit
 import Observation
 import SwiftUI
 import VesperCore
-import WebKit
 
-/// Window-level host contract so tabs, companion, and inspector panels can trigger native window overlays.
-@MainActor
-protocol ShellHostActions: AnyObject {
-    func showToast(_ toast: ToastItemModel, from webView: WKWebView?)
-    func dismissToast(id: String)
-    func showShortcuts()
-    func openCommandPalette(_ request: CommandPaletteRequest?)
-    func closeCommandPalette()
-    func showQuickLook(items: [QuickLookItem], index: Int?)
-    func openCustomAppWindow(slug: String)
-}
-
-/// Manages active toast pills for a single window, including hover-pause countdown timers and
-/// routing action/dismiss/timeout events back to the originating WKWebView.
+/// Manages active toast pills for a single window, including hover-pause countdown timers.
 @MainActor
 @Observable
 final class ToastStore {
@@ -26,15 +12,14 @@ final class ToastStore {
     @ObservationIgnored private var entries: [String: TimerEntry] = [:]
 
     private struct TimerEntry {
-        weak var webView: WKWebView?
-        /// A native screen's handler, for a toast it showed itself (no page to tell).
+        /// A native screen's handler for action, dismissal, or timeout.
         var onEvent: (@MainActor (ToastEventKind) -> Void)?
         var remainingMs: Int
         var hovered: Bool
         var task: Task<Void, Never>?
     }
 
-    func show(_ toast: ToastItemModel, from webView: WKWebView?, onEvent: (@MainActor (ToastEventKind) -> Void)? = nil) {
+    func show(_ toast: ToastItemModel, onEvent: (@MainActor (ToastEventKind) -> Void)? = nil) {
         let clampedDuration = max(500, toast.durationMs)
         let normalized = ToastItemModel(
             id: toast.id,
@@ -49,24 +34,15 @@ final class ToastStore {
         for gone in evicted {
             if let entry = entries.removeValue(forKey: gone.id) {
                 entry.task?.cancel()
-                ShellBridge.send(.toastEvent(id: gone.id, event: .dismissed), to: entry.webView)
                 entry.onEvent?(.dismissed)
             }
         }
         if let existing = entries.removeValue(forKey: normalized.id) {
             existing.task?.cancel()
         }
-        var entry = TimerEntry(webView: webView, onEvent: onEvent, remainingMs: clampedDuration, hovered: false, task: nil)
+        var entry = TimerEntry(onEvent: onEvent, remainingMs: clampedDuration, hovered: false, task: nil)
         entry.task = makeTimerTask(for: normalized.id)
         entries[normalized.id] = entry
-    }
-
-    func dismissFromPage(id: String) {
-        let (next, _) = ToastQueueLogic.remove(id: id, from: toasts)
-        toasts = next
-        if let entry = entries.removeValue(forKey: id) {
-            entry.task?.cancel()
-        }
     }
 
     func triggerAction(id: String) {
@@ -111,7 +87,6 @@ final class ToastStore {
         toasts = next
         if let entry = entries.removeValue(forKey: id) {
             entry.task?.cancel()
-            ShellBridge.send(.toastEvent(id: id, event: event), to: entry.webView)
             entry.onEvent?(event)
         }
     }

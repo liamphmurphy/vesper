@@ -44,7 +44,7 @@ struct SidebarView: View {
     }
 
     var body: some View {
-        let shell = state.shell ?? ShellState.fallbackShell
+        let shell = ShellState.fallbackShell
         VStack(spacing: 0) {
             AreaBar(shell: shell, current: state.currentArea, send: send, openInNewTab: openInNewTab)
             if let customSidebar = state.nativeSidebar {

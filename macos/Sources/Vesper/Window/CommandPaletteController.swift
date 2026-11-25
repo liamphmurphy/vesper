@@ -189,7 +189,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                 actionLabel: nil,
                 durationMs: 3200
             )
-            self?.targetController?.showToast(toast, from: nil)
+            self?.targetController?.showNativeToast(toast) { _ in }
         }
     }
 
@@ -342,7 +342,7 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                 if req.search == nil, parts.count > 1 {
                     req.search = "?\(parts[1])"
                 }
-            } else if let url = target?.content.webView.url, BridgeOrigin.matches(url: url, base: baseURL) {
+            } else if let url = target?.content.webView?.url, BridgeOrigin.matches(url: url, base: baseURL) {
                 req.path = url.path.isEmpty ? "/" : url.path
                 if req.search == nil, let query = url.query, !query.isEmpty {
                     req.search = "?\(query)"

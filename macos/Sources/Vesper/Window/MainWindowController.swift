@@ -8,7 +8,7 @@ import WebKit
 /// separate layout it holds one tab (and the system groups windows into tabs); in the compact
 /// layout it holds several tabs, drawn in its toolbar, and shows the active one.
 @MainActor
-final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation, ShellHostActions {
+final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolbarItemValidation {
     static let tabbingIdentifier = "vesper"
     static let defaultSize = NSSize(width: 1280, height: 840)
     static let minSize = NSSize(width: 760, height: 540)
@@ -79,7 +79,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func useSelectionForFind() {
-        let target = content.webView
+        guard let target = content.webView else { return }
         Task { @MainActor [weak self, weak target] in
             guard let self, let target, self.content.webView === target else { return }
             let raw = (try? await target.callAsyncJavaScript(
@@ -152,7 +152,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             inspItem.isCollapsed = true
             // AppKit requires the inspector split item to be the final item in NSSplitViewController.
             split.addSplitViewItem(inspItem)
-            inspector.shellHost = self
             inspectorItem = inspItem
             inspectorController = inspector
 
@@ -486,25 +485,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     private func attachTab(_ tab: WebContentController) {
         tab.host = self
-        tab.bridge?.onOpenInMain = { [weak self] path, newTab in
-            self?.openInMain(path: path, newTab: newTab)
-        }
-        tab.bridge?.shellHost = self
     }
 
-    // MARK: ShellHostActions
-
-    func showToast(_ toast: ToastItemModel, from webView: WKWebView?) {
-        toastStore.show(toast, from: webView)
-    }
+    // MARK: Window overlays
 
     /// A toast a native screen shows; its action, dismissal or timeout comes back to `onEvent`.
     func showNativeToast(_ toast: ToastItemModel, onEvent: @escaping @MainActor (ToastEventKind) -> Void) {
-        toastStore.show(toast, from: nil, onEvent: onEvent)
-    }
-
-    func dismissToast(id: String) {
-        toastStore.dismissFromPage(id: id)
+        toastStore.show(toast, onEvent: onEvent)
     }
 
     func showShortcuts() {
@@ -570,7 +557,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window?.title = tab.displayTitle
     }
 
-    var webView: WKWebView { content.webView }
+    var webView: WKWebView? { content.webView }
 
     // MARK: Bounds (session.json stores top-left-origin screen coordinates, as Electron did)
 
@@ -606,28 +593,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func windowDidResize(_ notification: Notification) { app.scheduleSessionSave() }
     func windowDidBecomeKey(_ notification: Notification) { app.noteKey(self) }
 
-    /// Set once the person agreed to close despite unsaved changes (or there were none).
-    private var closeConfirmed = false
-
     func windowShouldClose(_ sender: NSWindow) -> Bool {
-        if closeConfirmed { return true }
-        Task { @MainActor [weak self] in
-            guard let self, await self.confirmLeavingUnsavedChanges() else { return }
-            self.closeConfirmed = true
-            sender.close()
-        }
-        return false
-    }
-
-    /// Asks "Leave without saving?" for each tab with unsaved changes (showing that tab first in
-    /// the compact layout). true = go ahead.
-    func confirmLeavingUnsavedChanges() async -> Bool {
-        for tab in tabs.list.items {
-            guard await tab.hasUnsavedChanges() else { continue }
-            if compact { selectTab(tab) }
-            guard await tab.confirmLeavingUnsavedChanges() else { return false }
-        }
-        return true
+        true
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -645,7 +612,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// The layout switch emptied this window (its tabs live in a new one): close it quietly.
     func retire() {
         retired = true
-        closeConfirmed = true
         window?.close()
     }
 
@@ -702,21 +668,17 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         container.updateFindTarget(tab.findTarget)
         window?.title = tab.displayTitle
         window?.toolbar?.validateVisibleItems()
-        if focus { window?.makeFirstResponder(tab.webView) }
+        if focus { window?.makeFirstResponder(tab.focusView) }
         app.scheduleSessionSave()
     }
 
-    /// Closes one tab after the unsaved-changes check. A window's last tab closes the window, unless
-    /// it is the app's only tab: then a new chat with the default persona takes its place, so ⌘W
-    /// never quits Vesper.
+    /// Closes one tab. A window's last tab closes the window, unless it is the app's only tab:
+    /// then a new chat with the default persona takes its place, so ⌘W never quits Vesper.
     func closeTab(_ tab: WebContentController) {
         if !compact && closeOutcome != .openNewChat { window?.performClose(nil); return }
-        Task { @MainActor [weak self] in
-            guard let self, self.tabs.list.items.contains(where: { $0 === tab }) else { return }
-            if self.compact { self.selectTab(tab) }
-            guard await tab.confirmLeavingUnsavedChanges() else { return }
-            self.removeConfirmed(tab)
-        }
+        guard tabs.list.items.contains(where: { $0 === tab }) else { return }
+        if compact { selectTab(tab) }
+        removeConfirmed(tab)
     }
 
     func closeActiveTab() { closeTab(content) }
@@ -732,13 +694,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     private func closeTabs(_ doomed: [WebContentController]) {
-        Task { @MainActor [weak self] in
-            for tab in doomed {
-                guard let self, self.tabs.list.items.contains(where: { $0 === tab }) else { continue }
-                self.selectTab(tab)
-                guard await tab.confirmLeavingUnsavedChanges() else { return }
-                self.removeConfirmed(tab)
-            }
+        for tab in doomed {
+            guard tabs.list.items.contains(where: { $0 === tab }) else { continue }
+            selectTab(tab)
+            removeConfirmed(tab)
         }
     }
 
@@ -753,7 +712,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         switch closeOutcome {
         case .removeTab: remove(tab)
         case .closeWindow:
-            closeConfirmed = true
             window?.close()
         case .openNewChat: replaceWithNewChat(tab)
         }
@@ -771,7 +729,6 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         // chat opens in a Vesper window (tabbed onto this one) and this one closes.
         guard hasSidebar else {
             app.openVesperTab(path: path, nextTo: window)
-            closeConfirmed = true
             window?.close()
             return
         }

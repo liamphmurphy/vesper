@@ -35,7 +35,6 @@ final class InspectorViewController: NSViewController {
     private var popout: InspectorPopoutController?
     private let popoutState = InspectorPopoutState()
     var isPoppedOut: Bool { popoutState.isPoppedOut }
-    weak var shellHost: (any ShellHostActions)?
 
     init(
         app: AppModel,

@@ -71,7 +71,6 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
             let poppedOut = isInspectorPoppedOut()
             let active = tabs?.list.active
             return services()?.nativeRail.model(for: active, poppedOut: poppedOut)
-                ?? active?.state.rail
         }) { [weak self] model in
             self?.railWidth?.constant = model == nil ? 0 : RailBarView.width
             self?.rail?.apply(model)
