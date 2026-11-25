@@ -32,6 +32,15 @@ let package = Package(
             dependencies: ["cmark-gfm"],
             path: "Vendor/cmark-gfm/extensions"
         ),
+        // TeX layout for chat math (ChatEmbeds/NativeMath.swift), vendored from mgriebling/SwiftMath
+        // (Vendor/SwiftMath/README.md) so the build fetches nothing. Only the Latin Modern font ships.
+        // Swift 5 mode, as upstream builds it.
+        .target(
+            name: "SwiftMath",
+            path: "Vendor/SwiftMath/Sources",
+            resources: [.copy("mathFonts.bundle")],
+            swiftSettings: [.swiftLanguageMode(.v5)]
+        ),
         // The app: AppKit windows, SwiftUI views, WKWebView.
         .executableTarget(
             name: "Vesper",
