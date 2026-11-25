@@ -1391,7 +1391,7 @@ private struct ChatLiveActivityCardView: View {
 
     private var runEventsRequest: APIRequest<API.RunEventList>? {
         guard let runId, !runId.isEmpty else { return nil }
-        return API.listRunEvents(id: runId)
+        return ChatTurnActivity.liveEventsRequest(runId: runId, since: since)
     }
 
     var body: some View {
@@ -1509,7 +1509,7 @@ private struct ChatLiveActivityCardView: View {
             showAllSteps = false
             now = Date()
         }
-        .task(id: runId ?? "") {
+        .task(id: "\(runId ?? "")|\(since ?? "")") {
             watchRunEvents()
             await pollRunEvents()
         }

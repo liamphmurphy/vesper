@@ -3818,12 +3818,13 @@ extension API {
         )
     }
 
-    /// A run's streamed events after an optional sequence cursor
+    /// A run's streamed events (newest window by default, or filtered by sequence cursor or timestamp)
     ///
     /// `GET /runs/{id}/events`
-    public static func listRunEvents(id: Swift.String, after: Swift.Int? = nil) -> APIRequest<RunEventList> {
+    public static func listRunEvents(id: Swift.String, after: Swift.Int? = nil, since: Swift.String? = nil) -> APIRequest<RunEventList> {
         var _query: [URLQueryItem] = []
         APIQuery.append(&_query, "after", after)
+        APIQuery.append(&_query, "since", since)
         return APIRequest(
             method: "GET", template: "/runs/{id}/events",
             path: "/api/v1/runs/\(APIPath.escape(id))/events",

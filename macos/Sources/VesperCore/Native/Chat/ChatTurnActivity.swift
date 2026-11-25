@@ -362,6 +362,14 @@ public struct ChatTurnActivity: Sendable, Equatable {
         return messages[i].createdAt
     }
 
+    /// Request for the currently running turn's events. Scoping by `since` keeps 1.5s live polling
+    /// small and prevents long multi-turn chat runs (>1000 events) from pushing the active turn out
+    /// of the response window.
+    public static func liveEventsRequest(runId: String, since: String?) -> APIRequest<API.RunEventList> {
+        let trimmed = since?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return API.listRunEvents(id: runId, since: trimmed?.isEmpty == false ? trimmed : nil)
+    }
+
     /// Turns that ended without a reply, keyed by the message the strip attaches to. A failed
     /// turn leaves a system message with `turnSeq` (keyed by that message); a stopped or
     /// interrupted turn attaches to the unanswered user message until the next one. While

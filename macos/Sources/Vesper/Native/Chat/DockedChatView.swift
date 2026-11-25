@@ -87,7 +87,7 @@ struct DockedChatView<ContextChips: View>: View {
         let liveSince = ChatTurnActivity.runningSince(for: messages)
         let livePlanProgress: ChatPlanProgress? = {
             guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
-            let events = store.entry(API.listRunEvents(id: runId)).data?.events ?? []
+            let events = store.entry(ChatTurnActivity.liveEventsRequest(runId: runId, since: liveSince)).data?.events ?? []
             guard !events.isEmpty else { return nil }
             let activity = ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: liveSince)
             return ChatTurnActivity.planProgress(steps: activity.steps, planned: activity.planned)
@@ -173,8 +173,8 @@ struct DockedChatView<ContextChips: View>: View {
                 emptyStartState(p: p)
             }
         }
-        .task(id: "\(chatId ?? "")|\(session?.currentRunId ?? "")|\(session?.state.rawValue ?? "")") {
-            syncWatches(session: session)
+        .task(id: "\(chatId ?? "")|\(session?.currentRunId ?? "")|\(session?.state.rawValue ?? "")|\(session?.state == .running ? (liveSince ?? "") : "")") {
+            syncWatches(session: session, liveSince: liveSince)
         }
         .task(id: longTurnUsageRefreshKey) {
             guard !longTurnUsageRefreshKey.isEmpty else { return }
@@ -396,7 +396,7 @@ struct DockedChatView<ContextChips: View>: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func syncWatches(session: API.ChatSession?) {
+    private func syncWatches(session: API.ChatSession?, liveSince: String?) {
         for key in watchedKeys { context.store.stopObserving(key) }
         watchedKeys = []
 
@@ -415,7 +415,7 @@ struct DockedChatView<ContextChips: View>: View {
         if let req = messagesRequest { watch(req) }
         if let chatId { watch(API.listChatAsides(id: chatId)) }
         if session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty {
-            watch(API.listRunEvents(id: runId))
+            watch(ChatTurnActivity.liveEventsRequest(runId: runId, since: liveSince))
         }
     }
 

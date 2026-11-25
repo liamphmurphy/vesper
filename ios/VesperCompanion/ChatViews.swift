@@ -143,6 +143,7 @@ struct ChatDetailView: View {
     @State private var session: API.ChatSession?
     @State private var messages: [API.ChatMessage] = []
     @State private var runEventsByRunId: [String: [API.RunEvent]] = [:]
+    @State private var liveRunEvents: [API.RunEvent] = []
     @State private var pushRequests: [API.PushRequest] = []
     @State private var toolApprovals: [API.Approval] = []
     @State private var parseCache = ChatParsedMessageCache()
@@ -211,7 +212,9 @@ struct ChatDetailView: View {
 
                         // Live working / steps card while persona is working
                         if isRunning {
-                            let liveEvents = (session?.currentRunId).flatMap { runEventsByRunId[$0] } ?? []
+                            let liveEvents = liveRunEvents.isEmpty
+                                ? ((session?.currentRunId).flatMap { runEventsByRunId[$0] } ?? [])
+                                : liveRunEvents
                             ChatLiveActivityCardView(
                                 speakerName: session?.persona?.name ?? session?.agent.name ?? "Persona",
                                 events: liveEvents,
@@ -463,8 +466,19 @@ struct ChatDetailView: View {
 
     private func refreshRunEvents(client: APIClient, chat: API.ChatSession, messages: [API.ChatMessage]) async {
         var idsToFetch: Set<String> = []
-        if let activeRunId = chat.currentRunId, !activeRunId.isEmpty {
-            idsToFetch.insert(activeRunId)
+        let liveSince = ChatTurnActivity.runningSince(for: messages)
+        if chat.state == .running, let activeRunId = chat.currentRunId, !activeRunId.isEmpty {
+            if let list = try? await client.send(ChatTurnActivity.liveEventsRequest(runId: activeRunId, since: liveSince)) {
+                liveRunEvents = list.events
+            }
+            if runEventsByRunId[activeRunId] == nil {
+                idsToFetch.insert(activeRunId)
+            }
+        } else {
+            liveRunEvents = []
+            if let activeRunId = chat.currentRunId, !activeRunId.isEmpty {
+                idsToFetch.insert(activeRunId)
+            }
         }
         let turnWindows = ChatTurnActivity.turnWindows(for: messages)
         let endedTurns = ChatTurnActivity.endedTurns(for: messages, running: chat.state == .running)

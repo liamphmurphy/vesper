@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5"
@@ -533,11 +534,7 @@ func (s *Server) GetRun(ctx context.Context, req api.GetRunRequestObject) (api.G
 		}
 		out.Approvals = append(out.Approvals, a)
 	}
-	after := int64(0)
-	if req.Params.After != nil {
-		after = *req.Params.After
-	}
-	out.Events, err = s.runEvents(ctx, r.ID, after)
+	out.Events, err = s.runEvents(ctx, r.ID, req.Params.After, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -575,8 +572,19 @@ func (s *Server) GetRun(ctx context.Context, req api.GetRunRequestObject) (api.G
 	return out, nil
 }
 
-func (s *Server) runEvents(ctx context.Context, runID uuid.UUID, after int64) ([]api.RunEvent, error) {
-	evs, err := s.Q.ListRunEvents(ctx, store.ListRunEventsParams{RunID: runID, Seq: after})
+func (s *Server) runEvents(ctx context.Context, runID uuid.UUID, after *int64, since *time.Time) ([]api.RunEvent, error) {
+	var (
+		evs []store.RunEvent
+		err error
+	)
+	switch {
+	case after != nil:
+		evs, err = s.Q.ListRunEvents(ctx, store.ListRunEventsParams{RunID: runID, Seq: *after})
+	case since != nil:
+		evs, err = s.Q.ListRunEventsSince(ctx, store.ListRunEventsSinceParams{RunID: runID, At: *since})
+	default:
+		evs, err = s.Q.ListLatestRunEvents(ctx, runID)
+	}
 	if err != nil {
 		return nil, err
 	}
@@ -594,11 +602,7 @@ func (s *Server) ListRunEvents(ctx context.Context, req api.ListRunEventsRequest
 	if err != nil {
 		return nil, apperr.ErrNotFound
 	}
-	after := int64(0)
-	if req.Params.After != nil {
-		after = *req.Params.After
-	}
-	evs, err := s.runEvents(ctx, r.ID, after)
+	evs, err := s.runEvents(ctx, r.ID, req.Params.After, req.Params.Since)
 	if err != nil {
 		return nil, err
 	}

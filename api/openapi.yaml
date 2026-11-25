@@ -1848,13 +1848,17 @@ paths:
         schema: { type: string, format: uuid }
     get:
       operationId: listRunEvents
-      summary: A run's streamed events after an optional sequence cursor
+      summary: A run's streamed events (newest window by default, or filtered by sequence cursor or timestamp)
       tags: [runs]
       parameters:
         - name: after
           in: query
-          description: Only events after this sequence number
+          description: Only events after this sequence number (ascending from cursor; takes precedence over since)
           schema: { type: integer, format: int64 }
+        - name: since
+          in: query
+          description: Only events at or after this RFC3339 timestamp (newest 1000 in that window, ascending by seq)
+          schema: { type: string, format: date-time }
       responses:
         "200":
           description: Run events
