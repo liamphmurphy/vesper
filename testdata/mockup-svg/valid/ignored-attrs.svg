@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" version="1.1" viewBox="0 0 100 100" role="img" aria-label="Card" focusable="false" xml:lang="en">
+  <title>Card</title>
+  <desc>A card <b>with</b> markup-like text</desc>
+  <metadata><anything xmlns="urn:x">ignored</anything></metadata>
+  <rect data-vid="r1" x="10" y="10" width="80" height="80" aria-hidden="true" pointer-events="none" fill="#FFF"/>
+</svg>

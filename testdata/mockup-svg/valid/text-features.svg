@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 320">
+  <text x="300" y="40" text-anchor="middle" font-family="system-ui" font-size="24" font-weight="bold">Centered title</text>
+  <text x="590" y="80" text-anchor="end" font-family="Georgia, serif" font-style="italic" font-size="16">End anchored</text>
+  <text x="10" y="120" dominant-baseline="middle" font-family="monospace" font-size="14" letter-spacing="2">mono · middle</text>
+  <text x="10" y="160" dominant-baseline="hanging" font-size="14">hanging</text>
+  <text x="10" y="200" dominant-baseline="central" font-size="14" text-decoration="underline">central underline</text>
+  <text x="10" y="240" font-size="18" fill="#374151">Label <tspan font-weight="700" fill="#DC2626">bold</tspan><tspan dx="8" dy="-4" font-size="12">sup</tspan></text>
+  <text x="10" y="290" font-size="16" text-decoration="line-through" xml:space="preserve">  spaced   out  </text>
+</svg>

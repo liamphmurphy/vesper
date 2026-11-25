@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 400 400">
+  <path d="M10 10 L90 10 H120 V40 C140 60 160 60 180 40 S220 20 240 40 Q260 80 280 40 T320 40 A30 20 15 0 1 380 40 Z" fill="none" stroke="#2563EB" stroke-width="3" stroke-linejoin="round" stroke-linecap="round"/>
+  <path d="m10 100 l80 0 h20 v30 c10 10 20 10 30 0 s20-10 30 0 q10 20 20 0 t20 0 a10 10 0 1 0 40 0 z" fill="#DBEAFE" fill-rule="evenodd"/>
+  <polygon points="200,150 260,250 140,250" fill="#FDE68A" stroke="#92400E" stroke-miterlimit="4" stroke-linejoin="miter"/>
+  <polyline points="10 300 60 280 110 320 160 290" fill="none" stroke="#059669" stroke-width="4" stroke-dasharray="8,4" stroke-dashoffset="2" stroke-linecap="square"/>
+  <line x1="200" y1="300" x2="390" y2="390" stroke="black" stroke-opacity="0.5" stroke-width="2px"/>
+  <rect x="300" y="150" width="80" height="80" rx="10" ry="20" fill="#F472B6" fill-opacity="0.6" transform="rotate(15 340 190) skewX(5)"/>
+  <circle cx="60" cy="200" r="30" fill="none" stroke="currentColor" color="#7C3AED" visibility="visible"/>
+  <rect x="0" y="0" width="10" height="10" display="none"/>
+  <g transform="matrix(1 0 0 1 0 0) skewY(2)"><rect x="100" y="180" width="20" height="20"/></g>
+</svg>
