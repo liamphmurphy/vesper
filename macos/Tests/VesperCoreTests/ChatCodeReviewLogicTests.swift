@@ -34,4 +34,71 @@ final class ChatCodeReviewLogicTests: XCTestCase {
         XCTAssertEqual(totals.additions, 7)
         XCTAssertEqual(totals.deletions, 1)
     }
+
+    func testFlattenHunksMapsTokenIndicesSkippingMetaRows() {
+        let patch = """
+        @@ -1,3 +1,3 @@
+         let a = 1
+        -let b = 2
+        +let b = 3
+        \\ No newline at end of file
+        @@ -10,1 +10,2 @@
+         return a
+        +return b
+        """
+        let hunks = RunFilesLogic.parseHunks(patch)
+        let items = ChatCodeReviewLogic.flattenHunks(hunks)
+        XCTAssertEqual(items.count, 8)
+        XCTAssertEqual(Set(items.map(\.id)).count, items.count)
+
+        let rowTokens = items.compactMap { item -> Int? in
+            if case .row(_, _, let tokenIdx) = item { return tokenIdx }
+            return nil
+        }
+        // First hunk: 3 code rows (0, 1, 2) + 1 meta row (nil); second hunk: 2 code rows (0, 1)
+        XCTAssertEqual(rowTokens, [0, 1, 2, 0, 1])
+    }
+
+    func testContentFingerprintDistinguishesEqualLengthPatches() {
+        let a = ChatCodeReviewLogic.contentFingerprint("@@ -1 +1 @@\n-foo\n+bar\n")
+        let b = ChatCodeReviewLogic.contentFingerprint("@@ -1 +1 @@\n-foo\n+baz\n")
+        XCTAssertNotEqual(a, b)
+        XCTAssertEqual(ChatCodeReviewLogic.contentFingerprint(nil), 0)
+    }
+
+    func testCodeHighlighterRejectsOversizedAndMinifiedInputs() async {
+        XCTAssertFalse(CodeHighlighter.canHighlight(""))
+        XCTAssertTrue(CodeHighlighter.canHighlight("let x = 1\nlet y = 2\n"))
+
+        let tooManyBytes = String(repeating: "a\n", count: (CodeHighlighter.maxHighlightBytes / 2) + 10)
+        XCTAssertFalse(CodeHighlighter.canHighlight(tooManyBytes))
+
+        let tooManyLines = Array(repeating: "x", count: CodeHighlighter.maxHighlightLines + 1).joined(separator: "\n")
+        XCTAssertFalse(CodeHighlighter.canHighlight(tooManyLines))
+
+        let minifiedLine = String(repeating: "a", count: CodeHighlighter.maxLineLength + 1)
+        XCTAssertFalse(CodeHighlighter.canHighlight(minifiedLine))
+
+        let highlighter = CodeHighlighter(scriptURL: nil)
+        let skipped = await highlighter.highlight(minifiedLine, language: "javascript")
+        XCTAssertNil(skipped)
+
+        // CodePalette with truncated series must fall back to ink instead of trapping
+        let shortPalette = CodePalette(ink: "#111111", muted: "#666666", series: [])
+        XCTAssertEqual(shortPalette.color(for: "#FF0000"), "#111111")
+    }
+
+    func testCompareSpecWeightedTotalsToleratesDuplicateOptionIDs() {
+        let spec = ChatCompareSpec(
+            options: [
+                ChatCompareMatrixOption(id: "dup", name: "First"),
+                ChatCompareMatrixOption(id: "dup", name: "Second"),
+            ],
+            criteria: [
+                ChatCompareCriterion(id: 0, name: "Speed", weight: 2, scores: ["dup": 8])
+            ]
+        )
+        let totals = spec.weightedTotals()
+        XCTAssertEqual(totals["dup"] ?? 0, 8, accuracy: 0.001)
+    }
 }

@@ -41,6 +41,11 @@ struct CustomAppBridgeLogicTests {
         #expect(yt?.provider == .youtube)
         #expect(yt?.embedURL == "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0&start=90")
 
+        // Duplicate query parameter names must not trap Dictionary(uniqueKeysWithValues:)
+        let ytDup = CustomAppBridgeLogic.resolveVideoEmbed(rawURL: "https://www.youtube.com/watch?v=dQw4w9WgXcQ&v=other123456&t=10&t=20")
+        #expect(ytDup?.provider == .youtube)
+        #expect(ytDup?.embedURL == "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?autoplay=1&rel=0&start=10")
+
         let tw = CustomAppBridgeLogic.resolveVideoEmbed(rawURL: "https://www.twitch.tv/videos/12345678", parentHost: "127.0.0.1")
         #expect(tw?.provider == .twitch)
         #expect(tw?.embedURL.contains("video=12345678&parent=127.0.0.1") == true)

@@ -416,13 +416,13 @@ public struct NodeGraphDocument: Sendable, Equatable {
 
     /// Applies ELK layout output coordinates and edge sections back onto this document.
     public mutating func applyELKLayout(_ layout: ELKGraph) {
-        let posById = Dictionary(uniqueKeysWithValues: layout.children.map { ($0.id, $0) })
+        let posById = Dictionary(layout.children.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         for idx in nodes.indices {
             if let laid = posById[nodes[idx].id], let x = laid.x, let y = laid.y {
                 nodes[idx].frame = GraphRect(x: x, y: y, width: laid.width, height: laid.height)
             }
         }
-        let edgesById = Dictionary(uniqueKeysWithValues: layout.edges.map { ($0.id, $0) })
+        let edgesById = Dictionary(layout.edges.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         for idx in edges.indices {
             if let laid = edgesById[edges[idx].id], let section = laid.sections?.first {
                 edges[idx].points = section.polyline.map { GraphPoint(x: $0.x, y: $0.y) }

@@ -124,7 +124,7 @@ public enum HttpClientLogic {
 
     /// Walks folder parents safely (cycle-protected) up to the workspace's default auth.
     public static func resolveInheritedAuth(bundle: HttpWorkspaceBundle, folderId: String?) -> InheritedAuthResolution {
-        let byId = Dictionary(uniqueKeysWithValues: bundle.folders.map { ($0.id, $0) })
+        let byId = Dictionary(bundle.folders.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var chain: [HttpFolder] = []
         var cur = folderId
         var seen = Set<String>()
@@ -155,7 +155,7 @@ public enum HttpClientLogic {
     /// Counts effective enabled headers inherited from the workspace and ancestor folders, matching
     /// the server's case-insensitive override rules (`ResolveInheritance` in runner.go).
     public static func inheritedEnabledHeaderCount(bundle: HttpWorkspaceBundle, folderId: String?) -> Int {
-        let byId = Dictionary(uniqueKeysWithValues: bundle.folders.map { ($0.id, $0) })
+        let byId = Dictionary(bundle.folders.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var chain: [HttpFolder] = []
         var cur = folderId
         var seen = Set<String>()

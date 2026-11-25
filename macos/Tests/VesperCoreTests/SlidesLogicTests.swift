@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Testing
 @testable import VesperCore
@@ -121,5 +122,72 @@ struct SlidesLogicTests {
         #expect(pres?.screen == .slidesPresent)
         #expect(pres?.params["id"] == "01deck")
         #expect(pres?.query["slide"] == "3")
+    }
+
+    @Test func reviewAndMergeTolerateDuplicateSlideAndElementIDs() {
+        let dupElA = SlideElement.shape(SlideShapeElement(id: "e_dup", frame: .init(x: 0, y: 0, w: 100, h: 100), shape: .rect))
+        let dupElB = SlideElement.shape(SlideShapeElement(id: "e_dup", frame: .init(x: 20, y: 20, w: 100, h: 100), shape: .ellipse))
+        let s1 = Slide(id: "s_dup", layout: .blank, elements: [dupElA, dupElB])
+        let s2 = Slide(id: "s_dup", layout: .blank, notes: "Second copy", elements: [dupElA])
+        let base = SlideDeck(slides: [s1, s2])
+        var head = base
+        head.slides[1].notes = "Edited copy"
+
+        let changes = SlideReviewLogic.deckChanges(base: base, head: head)
+        #expect(!changes.isEmpty)
+
+        var mine = base
+        mine.slides.append(Slide(id: "s_new", layout: .blank, elements: []))
+        var theirs = base
+        theirs.slides.append(Slide(id: "s_other", layout: .blank, elements: []))
+        let merged = SlideReviewLogic.mergeDecks(base: base, mine: mine, theirs: theirs)
+        #expect(merged != nil)
+        #expect(merged?.slides.contains(where: { $0.id == "s_new" }) == true)
+        #expect(merged?.slides.contains(where: { $0.id == "s_other" }) == true)
+        // Conflicting edit on duplicate slide ID reports conflict (nil) instead of trapping
+        #expect(SlideReviewLogic.mergeDecks(base: base, mine: mine, theirs: head) == nil)
+    }
+
+    @Test func applyingPlainTextHandlesEmptyParagraphs() {
+        let emptyBox = SlideTextBox(paragraphs: [], valign: "top")
+        let next = SlideArrangeLogic.applyingPlainText("Line 1\nLine 2", to: emptyBox)
+        #expect(next.count == 2)
+        #expect(next[0].runs.first?.text == "Line 1")
+        #expect(next[1].runs.first?.text == "Line 2")
+    }
+
+    @Test func imageSourceAndExportersHandleDegenerateGeometryWithoutTrapping() {
+        let zeroFrameImg = SlideImageElement(id: "e_img", frame: SlideFrame(x: 0, y: 0, w: 0, h: 100), asset: "a1")
+        let srcZero = SlideLayoutEngine.imageSource(for: zeroFrameImg, asset: SlideAsset(mime: "image/png", w: 800, h: 600))
+        #expect(srcZero.x.isFinite && srcZero.y.isFinite && srcZero.w.isFinite && srcZero.h.isFinite)
+
+        let zeroAsset = SlideLayoutEngine.imageSource(for: zeroFrameImg, asset: SlideAsset(mime: "image/png", w: 0, h: 0))
+        #expect(zeroAsset == SlideFrame(x: 0, y: 0, w: 0, h: 0))
+
+        // Rounded rect path with negative/zero/oversized/NaN radii must not abort CoreGraphics
+        let negPath = SlideCGDrawer.safeRoundedRectPath(CGRect(x: 0, y: 0, width: -20, height: 10), cornerWidth: 50, cornerHeight: 50)
+        #expect(!negPath.isEmpty)
+        let nanPath = SlideCGDrawer.safeRoundedRectPath(CGRect(x: CGFloat.nan, y: 0, width: 10, height: 10), cornerWidth: 5, cornerHeight: 5)
+        #expect(nanPath.boundingBox == .zero)
+
+        // Exporters tolerate degenerate shapes and non-finite coordinates without Int(NaN) or CG traps
+        let weirdShape = SlideElement.shape(SlideShapeElement(
+            id: "e_weird",
+            frame: SlideFrame(x: 10, y: 10, w: -40, h: 0.0001),
+            shape: .roundRect,
+            fill: .solid("accent"),
+            radius: 100
+        ))
+        let nanShape = SlideElement.shape(SlideShapeElement(
+            id: "e_nan",
+            frame: SlideFrame(x: .nan, y: .infinity, w: 100, h: 100),
+            shape: .rect,
+            fill: .solid("accent")
+        ))
+        let deck = SlideDeck(size: SlideDeckSize(w: 0, h: -10), slides: [Slide(id: "s_1", layout: .blank, elements: [weirdShape, nanShape])])
+        let pdf = SlideExporters.exportPDF(deck: deck, images: [:])
+        #expect(String(decoding: pdf.prefix(5), as: UTF8.self) == "%PDF-")
+        let pptx = SlideExporters.exportPPTX(deck: deck, assetBytes: [:])
+        #expect(pptx.count > 200)
     }
 }

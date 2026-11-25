@@ -1087,7 +1087,7 @@ private struct DesignPropertiesInspectorView: View {
                             HStack(spacing: 6) {
                                 ForEach(["yellow", "pink", "green", "blue", "violet", "grey"], id: \.self) { name in
                                     Circle()
-                                        .fill(Color(cgColor: SlideCGDrawer.cgColor(DesignLayoutEngine.stickyColors[name]!)))
+                                        .fill(Color(cgColor: SlideCGDrawer.cgColor(DesignLayoutEngine.stickyColors[name] ?? "#FEF08A")))
                                         .frame(width: 20, height: 20)
                                         .overlay(Circle().stroke(n.stickyColor == name ? p.accent : p.border, lineWidth: n.stickyColor == name ? 2 : 1))
                                         .onTapGesture { if !readOnly { update(id) { $0.stickyColor = name } } }
@@ -1337,15 +1337,21 @@ struct DesignPresentScreen: View {
 
     var body: some View {
         let ref = context.store.entry(refRequest).data
-        let ver = (ref?.seq ?? 0) > 0 ? context.store.entry(versionRequest(seq: ref!.seq)).data : nil
+        let ver = (ref.flatMap { $0.seq > 0 ? context.store.entry(versionRequest(seq: $0.seq)).data : nil })
         let design = ver.flatMap { try? DesignSchema.parse($0.body) }
         let start = design.flatMap { DesignPrototypeLogic.startScreen($0, wanted: context.match.query["start"], pageId: context.match.query["page"]) }
         let currentFrameId = player?.at ?? start?.id
         let activePage = design?.pages.first { p in p.children.contains { $0.id == currentFrameId } }
-        let laid = (design != nil && activePage != nil) ? DesignLayoutEngine(design: design!).layoutPage(activePage!) : nil
+        let laid: DesignLaidPage? = {
+            guard let design, let activePage else { return nil }
+            return DesignLayoutEngine(design: design).layoutPage(activePage)
+        }()
         let frameNode = laid?.nodes.first { $0.id == currentFrameId }
         let frameBox = currentFrameId.flatMap { laid?.boxes[$0] }
-        let hotspots = (design != nil && currentFrameId != nil) ? DesignPrototypeLogic.hotspotsOf(design!, frameId: currentFrameId!) : []
+        let hotspots: [DesignLink] = {
+            guard let design, let currentFrameId else { return [] }
+            return DesignPrototypeLogic.hotspotsOf(design, frameId: currentFrameId)
+        }()
 
         ZStack {
             Color(white: 0.07).ignoresSafeArea()
@@ -1359,9 +1365,9 @@ struct DesignPresentScreen: View {
 
             if let frameNode, let frameBox, let laid {
                 GeometryReader { geo in
-                    let k = min((geo.size.width - 32) / max(1, frameBox.w), (geo.size.height - 88) / max(1, frameBox.h))
-                    let w = frameBox.w * k
-                    let h = frameBox.h * k
+                    let k = max(0.01, min((geo.size.width - 32) / max(1, frameBox.w), (geo.size.height - 88) / max(1, frameBox.h)))
+                    let w = max(1, frameBox.w * k)
+                    let h = max(1, frameBox.h * k)
                     ZStack(alignment: .topLeading) {
                         DesignFrameCanvas(ops: frameNode.ops, box: frameBox, background: laid.background, images: assetCache.images)
                             .frame(width: w, height: h)
@@ -1373,7 +1379,7 @@ struct DesignPresentScreen: View {
                                 Rectangle()
                                     .fill(showHints ? Color.accentColor.opacity(0.28) : Color.clear)
                                     .overlay(Rectangle().stroke(showHints ? Color.accentColor : Color.clear, lineWidth: 1.5))
-                                    .frame(width: hb.w * k, height: hb.h * k)
+                                    .frame(width: max(0, hb.w * k), height: max(0, hb.h * k))
                                     .offset(x: (hb.x - frameBox.x) * k, y: (hb.y - frameBox.y) * k)
                                     .contentShape(Rectangle())
                                     .onTapGesture { if link.trigger == "click" { navigate(to: link.to, startId: start?.id) } }

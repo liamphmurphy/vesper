@@ -611,7 +611,7 @@ public enum KnowledgeGraphLogic: Sendable {
             .map { idx, entry in
                 KnowledgeGraphGroup(name: entry.key, colorHex: paletteHex[idx], count: entry.value)
             }
-        let colorByGroup = Dictionary(uniqueKeysWithValues: sortedGroups.map { ($0.name, $0.colorHex) })
+        let colorByGroup = Dictionary(sortedGroups.map { ($0.name, $0.colorHex) }, uniquingKeysWith: { _, latest in latest })
 
         let layoutLinks = finalRawEdges.map { KnowledgeGraphInputLink(source: $0.source, target: $0.target) }
         let placed = layoutGraph(nodes: inputNodes, links: layoutLinks, iterations: iterations)
@@ -622,7 +622,7 @@ public enum KnowledgeGraphLogic: Sendable {
         let query = filter.search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let labelAll = placed.count < 60 || viewport.scale > 2.0
 
-        let nodeMetaById = Dictionary(uniqueKeysWithValues: filteredNodes.map { ($0.id, $0) })
+        let nodeMetaById = Dictionary(filteredNodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let renderNodes: [KnowledgeGraphRenderNode] = placed.compactMap { p in
             guard let meta = nodeMetaById[p.id] else { return nil }
             let isUnresolved = p.id.hasPrefix(unresolvedNodePrefix)

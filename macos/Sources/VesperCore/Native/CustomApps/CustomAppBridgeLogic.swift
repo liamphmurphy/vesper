@@ -653,10 +653,10 @@ public enum CustomAppBridgeLogic: Sendable {
               let comps = URLComponents(string: safe),
               let host = comps.host?.lowercased() else { return nil }
         let segments = comps.path.split(separator: "/").map(String.init)
-        let query = Dictionary(uniqueKeysWithValues: (comps.queryItems ?? []).compactMap { item -> (String, String)? in
+        let query = Dictionary((comps.queryItems ?? []).compactMap { item -> (String, String)? in
             guard let v = item.value else { return nil }
             return (item.name, v)
-        })
+        }, uniquingKeysWith: { first, _ in first })
 
         if ytHosts.contains(host) {
             var id = ""

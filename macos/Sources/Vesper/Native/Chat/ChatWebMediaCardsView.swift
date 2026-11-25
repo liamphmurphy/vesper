@@ -20,7 +20,7 @@ struct ChatGalleryCardView: View {
     var body: some View {
         let p = theme.palette
         let previews = context.store.entry(previewRequest).data?.previews ?? []
-        let byURL = Dictionary(uniqueKeysWithValues: previews.map { ($0.url, $0) })
+        let byURL = Dictionary(previews.map { ($0.url, $0) }, uniquingKeysWith: { _, latest in latest })
 
         VStack(alignment: .leading, spacing: 10) {
             if let title = spec.title, !title.isEmpty {
@@ -207,7 +207,7 @@ struct ChatProductCardView: View {
     var body: some View {
         let p = theme.palette
         let previews = context.store.entry(previewRequest).data?.previews ?? []
-        let byURL = Dictionary(uniqueKeysWithValues: previews.map { ($0.url, $0) })
+        let byURL = Dictionary(previews.map { ($0.url, $0) }, uniquingKeysWith: { _, latest in latest })
 
         VStack(alignment: .leading, spacing: 8) {
             if let title = spec.title, !title.isEmpty {

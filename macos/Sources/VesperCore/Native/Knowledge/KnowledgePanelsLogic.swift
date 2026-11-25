@@ -143,7 +143,7 @@ public enum KnowledgePanelsLogic: Sendable {
     // MARK: Backlinks & Mentions
 
     public static func backlinks(for pageId: String, in network: KnowledgeNetwork) -> [KnowledgeBacklinkItem] {
-        let byId = Dictionary(uniqueKeysWithValues: network.nodes.map { ($0.id, $0) })
+        let byId = Dictionary(network.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var seen: Set<String> = []
         var items: [KnowledgeBacklinkItem] = []
         for link in network.links where link.target == pageId && link.source != pageId {
@@ -157,7 +157,7 @@ public enum KnowledgePanelsLogic: Sendable {
         for pageId: String,
         in network: KnowledgeNetwork
     ) -> (resolved: [KnowledgeBacklinkItem], unresolved: [String]) {
-        let byId = Dictionary(uniqueKeysWithValues: network.nodes.map { ($0.id, $0) })
+        let byId = Dictionary(network.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var seenResolved: Set<String> = []
         var resolved: [KnowledgeBacklinkItem] = []
         var seenUnresolved: Set<String> = []

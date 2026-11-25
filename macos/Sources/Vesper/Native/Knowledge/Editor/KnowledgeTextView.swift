@@ -733,7 +733,7 @@ final class LivePreviewNSTextView: NSTextView {
         )
         activeEmbedFrames = frames
 
-        let frameByID = Dictionary(uniqueKeysWithValues: frames.map { ($0.groupID, $0.frame) })
+        let frameByID = Dictionary(frames.map { ($0.groupID, $0.frame) }, uniquingKeysWith: { _, latest in latest })
         for (id, host) in embedHosts {
             if let rect = frameByID[id] {
                 if host.hostView.isHidden { host.hostView.isHidden = false }

@@ -196,7 +196,7 @@ final class KnowledgeShellController {
     }
 
     func pinnedPages(from allRows: [KnowledgePageRow]) -> [KnowledgePageRow] {
-        let byId = Dictionary(uniqueKeysWithValues: allRows.map { ($0.id, $0) })
+        let byId = Dictionary(allRows.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         return pinnedPageIds.compactMap { byId[$0] }
     }
 

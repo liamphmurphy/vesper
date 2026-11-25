@@ -163,8 +163,9 @@ public enum DesignConnectorRouter: Sendable {
         let X = withMids(xs)
         let Y = withMids(ys)
         let nx = X.count, ny = Y.count
-        let xi = Dictionary(uniqueKeysWithValues: X.enumerated().map { ($1, $0) })
-        let yi = Dictionary(uniqueKeysWithValues: Y.enumerated().map { ($1, $0) })
+        guard nx > 0, ny > 0 else { return simpleRoute(fb: fb, fa: fa, tb: tb, ta: ta) }
+        let xi = Dictionary(X.enumerated().map { ($1, $0) }, uniquingKeysWith: { _, latest in latest })
+        let yi = Dictionary(Y.enumerated().map { ($1, $0) }, uniquingKeysWith: { _, latest in latest })
 
         var blockedH = [UInt8](repeating: 0, count: nx * ny)
         var blockedV = [UInt8](repeating: 0, count: nx * ny)
@@ -177,12 +178,17 @@ public enum DesignConnectorRouter: Sendable {
             return lo
         }
         for b in blocks {
-            let i0 = lowerBound(X, b.x), i1 = lowerBound(X, b.x + b.w)
-            let j0 = lowerBound(Y, b.y), j1 = lowerBound(Y, b.y + b.h)
-            for j in j0...min(j1, ny - 1) {
-                let inY = Y[j] > b.y && Y[j] < b.y + b.h
-                for i in i0...min(i1, nx - 1) {
-                    let inX = X[i] > b.x && X[i] < b.x + b.w
+            let bx0 = min(b.x, b.x + b.w), bx1 = max(b.x, b.x + b.w)
+            let by0 = min(b.y, b.y + b.h), by1 = max(b.y, b.y + b.h)
+            let i0 = lowerBound(X, bx0), i1 = lowerBound(X, bx1)
+            let j0 = lowerBound(Y, by0), j1 = lowerBound(Y, by1)
+            let jEnd = min(j1, ny - 1)
+            let iEnd = min(i1, nx - 1)
+            guard j0 <= jEnd, i0 <= iEnd else { continue }
+            for j in j0...jEnd {
+                let inY = Y[j] > by0 && Y[j] < by1
+                for i in i0...iEnd {
+                    let inX = X[i] > bx0 && X[i] < bx1
                     if inY && i < i1 { blockedH[j * nx + i] = 1 }
                     if inX && j < j1 { blockedV[j * nx + i] = 1 }
                 }
@@ -301,8 +307,8 @@ public enum DesignConnectorRouter: Sendable {
         storedPoints: [DesignPt]? = nil,
         obstacles: [DesignBox] = []
     ) -> [DesignPt] {
-        let fa = (fromAnchor == nil || fromAnchor == "auto") ? autoAnchor(from: fb, to: tb) : fromAnchor!
-        let ta = (toAnchor == nil || toAnchor == "auto") ? autoAnchor(from: tb, to: fb) : toAnchor!
+        let fa = (fromAnchor == nil || fromAnchor == "auto") ? autoAnchor(from: fb, to: tb) : (fromAnchor ?? "right")
+        let ta = (toAnchor == nil || toAnchor == "auto") ? autoAnchor(from: tb, to: fb) : (toAnchor ?? "left")
         var pts: [DesignPt]
         if let stored = storedPoints, pointsStillFit(stored, fb: fb, tb: tb, obstacles: obstacles, fa: fromAnchor == "auto" ? nil : fromAnchor, ta: toAnchor == "auto" ? nil : toAnchor) {
             pts = stored
@@ -850,7 +856,7 @@ public final class DesignLayoutEngine {
             }
 
         case .sticky:
-            let bgHex = Self.stickyColors[n.stickyColor ?? "yellow"] ?? Self.stickyColors["yellow"]!
+            let bgHex = Self.stickyColors[n.stickyColor ?? "yellow"] ?? Self.stickyColors["yellow"] ?? "#FEF08A"
             ops.append(.rect(x: ax, y: ay, w: w, h: h, r: 4, fill: .color(bgHex), stroke: nil, sw: 0, dash: [], opacity: 1, el: id))
             var paras = [DesignParagraph(runs: [DesignRun(text: n.stickyText ?? "", size: 14, weight: 500, color: Self.stickyText)])]
             if let author = n.author, !author.isEmpty {
@@ -870,7 +876,7 @@ public final class DesignLayoutEngine {
 
     private func drawChildren(_ n: DesignNode, box: DesignBox, mode: DesignMode, ops: inout [DesignDrawOp]) {
         let placed = n.autoLayout.map { childBoxes(n, al: $0, w: box.w, h: box.h) } ?? []
-        let byId = Dictionary(uniqueKeysWithValues: placed.map { ($0.child.id, $0.box) })
+        let byId = Dictionary(placed.map { ($0.child.id, $0.box) }, uniquingKeysWith: { _, latest in latest })
         var conns: [DesignNode] = []
         for c in n.children ?? [] {
             if c.type == .connector { conns.append(c); continue }
@@ -1067,10 +1073,9 @@ public enum DesignCGDrawer {
             switch op {
             case .clip(let x, let y, let w, let h, let r):
                 ctx.saveGState()
-                let rect = CGRect(x: x, y: y, width: max(0, w), height: max(0, h))
-                let rr = min(r, rect.width / 2, rect.height / 2)
-                if rr > 0 {
-                    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: rr, cornerHeight: rr, transform: nil))
+                let rect = CGRect(x: x.isFinite ? x : 0, y: y.isFinite ? y : 0, width: max(0, w.isFinite ? w : 0), height: max(0, h.isFinite ? h : 0))
+                if r.isFinite && r > 0 && rect.width > 0 && rect.height > 0 {
+                    ctx.addPath(SlideCGDrawer.safeRoundedRectPath(rect, cornerWidth: r, cornerHeight: r))
                     ctx.clip()
                 } else {
                     ctx.clip(to: rect)
@@ -1079,78 +1084,89 @@ public enum DesignCGDrawer {
                 ctx.restoreGState()
             case .rotate(let deg, let cx, let cy):
                 ctx.saveGState()
-                ctx.translateBy(x: cx, y: cy)
-                ctx.rotate(by: deg * .pi / 180)
-                ctx.translateBy(x: -cx, y: -cy)
+                if deg.isFinite && cx.isFinite && cy.isFinite {
+                    ctx.translateBy(x: cx, y: cy)
+                    ctx.rotate(by: deg * .pi / 180)
+                    ctx.translateBy(x: -cx, y: -cy)
+                }
             case .rect(let x, let y, let w, let h, let r, let fill, let stroke, let sw, let dash, let opacity, _):
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { continue }
                 ctx.saveGState()
-                ctx.setAlpha(CGFloat(opacity))
+                ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
                 let rect = CGRect(x: x, y: y, width: max(0, w), height: max(0, h))
-                let rr = min(r, rect.width / 2, rect.height / 2)
-                let path = rr > 0 ? CGPath(roundedRect: rect, cornerWidth: rr, cornerHeight: rr, transform: nil) : CGPath(rect: rect, transform: nil)
+                let path = SlideCGDrawer.safeRoundedRectPath(rect, cornerWidth: r, cornerHeight: r)
                 paint(path, bounds: rect, fill: fill, stroke: stroke, sw: sw, dash: dash, cap: nil, join: nil, in: ctx)
                 ctx.restoreGState()
             case .ellipse(let x, let y, let w, let h, let fill, let stroke, let sw, let dash, let opacity, _):
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { continue }
                 ctx.saveGState()
-                ctx.setAlpha(CGFloat(opacity))
+                ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
                 let rect = CGRect(x: x, y: y, width: max(0, w), height: max(0, h))
                 paint(CGPath(ellipseIn: rect, transform: nil), bounds: rect, fill: fill, stroke: stroke, sw: sw, dash: dash, cap: nil, join: nil, in: ctx)
                 ctx.restoreGState()
             case .path(let d, let box, let fill, let stroke, let sw, let dash, let cap, let join, let opacity, _):
                 ctx.saveGState()
-                ctx.setAlpha(CGFloat(opacity))
+                ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
                 let path = SVGPathParser.parse(d)
-                paint(path, bounds: box.cgRect, fill: fill, stroke: stroke, sw: sw, dash: dash, cap: cap, join: join, in: ctx)
+                paint(path, bounds: box.cgRect.standardized, fill: fill, stroke: stroke, sw: sw, dash: dash, cap: cap, join: join, in: ctx)
                 ctx.restoreGState()
             case .polyline(let pts, let stroke, let sw, let dash, let join, let opacity, _):
-                guard pts.count >= 2 else { continue }
+                guard pts.count >= 2, sw.isFinite else { continue }
+                let finitePts = pts.filter { $0.x.isFinite && $0.y.isFinite }
+                guard finitePts.count >= 2 else { continue }
                 ctx.saveGState()
-                ctx.setAlpha(CGFloat(opacity))
+                ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
                 ctx.setStrokeColor(SlideCGDrawer.cgColor(stroke))
                 ctx.setLineWidth(sw)
                 ctx.setLineJoin(join == "round" ? .round : join == "bevel" ? .bevel : .miter)
                 if !dash.isEmpty { ctx.setLineDash(phase: 0, lengths: dash.map { CGFloat($0) }) }
                 ctx.beginPath()
-                ctx.move(to: CGPoint(x: pts[0].x, y: pts[0].y))
-                for p in pts.dropFirst() { ctx.addLine(to: CGPoint(x: p.x, y: p.y)) }
+                ctx.move(to: CGPoint(x: finitePts[0].x, y: finitePts[0].y))
+                for p in finitePts.dropFirst() { ctx.addLine(to: CGPoint(x: p.x, y: p.y)) }
                 ctx.strokePath()
                 ctx.restoreGState()
             case .image(let aid, let x, let y, let w, let h, let r, let src, let iw, let ih, _, let opacity, _):
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite, w > 0, h > 0,
+                      src.x.isFinite, src.y.isFinite, src.w.isFinite, src.h.isFinite, iw > 0, ih > 0 else { continue }
                 if let img = images[aid] {
                     ctx.saveGState()
-                    ctx.setAlpha(CGFloat(opacity))
-                    let rect = CGRect(x: x, y: y, width: max(0, w), height: max(0, h))
-                    let rr = min(r, rect.width / 2, rect.height / 2)
-                    if rr > 0 {
-                        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: rr, cornerHeight: rr, transform: nil))
+                    ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
+                    let rect = CGRect(x: x, y: y, width: w, height: h)
+                    if r.isFinite && r > 0 {
+                        ctx.addPath(SlideCGDrawer.safeRoundedRectPath(rect, cornerWidth: r, cornerHeight: r))
                         ctx.clip()
                     } else {
                         ctx.clip(to: rect)
                     }
                     let sx = w / max(1, src.w), sy = h / max(1, src.h)
                     let drawRect = CGRect(x: x - src.x * sx, y: y - src.y * sy, width: Double(iw) * sx, height: Double(ih) * sy)
-                    ctx.translateBy(x: 0, y: drawRect.minY + drawRect.maxY)
-                    ctx.scaleBy(x: 1, y: -1)
-                    ctx.draw(img, in: drawRect)
+                    if drawRect.origin.x.isFinite && drawRect.origin.y.isFinite && drawRect.width > 0 && drawRect.height > 0 {
+                        ctx.translateBy(x: 0, y: drawRect.minY + drawRect.maxY)
+                        ctx.scaleBy(x: 1, y: -1)
+                        ctx.draw(img, in: drawRect)
+                    }
                     ctx.restoreGState()
                 }
             case .text(let x, let y, let text, let weight, let italic, let size, let fill, let opacity, _):
+                guard x.isFinite, y.isFinite, size.isFinite else { continue }
                 ctx.saveGState()
-                ctx.setAlpha(CGFloat(opacity))
+                ctx.setAlpha(CGFloat(opacity.isFinite ? min(1, max(0, opacity)) : 1))
                 let font = makeInterCTFont(weight: weight, italic: italic, size: size)
                 let color = SlideCGDrawer.cgColor(fill)
                 let attrs: [CFString: Any] = [kCTFontAttributeName: font, kCTForegroundColorAttributeName: color, kCTKernAttributeName: 0.0]
-                let attr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)!
-                let line = CTLineCreateWithAttributedString(attr)
-                ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
-                ctx.textPosition = CGPoint(x: x, y: y)
-                CTLineDraw(line, ctx)
+                if let attr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) {
+                    let line = CTLineCreateWithAttributedString(attr)
+                    ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+                    ctx.textPosition = CGPoint(x: x, y: y)
+                    CTLineDraw(line, ctx)
+                }
                 ctx.restoreGState()
             }
         }
     }
 
     private static func makeInterCTFont(weight: Int, italic: Bool, size: Double) -> CTFont {
+        let safeSize = (size.isFinite && size > 0) ? min(size, 2000) : 14
         let weightNum: CGFloat = switch weight {
         case 500: 0.23
         case 600: 0.30
@@ -1163,10 +1179,10 @@ public enum DesignCGDrawer {
             kCTFontFamilyNameAttribute: "Inter",
             kCTFontTraitsAttribute: traits,
         ] as CFDictionary)
-        let candidate = CTFontCreateWithFontDescriptor(desc, CGFloat(size), nil)
+        let candidate = CTFontCreateWithFontDescriptor(desc, CGFloat(safeSize), nil)
         let family = CTFontCopyFamilyName(candidate) as String
         if family.localizedCaseInsensitiveContains("Inter") { return candidate }
-        return SlideLayoutEngine.makeCTFont(slot: .sans, bold: weight >= 600, italic: italic, size: size)
+        return SlideLayoutEngine.makeCTFont(slot: .sans, bold: weight >= 600, italic: italic, size: safeSize)
     }
 
     private static func paint(_ path: CGPath, bounds: CGRect, fill: DesignResolvedPaint?, stroke: String?, sw: Double, dash: [Double], cap: String?, join: String?, in ctx: CGContext) {

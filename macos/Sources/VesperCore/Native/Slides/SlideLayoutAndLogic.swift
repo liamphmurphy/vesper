@@ -37,18 +37,22 @@ public enum SlideLayoutEngine: Sendable {
     public static func coreTextMeasure(text: String, slot: SlideFontSlot, bold: Bool, italic: Bool, size: Double) -> Double {
         guard !text.isEmpty else { return 0 }
         let font = makeCTFont(slot: slot, bold: bold, italic: italic, size: size)
-        let attr = CFAttributedStringCreate(nil, text as CFString, [kCTFontAttributeName: font] as CFDictionary)!
+        guard let attr = CFAttributedStringCreate(nil, text as CFString, [kCTFontAttributeName: font] as CFDictionary) else {
+            return 0
+        }
         let line = CTLineCreateWithAttributedString(attr)
-        return CTLineGetTypographicBounds(line, nil, nil, nil)
+        let width = CTLineGetTypographicBounds(line, nil, nil, nil)
+        return width.isFinite ? width : 0
     }
 
     public static func makeCTFont(slot: SlideFontSlot, bold: Bool, italic: Bool, size: Double) -> CTFont {
-        let base = CTFontCreateWithName(slot.systemFontName as CFString, CGFloat(size), nil)
+        let safeSize = (size.isFinite && size > 0) ? min(size, 2000) : 16
+        let base = CTFontCreateWithName(slot.systemFontName as CFString, CGFloat(safeSize), nil)
         var traits: CTFontSymbolicTraits = []
         if bold { traits.insert(.boldTrait) }
         if italic { traits.insert(.italicTrait) }
         if !traits.isEmpty,
-           let styled = CTFontCreateCopyWithSymbolicTraits(base, CGFloat(size), nil, traits, traits) {
+           let styled = CTFontCreateCopyWithSymbolicTraits(base, CGFloat(safeSize), nil, traits, traits) {
             return styled
         }
         return base
@@ -67,12 +71,25 @@ public enum SlideLayoutEngine: Sendable {
     }
 
     public static func imageSource(for img: SlideImageElement, asset: SlideAsset) -> SlideFrame {
+        let aw = Double(max(0, asset.w))
+        let ah = Double(max(0, asset.h))
+        guard aw > 0, ah > 0 else { return SlideFrame(x: 0, y: 0, w: 0, h: 0) }
         let c = img.crop ?? SlideCrop()
-        var x = c.l * Double(asset.w)
-        var y = c.t * Double(asset.h)
-        var w = (1 - c.l - c.r) * Double(asset.w)
-        var h = (1 - c.t - c.b) * Double(asset.h)
-        let fa = img.frame.w / max(1, img.frame.h)
+        let cl = c.l.isFinite ? c.l : 0
+        let ct = c.t.isFinite ? c.t : 0
+        let cr = c.r.isFinite ? c.r : 0
+        let cb = c.b.isFinite ? c.b : 0
+        var x = max(0, cl) * aw
+        var y = max(0, ct) * ah
+        var w = max(0, 1 - cl - cr) * aw
+        var h = max(0, 1 - ct - cb) * ah
+        guard w > 0, h > 0 else { return SlideFrame(x: x, y: y, w: w, h: h) }
+        let fw = abs(img.frame.w)
+        let fh = abs(img.frame.h)
+        guard fw.isFinite, fh.isFinite, fw > 0, fh > 0 else {
+            return SlideFrame(x: x, y: y, w: w, h: h)
+        }
+        let fa = fw / max(1, fh)
         if w / max(1, h) > fa {
             let nw = h * fa
             x += (w - nw) / 2
@@ -292,7 +309,7 @@ public enum SlideLayoutEngine: Sendable {
                 } else if s.shape == .ellipse {
                     ops.append(.ellipse(x: f.x, y: f.y, w: f.w, h: f.h, fill: fill, fillOpacity: s.fillOpacity, stroke: stroke, sw: sw, strokeOpacity: s.strokeOpacity, dash: dash, rot: rot, el: s.id))
                 } else {
-                    let r = s.shape == .roundRect ? min(s.radius ?? 24, f.w / 2, f.h / 2) : 0
+                    let r = s.shape == .roundRect ? max(0, min(s.radius ?? 24, abs(f.w) / 2, abs(f.h) / 2)) : 0
                     ops.append(.rect(x: f.x, y: f.y, w: f.w, h: f.h, r: r, fill: fill, fillOpacity: s.fillOpacity, stroke: stroke, sw: sw, strokeOpacity: s.strokeOpacity, dash: dash, rot: rot, el: s.id))
                 }
             case .line(let l):
@@ -381,9 +398,12 @@ public enum SlideArrangeLogic: Sendable {
     }
 
     public static func unionBox(_ frames: [SlideFrame]) -> SlideBox? {
-        guard !frames.isEmpty else { return nil }
         let bs = frames.map(boxOf)
-        return SlideBox(l: bs.map(\.l).min()!, t: bs.map(\.t).min()!, r: bs.map(\.r).max()!, b: bs.map(\.b).max()!)
+        guard let l = bs.map(\.l).min(),
+              let t = bs.map(\.t).min(),
+              let r = bs.map(\.r).max(),
+              let b = bs.map(\.b).max() else { return nil }
+        return SlideBox(l: l, t: t, r: r, b: b)
     }
 
     public static func reorder(_ elements: [SlideElement], ids: Set<String>, op: SlideZOrder) -> [SlideElement] {
@@ -508,7 +528,7 @@ public enum SlideArrangeLogic: Sendable {
             for v in vals {
                 for t in targets {
                     let d = t - v
-                    if abs(d) <= threshold && (best == nil || abs(d) < abs(best!)) { best = d }
+                    if abs(d) <= threshold && (best.map { abs(d) < abs($0) } ?? true) { best = d }
                 }
             }
             return best ?? 0
@@ -627,6 +647,24 @@ public enum SlideArrangeLogic: Sendable {
             return [el]
         }
     }
+
+    /// Replaces a text box's paragraphs with plain newline-delimited lines, preserving per-paragraph
+    /// formatting and falling back safely when the text box has zero paragraphs.
+    public static func applyingPlainText(_ text: String, to box: SlideTextBox) -> [SlideParagraph] {
+        let lines = text.components(separatedBy: "\n")
+        let fallback = SlideParagraph(runs: [SlideRun(text: "", size: 44)])
+        return lines.enumerated().map { idx, line in
+            let template = box.paragraphs.isEmpty
+                ? fallback
+                : box.paragraphs[min(idx, box.paragraphs.count - 1)]
+            let run0 = template.runs.first ?? SlideRun(text: "", size: 44)
+            var newRun = run0
+            newRun.text = line
+            var p = template
+            p.runs = [newRun]
+            return p
+        }
+    }
 }
 
 // MARK: - Slides Review Diff & 3-Way Merge (parity with web/lib/slides/review.ts)
@@ -652,7 +690,7 @@ public enum SlideReviewLogic: Sendable {
             out.append(SlideReviewChange(id: nextId, kind: .theme, slideId: nil, before: nil, after: nil, position: 0, title: "Theme", details: ["\(base.theme.name) → \(head.theme.name)\(suffix)"]))
             nextId += 1
         }
-        let baseById = Dictionary(uniqueKeysWithValues: base.slides.map { ($0.id, $0) })
+        let baseById = Dictionary(base.slides.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let headIds = Set(head.slides.map(\.id))
         let moved = movedIds(base: base.slides.map(\.id), head: head.slides.map(\.id))
 
@@ -712,10 +750,10 @@ public enum SlideReviewLogic: Sendable {
         let tTheme = theirs.theme != base.theme
         if mTheme && tTheme && mine.theme != theirs.theme { return nil }
 
-        let baseById = Dictionary(uniqueKeysWithValues: base.slides.map { ($0.id, $0) })
+        let baseById = Dictionary(base.slides.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         func touched(_ d: SlideDeck) -> (ids: Set<String>, byId: [String: Slide]) {
             var ids = Set<String>()
-            let byId = Dictionary(uniqueKeysWithValues: d.slides.map { ($0.id, $0) })
+            let byId = Dictionary(d.slides.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
             for s in d.slides where baseById[s.id] != s { ids.insert(s.id) }
             for s in base.slides where byId[s.id] == nil { ids.insert(s.id) }
             return (ids, byId)
@@ -753,8 +791,8 @@ public enum SlideReviewLogic: Sendable {
         if a.background != b.background { details.append("Background colour changed") }
         if (a.notes ?? "") != (b.notes ?? "") { details.append("Speaker notes changed") }
         if (a.hidden ?? false) != (b.hidden ?? false) { details.append((b.hidden ?? false) ? "Hidden in presentation" : "Shown in presentation") }
-        let before = Dictionary(uniqueKeysWithValues: SlideArrangeLogic.flatten(a.elements).map { ($0.id, $0) })
-        let after = Dictionary(uniqueKeysWithValues: SlideArrangeLogic.flatten(b.elements).map { ($0.id, $0) })
+        let before = Dictionary(SlideArrangeLogic.flatten(a.elements).map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let after = Dictionary(SlideArrangeLogic.flatten(b.elements).map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         for (id, el) in after {
             if let old = before[id] {
                 if old != el {
@@ -832,22 +870,23 @@ public enum SlideCGDrawer {
 
             switch op {
             case .rect(let x, let y, let w, let h, let r, let fill, let fo, let stroke, let sw, let so, let dash, _, _):
-                let rect = CGRect(x: x, y: y, width: w, height: h)
-                let path = r > 0
-                    ? CGPath(roundedRect: rect, cornerWidth: r, cornerHeight: r, transform: nil)
-                    : CGPath(rect: rect, transform: nil)
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { break }
+                let rect = CGRect(x: x, y: y, width: w, height: h).standardized
+                let path = safeRoundedRectPath(rect, cornerWidth: r, cornerHeight: r)
                 paintPath(path, bounds: rect, fill: fill, fillOpacity: fo, stroke: stroke, sw: sw, strokeOpacity: so, dash: dash, in: ctx)
 
             case .ellipse(let x, let y, let w, let h, let fill, let fo, let stroke, let sw, let so, let dash, _, _):
-                let rect = CGRect(x: x, y: y, width: w, height: h)
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { break }
+                let rect = CGRect(x: x, y: y, width: w, height: h).standardized
                 let path = CGPath(ellipseIn: rect, transform: nil)
                 paintPath(path, bounds: rect, fill: fill, fillOpacity: fo, stroke: stroke, sw: sw, strokeOpacity: so, dash: dash, in: ctx)
 
             case .path(let segs, let box, let fill, let fo, let stroke, let sw, let so, let dash, _, _):
                 let path = SlideShapeGeometry.cgPath(from: segs)
-                paintPath(path, bounds: box.cgRect, fill: fill, fillOpacity: fo, stroke: stroke, sw: sw, strokeOpacity: so, dash: dash, in: ctx)
+                paintPath(path, bounds: box.cgRect.standardized, fill: fill, fillOpacity: fo, stroke: stroke, sw: sw, strokeOpacity: so, dash: dash, in: ctx)
 
             case .line(let x1, let y1, let x2, let y2, let stroke, let sw, let so, let dash, let startArrow, let endArrow, _, _):
+                guard x1.isFinite, y1.isFinite, x2.isFinite, y2.isFinite, sw.isFinite else { break }
                 let color = cgColor(stroke, alpha: so ?? 1)
                 let dx = x2 - x1
                 let dy = y2 - y1
@@ -872,12 +911,17 @@ public enum SlideCGDrawer {
                 if startArrow { drawArrowHead(tip: CGPoint(x: x1, y: y1), ux: -ux, uy: -uy, head: head, in: ctx) }
 
             case .image(let assetId, let x, let y, let w, let h, let src, _, let opacity, _, _):
-                if let img = images[assetId], let asset = deck.assets[assetId] {
-                    ctx.setAlpha(CGFloat(opacity ?? 1))
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite, w > 0, h > 0,
+                      src.x.isFinite, src.y.isFinite, src.w.isFinite, src.h.isFinite else { break }
+                if let img = images[assetId], let asset = deck.assets[assetId], asset.w > 0, asset.h > 0 {
+                    ctx.setAlpha(CGFloat(min(1, max(0, opacity ?? 1))))
                     let dest = CGRect(x: x, y: y, width: w, height: h)
                     ctx.clip(to: dest)
                     let scale = w / max(1, src.w)
                     let drawRect = CGRect(x: x - src.x * scale, y: y - src.y * scale, width: Double(asset.w) * scale, height: Double(asset.h) * scale)
+                    guard drawRect.origin.x.isFinite, drawRect.origin.y.isFinite,
+                          drawRect.width.isFinite, drawRect.height.isFinite,
+                          drawRect.width > 0, drawRect.height > 0 else { break }
                     // Flip locally so CGImage draws right-side up in y-down coordinates.
                     ctx.translateBy(x: 0, y: drawRect.minY + drawRect.maxY)
                     ctx.scaleBy(x: 1, y: -1)
@@ -885,14 +929,16 @@ public enum SlideCGDrawer {
                 }
 
             case .highlight(let x, let y, let w, let h, let fill, _, _):
+                guard x.isFinite, y.isFinite, w.isFinite, h.isFinite else { break }
                 ctx.setFillColor(cgColor(fill, alpha: 1))
-                ctx.fill(CGRect(x: x, y: y, width: w, height: h))
+                ctx.fill(CGRect(x: x, y: y, width: w, height: h).standardized)
 
             case .text(let x, let y, let text, let slot, let bold, let italic, let size, let colorHex, let underline, let strike, let w, _, _):
+                guard x.isFinite, y.isFinite, size.isFinite, w.isFinite else { break }
                 let font = SlideLayoutEngine.makeCTFont(slot: slot, bold: bold, italic: italic, size: size)
                 let color = cgColor(colorHex, alpha: 1)
                 let attrs: [CFString: Any] = [kCTFontAttributeName: font, kCTForegroundColorAttributeName: color]
-                let attr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary)!
+                guard let attr = CFAttributedStringCreate(nil, text as CFString, attrs as CFDictionary) else { break }
                 let line = CTLineCreateWithAttributedString(attr)
                 ctx.saveGState()
                 ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
@@ -901,7 +947,7 @@ public enum SlideCGDrawer {
                 ctx.restoreGState()
                 if underline {
                     ctx.setStrokeColor(color)
-                    ctx.setLineWidth(size * 0.06)
+                    ctx.setLineWidth(max(0.5, size * 0.06))
                     let uy = y + size * 0.12
                     ctx.move(to: CGPoint(x: x, y: uy))
                     ctx.addLine(to: CGPoint(x: x + w, y: uy))
@@ -909,7 +955,7 @@ public enum SlideCGDrawer {
                 }
                 if strike {
                     ctx.setStrokeColor(color)
-                    ctx.setLineWidth(size * 0.06)
+                    ctx.setLineWidth(max(0.5, size * 0.06))
                     let sy = y - size * SlideConstants.strikePosition
                     ctx.move(to: CGPoint(x: x, y: sy))
                     ctx.addLine(to: CGPoint(x: x + w, y: sy))
@@ -930,10 +976,35 @@ public enum SlideCGDrawer {
         case .highlight(_, _, _, _, _, let r, _): r
         case .text(_, _, _, _, _, _, _, _, _, _, _, let r, _): r
         }
-        guard let rot, rot.deg != 0 else { return }
+        guard let rot, rot.deg.isFinite, rot.cx.isFinite, rot.cy.isFinite, rot.deg != 0 else { return }
         ctx.translateBy(x: rot.cx, y: rot.cy)
         ctx.rotate(by: rot.deg * .pi / 180)
         ctx.translateBy(x: -rot.cx, y: -rot.cy)
+    }
+
+    /// Builds a rounded-rect CGPath without risking CoreGraphics' precondition trap when
+    /// `2 * cornerWidth > rect.width` (e.g. float rounding), negative/zero dimensions, or NaN.
+    public static func safeRoundedRectPath(_ rawRect: CGRect, cornerWidth: CGFloat, cornerHeight: CGFloat) -> CGPath {
+        guard rawRect.origin.x.isFinite, rawRect.origin.y.isFinite,
+              rawRect.size.width.isFinite, rawRect.size.height.isFinite else {
+            return CGPath(rect: .zero, transform: nil)
+        }
+        let rect = rawRect.standardized
+        guard rect.width > 0, rect.height > 0 else {
+            return CGPath(rect: rect, transform: nil)
+        }
+        var cw = cornerWidth.isFinite ? max(0, cornerWidth) : 0
+        var ch = cornerHeight.isFinite ? max(0, cornerHeight) : 0
+        let maxW = rect.width * 0.5
+        let maxH = rect.height * 0.5
+        if cw > maxW { cw = maxW }
+        if ch > maxH { ch = maxH }
+        if cw * 2 > rect.width { cw = cw.nextDown }
+        if ch * 2 > rect.height { ch = ch.nextDown }
+        guard cw > 0, ch > 0 else {
+            return CGPath(rect: rect, transform: nil)
+        }
+        return CGPath(roundedRect: rect, cornerWidth: cw, cornerHeight: ch, transform: nil)
     }
 
     private static func paintPath(_ path: CGPath, bounds: CGRect, fill: SlideResolvedPaint?, fillOpacity: Double?, stroke: String?, sw: Double, strokeOpacity: Double?, dash: [Double], in ctx: CGContext) {
@@ -983,7 +1054,8 @@ public enum SlideCGDrawer {
 
     public static func cgColor(_ hex: String, alpha: Double = 1) -> CGColor {
         let (r, g, b, a) = SlideSchema.parseHexRGBA(hex)
-        return CGColor(colorSpace: CGColorSpaceCreateDeviceRGB(), components: [r, g, b, a * alpha])!
+        let clampedAlpha = alpha.isFinite ? min(1, max(0, a * alpha)) : a
+        return CGColor(red: r, green: g, blue: b, alpha: clampedAlpha)
     }
 }
 
@@ -993,8 +1065,10 @@ public enum SlideExporters {
     /// Renders every visible slide to a crisp vector PDF (960 × 540 pt per page) using `CGPDFContext`.
     public static func exportPDF(deck: SlideDeck, images: [String: CGImage]) -> Data {
         let k = 0.5
-        let pageW = deck.size.w * k
-        let pageH = deck.size.h * k
+        let safeW = (deck.size.w.isFinite && deck.size.w > 0) ? deck.size.w : SlideConstants.width
+        let safeH = (deck.size.h.isFinite && deck.size.h > 0) ? deck.size.h : SlideConstants.height
+        let pageW = safeW * k
+        let pageH = safeH * k
         var mediaBox = CGRect(x: 0, y: 0, width: pageW, height: pageH)
         let data = NSMutableData()
         guard let consumer = CGDataConsumer(data: data as CFMutableData),
@@ -1021,7 +1095,12 @@ public enum SlideExporters {
     /// editable text runs, bullets, `a:gradFill` gradients, cropped media, speaker notes, and groups).
     public static func exportPPTX(deck: SlideDeck, assetBytes: [String: Data]) -> Data {
         let emuPerUnit = 6350 // 1920 * 6350 = 12,192,000 EMU = 13.333 in (16:9 widescreen)
-        func emu(_ u: Double) -> Int { Int((u * Double(emuPerUnit)).rounded()) }
+        func safeInt(_ v: Double) -> Int {
+            guard v.isFinite else { return 0 }
+            let clamped = min(Double(Int32.max), max(Double(Int32.min), v.rounded()))
+            return Int(clamped)
+        }
+        func emu(_ u: Double) -> Int { safeInt(u * Double(emuPerUnit)) }
         func esc(_ s: String) -> String {
             s.replacingOccurrences(of: "&", with: "&amp;")
                 .replacingOccurrences(of: "<", with: "&lt;")
@@ -1033,8 +1112,8 @@ public enum SlideExporters {
             return String(h.dropFirst().prefix(6))
         }
         func alphaTag(_ opacity: Double?) -> String {
-            guard let opacity, opacity < 1 else { return "" }
-            return "<a:alpha val=\"\(Int((max(0, opacity) * 100000).rounded()))\"/>"
+            guard let opacity, opacity.isFinite, opacity < 1 else { return "" }
+            return "<a:alpha val=\"\(safeInt(max(0, opacity) * 100000))\"/>"
         }
         func fillXML(_ fill: SlideFill?, opacity: Double?, fallback: SlideThemeColorKey = .text) -> String {
             guard let fill else { return "<a:noFill/>" }
@@ -1042,7 +1121,7 @@ public enum SlideExporters {
             case .solid(let hex):
                 return "<a:solidFill><a:srgbClr val=\"\(String(hex.dropFirst().prefix(6)))\">\(alphaTag(opacity))</a:srgbClr></a:solidFill>"
             case .gradient(let angle, let start, let end):
-                let ang = Int((angle.truncatingRemainder(dividingBy: 360) * 60000).rounded())
+                let ang = safeInt(angle.truncatingRemainder(dividingBy: 360) * 60000)
                 return """
                 <a:gradFill><a:gsLst><a:gs pos="0"><a:srgbClr val="\(String(start.dropFirst().prefix(6)))">\(alphaTag(opacity))</a:srgbClr></a:gs><a:gs pos="100000"><a:srgbClr val="\(String(end.dropFirst().prefix(6)))">\(alphaTag(opacity))</a:srgbClr></a:gs></a:gsLst><a:lin ang="\(ang)" scaled="0"/></a:gradFill>
                 """
@@ -1063,8 +1142,8 @@ public enum SlideExporters {
                 default: "l"
                 }
                 let lvl = p.bullet != nil ? (p.level ?? 0) : 0
-                let spcPts = Int((SlideLayoutEngine.lineHeight(for: p) * 50).rounded())
-                let spcBef = (p.spaceBefore ?? 0) > 0 ? "<a:spcBef><a:spcPts val=\"\(Int(((p.spaceBefore ?? 0) * 50).rounded()))\"/></a:spcBef>" : ""
+                let spcPts = safeInt(SlideLayoutEngine.lineHeight(for: p) * 50)
+                let spcBef = (p.spaceBefore ?? 0) > 0 ? "<a:spcBef><a:spcPts val=\"\(safeInt((p.spaceBefore ?? 0) * 50))\"/></a:spcBef>" : ""
                 let bulletXML: String = switch p.bullet {
                 case "disc": "<a:buChar char=\"•\"/>"
                 case "number": "<a:buAutoNum type=\"arabicPeriod\"/>"
@@ -1072,7 +1151,7 @@ public enum SlideExporters {
                 }
                 let marL = p.bullet != nil ? " marL=\"\(emu(SlideConstants.bulletIndent * Double(lvl + 1)))\" indent=\"-\(emu(SlideConstants.bulletIndent))\"" : ""
                 let runs = p.runs.map { r -> String in
-                    let sz = Int((r.size * 50).rounded())
+                    let sz = safeInt(r.size * 50)
                     let b = (r.bold ?? false) ? " b=\"1\"" : ""
                     let i = (r.italic ?? false) ? " i=\"1\"" : ""
                     let u = (r.underline ?? false) ? " u=\"sng\"" : ""
@@ -1118,7 +1197,7 @@ public enum SlideExporters {
                 let spId = nextSpId
                 nextSpId += 1
                 let f = el.frame
-                let rotAttr = (el.rotation ?? 0) != 0 ? " rot=\"\(Int(((el.rotation ?? 0) * 60000).rounded()))\"" : ""
+                let rotAttr = (el.rotation ?? 0) != 0 ? " rot=\"\(safeInt((el.rotation ?? 0) * 60000))\"" : ""
                 let xfrm = "<a:xfrm\(rotAttr)><a:off x=\"\(emu(f.x))\" y=\"\(emu(f.y))\"/><a:ext cx=\"\(emu(max(1, abs(f.w))))\" cy=\"\(emu(max(1, abs(f.h))))\"/></a:xfrm>"
 
                 switch el {

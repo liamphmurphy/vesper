@@ -70,7 +70,7 @@ struct ChatDiffCardView: View {
         let chunks = spec.collapsedChunks()
         if layout == .unified {
             ScrollView(.horizontal, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(chunks) { chunk in
                         switch chunk {
                         case .line(let line):
@@ -84,11 +84,12 @@ struct ChatDiffCardView: View {
                         }
                     }
                 }
+                .textSelection(.enabled)
                 .frame(minWidth: 420, maxWidth: .infinity, alignment: .leading)
             }
         } else {
             ScrollView(.horizontal, showsIndicators: true) {
-                VStack(alignment: .leading, spacing: 0) {
+                LazyVStack(alignment: .leading, spacing: 0) {
                     ForEach(chunks) { chunk in
                         switch chunk {
                         case .line(let line):
@@ -104,6 +105,7 @@ struct ChatDiffCardView: View {
                         }
                     }
                 }
+                .textSelection(.enabled)
                 .frame(minWidth: 560, maxWidth: .infinity, alignment: .leading)
             }
         }
@@ -198,14 +200,11 @@ struct ChatDiffCardView: View {
                 .italic()
         } else if !line.wordSpans.isEmpty && (spec.mode == .prose || highlights[line.id] == nil) {
             Text(attributedWordSpans(line))
-                .textSelection(.enabled)
         } else if let tokens = highlights[line.id], !tokens.isEmpty {
             Text(attributedTokens(tokens))
-                .textSelection(.enabled)
         } else {
             Text(line.text.isEmpty ? " " : line.text)
                 .foregroundStyle(p.text)
-                .textSelection(.enabled)
         }
     }
 
@@ -263,7 +262,8 @@ struct ChatDiffCardView: View {
         let codeLines = spec.lines.filter { $0.kind != .hunkHeader }
         guard !codeLines.isEmpty else { return }
         let joined = codeLines.map(\.text).joined(separator: "\n")
-        guard let tokenized = await CodeHighlighter.shared.highlight(joined, language: lang) else { return }
+        guard let tokenized = await CodeHighlighter.shared.highlight(joined, language: lang),
+              !Task.isCancelled else { return }
         var map: [Int: [CodeToken]] = [:]
         for (idx, line) in codeLines.enumerated() where idx < tokenized.count {
             map[line.id] = tokenized[idx]

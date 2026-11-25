@@ -91,7 +91,7 @@ struct ChatRecommendCardsView: View {
 
     var body: some View {
         let previews = context.store.entry(previewRequest).data?.previews ?? []
-        let byURL = Dictionary(uniqueKeysWithValues: previews.map { ($0.url, $0) })
+        let byURL = Dictionary(previews.map { ($0.url, $0) }, uniquingKeysWith: { _, latest in latest })
 
         VStack(alignment: .leading, spacing: 8) {
             ForEach(Array(cards.enumerated()), id: \.offset) { _, card in
@@ -383,7 +383,7 @@ struct ChatSourcesChipsView: View {
     var body: some View {
         let p = theme.palette
         let previews = previewRequest.flatMap { context.store.entry($0).data?.previews } ?? []
-        let byURL = Dictionary(uniqueKeysWithValues: previews.map { ($0.url, $0) })
+        let byURL = Dictionary(previews.map { ($0.url, $0) }, uniquingKeysWith: { _, latest in latest })
 
         if !sources.isEmpty || !citations.isEmpty {
             VStack(alignment: .leading, spacing: 6) {

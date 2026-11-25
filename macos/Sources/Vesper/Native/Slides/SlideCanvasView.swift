@@ -48,9 +48,11 @@ struct SlidePreviewCanvas: View {
     var body: some View {
         let laid = SlideLayoutEngine.layoutSlide(deck: deck, slide: slide)
         Canvas { gc, size in
-            guard size.width > 0, size.height > 0 else { return }
-            let sx = size.width / deck.size.w
-            let sy = size.height / deck.size.h
+            let deckW = deck.size.w
+            let deckH = deck.size.h
+            guard size.width > 0, size.height > 0, deckW.isFinite, deckH.isFinite, deckW > 0, deckH > 0 else { return }
+            let sx = size.width / deckW
+            let sy = size.height / deckH
             gc.withCGContext { ctx in
                 ctx.saveGState()
                 ctx.scaleBy(x: sx, y: sy)
@@ -68,7 +70,7 @@ struct SlidePreviewCanvas: View {
                 ctx.restoreGState()
             }
         }
-        .aspectRatio(deck.size.w / max(1, deck.size.h), contentMode: .fit)
+        .aspectRatio(max(1, deck.size.w.isFinite ? deck.size.w : SlideConstants.width) / max(1, deck.size.h.isFinite ? deck.size.h : SlideConstants.height), contentMode: .fit)
     }
 }
 
@@ -97,6 +99,7 @@ struct InteractiveSlideCanvas: View {
     @State private var guidesX: [Double] = []
     @State private var guidesY: [Double] = []
     @State private var inlineDraftText: String = ""
+    @State private var inlineEditingSlideId: String?
     @State private var zoom: Double = 1.0
     @State private var panOffset: CGSize = .zero
     @State private var magnifyBaseZoom: Double?
@@ -110,10 +113,12 @@ struct InteractiveSlideCanvas: View {
             let pad: CGFloat = 28
             let availW = max(100, geo.size.width - pad * 2)
             let availH = max(100, geo.size.height - pad * 2)
-            let fitScale = min(availW / deck.size.w, availH / deck.size.h)
-            let scale = fitScale * zoom
-            let canvasW = deck.size.w * scale
-            let canvasH = deck.size.h * scale
+            let deckW = max(1, deck.size.w.isFinite ? deck.size.w : SlideConstants.width)
+            let deckH = max(1, deck.size.h.isFinite ? deck.size.h : SlideConstants.height)
+            let fitScale = min(availW / deckW, availH / deckH)
+            let scale = max(0.01, fitScale * zoom)
+            let canvasW = deckW * scale
+            let canvasH = deckH * scale
             let originX = (geo.size.width - canvasW) / 2 + panOffset.width
             let originY = (geo.size.height - canvasH) / 2 + panOffset.height
 
@@ -139,8 +144,10 @@ struct InteractiveSlideCanvas: View {
 
                     // Empty image slots interactive overlay
                     if !readOnly {
-                        ForEach(activeSlide.elements.filter(\.isImageSlot)) { el in
+                        ForEach(Array(activeSlide.elements.enumerated()).filter { $0.element.isImageSlot }, id: \.offset) { _, el in
                             let f = el.frame
+                            let slotW = max(0, f.w * scale)
+                            let slotH = max(0, f.h * scale)
                             Button {
                                 onUploadImageForSlot(el)
                             } label: {
@@ -151,7 +158,7 @@ struct InteractiveSlideCanvas: View {
                                         .font(.system(size: max(10, 22 * scale), weight: .medium))
                                 }
                                 .foregroundStyle(.secondary)
-                                .frame(width: f.w * scale, height: f.h * scale)
+                                .frame(width: slotW, height: slotH)
                                 .background(Color.secondary.opacity(0.08))
                                 .overlay(
                                     RoundedRectangle(cornerRadius: 4)
@@ -296,14 +303,19 @@ struct InteractiveSlideCanvas: View {
             )
         }
         .onChange(of: slide.id) { _, _ in
-            commitInlineEditIfNeeded()
+            inlineEditingSlideId = nil
+            editingTextId = nil
             draftSlide = nil
         }
         .onChange(of: editingTextId) { oldId, newId in
-            if oldId != nil && newId == nil {
-                commitInlineEdit(for: oldId!)
+            if let oldId, newId == nil {
+                if inlineEditingSlideId == slide.id {
+                    inlineEditingSlideId = nil
+                    commitInlineEdit(for: oldId)
+                }
             } else if let newId,
                       let el = SlideArrangeLogic.flatten(activeSlide.elements).first(where: { $0.id == newId }) {
+                inlineEditingSlideId = slide.id
                 inlineDraftText = el.plainText
                 inlineFocused = true
             }
@@ -380,9 +392,10 @@ struct InteractiveSlideCanvas: View {
                             selectedIds = [hit.id]
                         }
                         dragStartFrames = Dictionary(
-                            uniqueKeysWithValues: activeSlide.elements
+                            activeSlide.elements
                                 .filter { selectedIds.contains($0.id) }
-                                .map { ($0.id, $0.frame) }
+                                .map { ($0.id, $0.frame) },
+                            uniquingKeysWith: { _, latest in latest }
                         )
                     } else {
                         selectedIds = []
@@ -518,6 +531,7 @@ struct InteractiveSlideCanvas: View {
 
     private func beginInlineEdit(_ el: SlideElement) {
         selectedIds = [el.id]
+        inlineEditingSlideId = slide.id
         inlineDraftText = el.plainText
         editingTextId = el.id
         inlineFocused = true
@@ -525,23 +539,18 @@ struct InteractiveSlideCanvas: View {
 
     private func commitInlineEditIfNeeded() {
         guard let id = editingTextId else { return }
+        let shouldCommit = inlineEditingSlideId == slide.id
+        inlineEditingSlideId = nil
         editingTextId = nil
-        commitInlineEdit(for: id)
+        if shouldCommit {
+            commitInlineEdit(for: id)
+        }
     }
 
     private func commitInlineEdit(for id: String) {
         guard let existing = SlideArrangeLogic.flatten(slide.elements).first(where: { $0.id == id }),
               let tb = existing.textBox else { return }
-        let lines = inlineDraftText.components(separatedBy: "\n")
-        let nextParas: [SlideParagraph] = lines.enumerated().map { idx, line in
-            let template = tb.paragraphs[min(idx, max(0, tb.paragraphs.count - 1))]
-            let run0 = template.runs.first ?? SlideRun(text: "", size: 44)
-            var newRun = run0
-            newRun.text = line
-            var p = template
-            p.runs = [newRun]
-            return p
-        }
+        let nextParas = SlideArrangeLogic.applyingPlainText(inlineDraftText, to: tb)
         var updated = slide
         updated.elements = SlideArrangeLogic.mapDeep(slide.elements, ids: [id]) { $0.withText(nextParas) }
         if updated != slide {

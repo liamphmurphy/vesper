@@ -98,7 +98,7 @@ struct KnowledgeGraphView: View {
             KnowledgeGraphLogic.neighborhood(of: $0, edges: layoutLinks, hops: 1)
         }
         let searchQuery = filter.search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let nodeById = Dictionary(uniqueKeysWithValues: snapshot.nodes.map { ($0.id, $0) })
+        let nodeById = Dictionary(snapshot.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let labelAll = snapshot.nodes.count < 60 || viewport.scale > 2.0
 
         return GeometryReader { proxy in

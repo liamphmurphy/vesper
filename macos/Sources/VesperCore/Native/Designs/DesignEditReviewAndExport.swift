@@ -226,12 +226,15 @@ public enum DesignEditLogic: Sendable {
         guard fs.allSatisfy({ ($0.parentId ?? $0.pageId) == parent }) else { return nil }
         let sorted = fs.sorted { $0.index < $1.index }
         let nodes = sorted.map(\.node)
-        let l = nodes.map(\.x).min()!, t = nodes.map(\.y).min()!
-        let r = nodes.map { $0.x + $0.w }.max()!, b = nodes.map { $0.y + $0.h }.max()!
+        guard let l = nodes.map(\.x).min(),
+              let t = nodes.map(\.y).min(),
+              let r = nodes.map({ $0.x + $0.w }).max(),
+              let b = nodes.map({ $0.y + $0.h }).max(),
+              let last = sorted.last else { return nil }
         let gid = DesignSchema.newId(prefix: "n")
         let children = nodes.map { n -> DesignNode in var c = n; c.x -= l; c.y -= t; return c }
         let group = DesignNode(id: gid, type: .group, name: "Group", x: l, y: t, w: r - l, h: b - t, children: children)
-        let topIdx = sorted.last!.index - (sorted.count - 1)
+        let topIdx = max(0, last.index - (sorted.count - 1))
         let idSet = Set(ids)
         let stripped = mapTree(settled) { idSet.contains($0.id) && $0.type != .connector ? nil : $0 }
         return (insertNodes(stripped, parent: parent, nodes: [group], at: topIdx), gid)
@@ -272,9 +275,12 @@ public enum DesignEditLogic: Sendable {
     }
 
     public static func pathFrom(points: [DesignPt], closed: Bool, name: String = "Path") -> DesignNode? {
-        guard points.count >= 2 else { return nil }
-        let x = points.map(\.x).min()!, y = points.map(\.y).min()!
-        let w = max(1, points.map(\.x).max()! - x), h = max(1, points.map(\.y).max()! - y)
+        guard points.count >= 2,
+              let x = points.map(\.x).min(),
+              let y = points.map(\.y).min(),
+              let maxX = points.map(\.x).max(),
+              let maxY = points.map(\.y).max() else { return nil }
+        let w = max(1, maxX - x), h = max(1, maxY - y)
         let d = points.enumerated().map { i, p in
             "\(i == 0 ? "M" : "L")\(DesignSchema.round2(p.x - x)) \(DesignSchema.round2(p.y - y))"
         }.joined(separator: " ") + (closed ? " Z" : "")
@@ -292,8 +298,9 @@ public enum DesignEditLogic: Sendable {
 
     public static func withPlainText(_ ps: [DesignParagraph], text: String) -> [DesignParagraph] {
         let lines = text.components(separatedBy: "\n")
+        let fallback = DesignParagraph(runs: [DesignRun(text: "", size: 16)])
         return lines.enumerated().map { i, line in
-            let src = ps[min(i, max(0, ps.count - 1))]
+            let src = ps.isEmpty ? fallback : ps[min(i, ps.count - 1)]
             let r0 = src.runs.first ?? DesignRun(text: "", size: 16)
             var r = r0; r.text = line
             var p = src; p.runs = [r]
@@ -380,9 +387,9 @@ public enum DesignMergeLogic: Sendable {
         if mS.mode != bS.mode && tS.mode != bS.mode && mS.mode != tS.mode { return nil }
         if mS.tokenSets != bS.tokenSets && tS.tokenSets != bS.tokenSets && mS.tokenSets != tS.tokenSets { return nil }
 
-        let bPages = Dictionary(uniqueKeysWithValues: bS.pages.map { ($0.id, $0) })
-        let mPages = Dictionary(uniqueKeysWithValues: mS.pages.map { ($0.id, $0) })
-        let tPages = Dictionary(uniqueKeysWithValues: tS.pages.map { ($0.id, $0) })
+        let bPages = Dictionary(bS.pages.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let mPages = Dictionary(mS.pages.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let tPages = Dictionary(tS.pages.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var mergedPages: [DesignPage] = []
         let allPageIds = tS.pages.map(\.id) + mS.pages.map(\.id).filter { tPages[$0] == nil }
 
@@ -418,9 +425,9 @@ public enum DesignMergeLogic: Sendable {
     }
 
     private static func mergeNodeList(base: [DesignNode], mine: [DesignNode], theirs: [DesignNode]) -> [DesignNode]? {
-        let bMap = Dictionary(uniqueKeysWithValues: base.map { ($0.id, $0) })
-        let mMap = Dictionary(uniqueKeysWithValues: mine.map { ($0.id, $0) })
-        let tMap = Dictionary(uniqueKeysWithValues: theirs.map { ($0.id, $0) })
+        let bMap = Dictionary(base.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let mMap = Dictionary(mine.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
+        let tMap = Dictionary(theirs.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let order = theirs.map(\.id) + mine.map(\.id).filter { tMap[$0] == nil }
         var out: [DesignNode] = []
         for id in order {

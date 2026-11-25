@@ -75,7 +75,7 @@ public enum ChatOutlineLogic {
     ) -> [ChatOutlineItem] {
         var items: [ChatOutlineItem] = []
         var seenLinks: Set<String> = []
-        let canvasById = Dictionary(uniqueKeysWithValues: canvases.map { ($0.id, $0) })
+        let canvasById = Dictionary(canvases.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
 
         for m in messages where m.role != .system {
             let author = m.role == .user ? "You" : (m.persona?.name ?? "Assistant")

@@ -44,6 +44,49 @@ public enum ChatCodeReviewLogic {
         public var id: String { dir }
     }
 
+    public enum DiffDisplayItem: Sendable, Equatable, Identifiable {
+        case hunkHeader(hunkId: Int, header: String)
+        case row(hunkId: Int, row: RunFilesLogic.DiffRow, tokenIndex: Int?)
+
+        public var id: String {
+            switch self {
+            case .hunkHeader(let hunkId, _): "h:\(hunkId)"
+            case .row(let hunkId, let row, _): "r:\(hunkId):\(row.id)"
+            }
+        }
+    }
+
+    /// Flattens parsed hunks into a single virtualizable sequence with precomputed Shiki line indices
+    /// so SwiftUI's `LazyVStack` only materializes visible diff rows.
+    public static func flattenHunks(_ hunks: [RunFilesLogic.DiffHunk]) -> [DiffDisplayItem] {
+        var items: [DiffDisplayItem] = []
+        items.reserveCapacity(hunks.reduce(0) { $0 + 1 + $1.rows.count })
+        for hunk in hunks {
+            items.append(.hunkHeader(hunkId: hunk.id, header: hunk.header))
+            var tokenIndex = 0
+            for row in hunk.rows {
+                if row.kind != .hunk && row.kind != .meta {
+                    items.append(.row(hunkId: hunk.id, row: row, tokenIndex: tokenIndex))
+                    tokenIndex += 1
+                } else {
+                    items.append(.row(hunkId: hunk.id, row: row, tokenIndex: nil))
+                }
+            }
+        }
+        return items
+    }
+
+    /// Fast deterministic FNV-1a 64-bit fingerprint for keying parsed hunk & highlight caches.
+    public static func contentFingerprint(_ text: String?) -> UInt64 {
+        guard let text else { return 0 }
+        var hash: UInt64 = 14695981039346656037
+        for byte in text.utf8 {
+            hash ^= UInt64(byte)
+            hash &*= 1099511628211
+        }
+        return hash
+    }
+
     public static func commentKey(path: String, line: Int, side: CommentSide) -> String {
         "\(side.rawValue):\(path):\(line)"
     }

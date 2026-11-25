@@ -108,4 +108,31 @@ struct DesignLogicTests {
         #expect(pres?.params["id"] == "01des")
         #expect(pres?.query["start"] == "n_frame1")
     }
+
+    @Test func withPlainTextHandlesEmptyParagraphs() {
+        let paras = DesignEditLogic.withPlainText([], text: "Hello\nWorld")
+        #expect(paras.count == 2)
+        #expect(paras[0].runs.first?.text == "Hello")
+        #expect(paras[1].runs.first?.text == "World")
+    }
+
+    @Test func mergeAndRouterTolerateDuplicateIDsAndNegativeObstacles() {
+        let dupA = DesignNode(id: "n_dup", type: .shape, x: 0, y: 0, w: 50, h: 50, shape: "rect")
+        let dupB = DesignNode(id: "n_dup", type: .shape, x: 60, y: 0, w: 50, h: 50, shape: "rect")
+        let base = DesignDocument(pages: [
+            DesignPage(id: "p_dup", name: "One", children: [dupA, dupB]),
+            DesignPage(id: "p_dup", name: "Two", children: [dupA]),
+        ])
+        var mine = base
+        mine.pages[1].name = "Two edited"
+        let merged = DesignMergeLogic.mergeDesigns(base: base, mine: mine, theirs: base)
+        #expect(merged != nil)
+
+        // Negative obstacle dimensions must not trap closed range in orthogonal router
+        let from = DesignBox(x: 0, y: 100, w: 100, h: 60)
+        let to = DesignBox(x: 300, y: 100, w: 100, h: 60)
+        let negObstacle = DesignBox(x: 200, y: 180, w: -80, h: -90)
+        let pts = DesignConnectorRouter.connectorPath(fb: from, tb: to, fromAnchor: "right", toAnchor: "left", obstacles: [negObstacle])
+        #expect(pts.count >= 2)
+    }
 }

@@ -807,7 +807,7 @@ public enum KnowledgeShellLogic: Sendable {
         }
         topFolders.sort()
 
-        let byId = Dictionary(uniqueKeysWithValues: allPages.map { ($0.id, $0) })
+        let byId = Dictionary(allPages.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let pageIds = selectedRowIds
             .filter { $0.hasPrefix("p:") }
             .map { String($0.dropFirst(2)) }
@@ -854,7 +854,7 @@ public enum KnowledgeShellLogic: Sendable {
             return to == folder ? nil : (from: folder, to: to)
         }
 
-        let byId = Dictionary(uniqueKeysWithValues: allPages.map { ($0.id, $0) })
+        let byId = Dictionary(allPages.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let pageMoves: [(id: String, path: String)] = selectedRowIds
             .filter { $0.hasPrefix("p:") }
             .map { String($0.dropFirst(2)) }
@@ -1112,7 +1112,7 @@ public enum KnowledgeShellLogic: Sendable {
     }
 
     public static func unresolvedTargets(in network: KnowledgeNetwork) -> [KnowledgeUnresolvedTarget] {
-        let nodesById = Dictionary(uniqueKeysWithValues: network.nodes.map { ($0.id, $0) })
+        let nodesById = Dictionary(network.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         var order: [String] = []
         var grouped: [String: (name: String, sources: [KnowledgeUnresolvedSource])] = [:]
 

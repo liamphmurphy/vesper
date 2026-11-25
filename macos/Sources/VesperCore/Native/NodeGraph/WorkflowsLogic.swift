@@ -169,7 +169,7 @@ public enum WorkflowsLogic {
 
     public static func diffGraphs(base: API.WorkflowGraph, next: API.WorkflowGraph) -> GraphDiff {
         var nodeDiffs: [String: NodeGraphDiffKind] = [:]
-        let baseById = Dictionary(uniqueKeysWithValues: base.nodes.map { ($0.id, $0) })
+        let baseById = Dictionary(base.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let nextIds = Set(next.nodes.map(\.id))
 
         for n in next.nodes {
@@ -338,7 +338,7 @@ public enum WorkflowsLogic {
     }
 
     public static func applyingELKLayout(_ layout: ELKGraph, to graph: API.WorkflowGraph) -> API.WorkflowGraph {
-        let posById = Dictionary(uniqueKeysWithValues: layout.children.map { ($0.id, $0) })
+        let posById = Dictionary(layout.children.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let updatedNodes = graph.nodes.map { node -> API.WorkflowNode in
             var copy = node
             if let laid = posById[node.id], let x = laid.x, let y = laid.y {
