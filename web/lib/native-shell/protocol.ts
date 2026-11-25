@@ -233,16 +233,7 @@ export interface RailModel {
 
 // MARK: Native inspector
 
-export interface CompanionSubject {
-  kind: "run" | "ticket";
-  id: string;
-  title: string;
-  agent?: string;
-  ticketKey?: string;
-}
-
 export interface CompanionContext {
-  subject?: CompanionSubject;
   path?: string;
 }
 

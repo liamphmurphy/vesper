@@ -37,19 +37,6 @@ export function pageOrigin(): string | undefined {
   return typeof window === "undefined" ? undefined : window.location.origin;
 }
 
-const TICKET_TONES: Record<string, Tone> = {
-  done: "done",
-  in_progress: "accent",
-  in_review: "warning",
-  canceled: "neutral",
-  todo: "neutral",
-  backlog: "neutral",
-};
-
-export function ticketStatusTone(status: string): Tone {
-  return TICKET_TONES[status] ?? "neutral";
-}
-
 const RUN_TONES: Record<string, Tone> = {
   running: "done",
   queued: "neutral",
@@ -65,14 +52,4 @@ const RUN_TONES: Record<string, Tone> = {
 
 export function runStateTone(state: string): Tone {
   return RUN_TONES[state] ?? "neutral";
-}
-
-const HEALTH_TONES: Record<string, Tone> = {
-  on_track: "done",
-  at_risk: "warning",
-  off_track: "blocked",
-};
-
-export function epicHealthTone(health: string): Tone {
-  return HEALTH_TONES[health] ?? "neutral";
 }
