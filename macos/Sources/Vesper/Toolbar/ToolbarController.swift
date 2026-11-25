@@ -126,6 +126,9 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             group.controlRepresentation = .expanded
             // Navigational items lead the toolbar, right after the sidebar's separator and before the window title.
             group.isNavigational = true
+            // Disable AppKit auto-validation so it doesn't re-enable Back/Forward over our observed tab history state.
+            group.autovalidates = false
+            for sub in group.subitems { sub.autovalidates = false }
             group.subitems.first?.isEnabled = owner?.state.canGoBack ?? false
             group.subitems.last?.isEnabled = owner?.state.canGoForward ?? false
             navItem = group
@@ -163,8 +166,11 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
     }
 
     @objc private func navigate(_ sender: NSToolbarItemGroup) {
-        let web = owner?.content.webView
-        if sender.selectedIndex == 0 { web?.goBack() } else { web?.goForward() }
+        if sender.selectedIndex == 0 {
+            owner?.content.goBack()
+        } else {
+            owner?.content.goForward()
+        }
     }
 
     /// ⌥⌘F and the toolbar button both open the native floating command palette (⌘K).

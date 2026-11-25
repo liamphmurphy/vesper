@@ -34,6 +34,9 @@ final class NativeScreenContext {
     @ObservationIgnored var openCustomAppWindow: ((String) -> Void)?
     /// Closes a standalone Custom App window if open (e.g. after deleting the app).
     @ObservationIgnored var closeCustomAppWindow: ((String) -> Void)?
+    /// Replaces the current route in this tab's history (for automatic redirects).
+    /// Falls back to `navigate(_:)` in contexts without a tab history stack.
+    @ObservationIgnored var replaceRoute: ((String) -> Void)?
     @ObservationIgnored private let open: (String, Bool) -> Void
 
     init(match: NativeRouteMatch, store: QueryStore, open: @escaping (_ path: String, _ newTab: Bool) -> Void) {
@@ -42,8 +45,15 @@ final class NativeScreenContext {
         self.open = open
     }
 
-    /// Opens an in-app path in this tab: a native screen when one is registered, the web view otherwise.
-    func navigate(_ path: String) { open(path, false) }
+    /// Opens an in-app path in this tab. Pass `replace: true` for automatic redirects so Back
+    /// doesn't return to the redirecting route.
+    func navigate(_ path: String, replace: Bool = false) {
+        if replace, let replaceRoute {
+            replaceRoute(path)
+        } else {
+            open(path, false)
+        }
+    }
 
     func openInNewTab(_ path: String) { open(path, true) }
 
