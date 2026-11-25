@@ -278,6 +278,7 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
     private func removeNativeHost() {
         guard let host = nativeHost else { return }
         nativeHost = nil
+        host.context.detach()
         host.view.removeFromSuperview()
         host.removeFromParent()
         state.native = nil

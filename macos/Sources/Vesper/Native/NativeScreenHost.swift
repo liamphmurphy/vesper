@@ -38,6 +38,8 @@ final class NativeScreenContext {
     /// Falls back to `navigate(_:)` in contexts without a tab history stack.
     @ObservationIgnored var replaceRoute: ((String) -> Void)?
     @ObservationIgnored private let open: (String, Bool) -> Void
+    /// False once the tab has swapped this screen out. See `detach()`.
+    @ObservationIgnored private(set) var isAttached = true
 
     init(match: NativeRouteMatch, store: QueryStore, open: @escaping (_ path: String, _ newTab: Bool) -> Void) {
         self.match = match
@@ -45,9 +47,23 @@ final class NativeScreenContext {
         self.open = open
     }
 
+    /// Cuts a swapped-out screen off from its tab. The screen keeps running until SwiftUI tears it
+    /// down (its `onDisappear`, in-flight tasks, late redirects), and the tab's `ShellState` by then
+    /// belongs to the next screen: without this, clearing its sidebar or publishing its chrome would
+    /// overwrite the new screen's, and a late `navigate` would pull the tab away from where the
+    /// person went.
+    func detach() {
+        isAttached = false
+        onChromeChange = nil
+        onSidebarViewChange = nil
+        onInspectorViewChange = nil
+        replaceRoute = nil
+    }
+
     /// Opens an in-app path in this tab. Pass `replace: true` for automatic redirects so Back
     /// doesn't return to the redirecting route.
     func navigate(_ path: String, replace: Bool = false) {
+        guard isAttached else { return }
         if replace, let replaceRoute {
             replaceRoute(path)
         } else {
@@ -55,7 +71,10 @@ final class NativeScreenContext {
         }
     }
 
-    func openInNewTab(_ path: String) { open(path, true) }
+    func openInNewTab(_ path: String) {
+        guard isAttached else { return }
+        open(path, true)
+    }
 
     func openStandaloneCustomApp(slug: String) { openCustomAppWindow?(slug) }
 
