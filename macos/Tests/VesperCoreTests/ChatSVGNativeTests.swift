@@ -60,6 +60,25 @@ final class ChatSVGNativeTests: XCTestCase {
         XCTAssertEqual(compiles, 1)
     }
 
+    /// Agents style chat SVGs with CSS and add drop shadows; the frame still draws natively, with
+    /// the CSS turned into attributes and what the profile can't draw reported, not silently lost.
+    func testAgentSVGWithCSSAndFilterIsSimplified() throws {
+        let agent = """
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 100" width="200" height="100">
+          <style>.card { fill: #ffffff; stroke: #e5e7eb } .label { font-size: 14px; fill: #111827 }</style>
+          <defs><filter id="shadow"><feDropShadow dx="0" dy="2" stdDeviation="3"/></filter></defs>
+          <rect class="card" x="10" y="10" width="180" height="80" rx="8" filter="url(#shadow)"/>
+          <text class="label" x="24" y="56">Runs</text>
+        </svg>
+        """
+        let frame = try XCTUnwrap(ChatSVGNative.compile(ChatSVGNative.frameSource(agent, palette: .light, themed: false, step: nil)))
+        XCTAssertFalse(frame.dropped.isEmpty, "the filter can't be drawn, so it's reported")
+        let card = try XCTUnwrap(frame.document.hitTest(CGPoint(x: 100, y: 30)).flatMap { frame.document.tree.node(at: $0) })
+        XCTAssertEqual(card.localName, "rect")
+        XCTAssertEqual(card.attribute("fill"), "#ffffff")
+        XCTAssertNil(card.attribute("class"))
+    }
+
     func testUnparseableSourceDoesNotCompile() {
         XCTAssertNil(ChatSVGNative.compile("<svg><rect></svg>"))
         XCTAssertEqual(ChatSVGNative.stepFrame("<svg><rect data-step=\"1\"></svg>", step: 2), "<svg><rect data-step=\"1\"></svg>")

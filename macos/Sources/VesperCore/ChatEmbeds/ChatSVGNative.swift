@@ -39,7 +39,8 @@ public enum ChatSVGNative {
         if let document = try? MockupSVGDocument(source: source) {
             return ChatSVGFrame(document: document, dropped: [])
         }
-        return nil
+        guard let simplified = MockupSVGDocument.simplified(source) else { return nil }
+        return ChatSVGFrame(document: simplified.document, dropped: simplified.dropped)
     }
 
     /// The cached frame for `key`, compiling `source` on a miss.
