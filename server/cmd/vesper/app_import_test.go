@@ -234,7 +234,7 @@ func TestAppImportInspectSecretPreserveAndDropSecrets(t *testing.T) {
 
 	t.Setenv("VESPER_NO_SIGNIN", "")
 	t.Setenv("VESPER_APP_DISABLE_RUNNER", "1")
-	t.Setenv("VESPER_WEB_DIST_DIR", "")
+	t.Setenv("VESPER_DESIGN_WORKER_DIR", "")
 	appCtx, appCancel := context.WithCancel(context.Background())
 	defer appCancel()
 	appDone := make(chan error, 1)

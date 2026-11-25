@@ -11,7 +11,7 @@ import (
 
 const (
 	fixtureDir = "../../../docs/design/fixtures"
-	sharedDir  = "../../../web/lib/designs/fixtures"
+	sharedDir  = "../../../design-worker/lib/designs/fixtures"
 )
 
 func read(t *testing.T, path string) string {

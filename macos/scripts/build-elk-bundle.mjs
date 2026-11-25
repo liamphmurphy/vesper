@@ -2,15 +2,15 @@
 // Copies elkjs's self-contained bundle into macos/Sources/VesperCore/Resources/elk/ so the native
 // Node Graph layout engine (VesperCore/Native/NodeGraph/ELKLayoutEngine.swift) runs ELK offline
 // in JavaScriptCore with zero remote SwiftPM dependencies. Re-run after upgrading elkjs in
-// web/package.json:
+// design-worker/package.json:
 //
-//   node macos/scripts/build-elk-bundle.mjs        (needs web/node_modules: npm --prefix web ci)
+//   node macos/scripts/build-elk-bundle.mjs        (needs design-worker/node_modules: npm --prefix design-worker ci)
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const modules = join(repo, "web/node_modules");
+const modules = join(repo, "design-worker/node_modules");
 const out = join(repo, "macos/Sources/VesperCore/Resources/elk");
 const pkg = JSON.parse(readFileSync(join(modules, "elkjs/package.json"), "utf8"));
 

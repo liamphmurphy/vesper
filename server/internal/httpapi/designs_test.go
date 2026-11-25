@@ -24,7 +24,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
-const designFixtures = "../../../web/lib/designs/fixtures"
+const designFixtures = "../../../design-worker/lib/designs/fixtures"
 
 type designsEnv struct{ *slidesEnv }
 

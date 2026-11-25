@@ -2,25 +2,25 @@
 // Builds macos/Sources/VesperCore/Resources/shiki/shiki.js: Shiki with the JavaScript regex engine (no
 // wasm), the web's themes and languages, as one script the native markdown renderer runs in
 // JavaScriptCore (VesperCore Markdown/CodeHighlighter.swift). The output is checked in so the app
-// build fetches nothing; re-run after upgrading shiki or changing web/lib/highlight.ts:
+// build fetches nothing; re-run after upgrading shiki in design-worker/package.json:
 //
-//   node macos/scripts/build-shiki-bundle.mjs        (needs web/node_modules: npm --prefix web ci)
-//
-// The languages and themes are read from web/lib/highlight.ts, so the two can't drift.
-import { readFileSync, mkdirSync } from "node:fs";
+//   node macos/scripts/build-shiki-bundle.mjs        (needs design-worker/node_modules: npm --prefix design-worker ci)
+import { mkdirSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const repo = join(dirname(fileURLToPath(import.meta.url)), "../..");
-const web = join(repo, "web");
+const worker = join(repo, "design-worker");
 const out = join(repo, "macos/Sources/VesperCore/Resources/shiki/shiki.js");
-const { build } = createRequire(join(web, "package.json"))("esbuild");
+const { build } = createRequire(join(worker, "package.json"))("esbuild");
 
-const source = readFileSync(join(web, "lib/highlight.ts"), "utf8");
-const langs = [...source.matchAll(/^\s*([\w-]+): \(\) => import\("shiki\/langs\/([\w-]+)\.mjs"\)/gm)].map((m) => ({ id: m[1], file: m[2] }));
-const themes = [...source.matchAll(/import\("shiki\/themes\/([\w-]+)\.mjs"\)/g)].map((m) => m[1]);
-if (langs.length === 0 || themes.length !== 2) throw new Error("couldn't read the languages and themes from web/lib/highlight.ts");
+const langs = [
+  "typescript", "tsx", "javascript", "jsx", "json", "go", "python", "ruby", "rust", "java",
+  "kotlin", "swift", "c", "cpp", "csharp", "php", "shellscript", "yaml", "toml", "markdown",
+  "html", "css", "scss", "sql", "docker", "make",
+].map((id) => ({ id, file: id }));
+const themes = ["github-light", "github-dark"];
 
 // One entry point: a synchronous highlighter (JavaScriptCore runs no event loop between calls) behind
 // a tiny API that returns JSON, so Swift crosses the bridge once per block.
@@ -54,7 +54,7 @@ globalThis.VesperShiki = {
 
 mkdirSync(dirname(out), { recursive: true });
 await build({
-  stdin: { contents: entry, resolveDir: web, sourcefile: "shiki-entry.js" },
+  stdin: { contents: entry, resolveDir: worker, sourcefile: "shiki-entry.js" },
   bundle: true,
   format: "iife",
   platform: "neutral",

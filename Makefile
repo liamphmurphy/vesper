@@ -1,9 +1,9 @@
 # Vesper developer tasks. `make help` lists them.
-# Vesper ships as the macOS app (`make mac-app`); `make dev` runs the API and
-# web app on the host against a local Postgres for hot-reload development.
+# Vesper ships as the native macOS app (`make mac-app`); `make dev` runs the API and
+# headless design worker on the host against a local Postgres for development.
 SHELL := /bin/bash
 
-.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api web web-deps runner gen gen-check test test-server test-web lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall mac-release mac-golden
+.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api worker worker-deps runner gen gen-check test test-server test-worker lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall mac-release mac-golden
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -36,58 +36,57 @@ stop-dev: ## Kill whatever is listening on the API and web dev ports (left over 
 	  kill -9 $$(lsof -nP -tiTCP:$$port -sTCP:LISTEN 2>/dev/null) 2>/dev/null || true; \
 	done
 
-dev: dev-infra stop-dev ## Local Postgres, API (hot reload) + Vite dev server on the host → http://localhost:3000 (replaces any API/web already on those ports)
+dev: dev-infra stop-dev ## Local Postgres, API (hot reload) + headless design worker on the host (replaces any process already on those ports)
 	@trap 'kill 0' EXIT; \
 	  $(MAKE) --no-print-directory api & \
-	  $(MAKE) --no-print-directory web & \
+	  $(MAKE) --no-print-directory worker & \
 	  wait
 
 api: ## Run the API (hot reload if air is installed: go install github.com/air-verse/air@latest)
-	cd server && export PUBLIC_URL=$${PUBLIC_URL:-http://localhost:8000} WEB_URL=$${WEB_URL:-http://localhost:$(WEB_PORT)} \
+	cd server && export PUBLIC_URL=$${PUBLIC_URL:-http://localhost:8000} WEB_URL=$${WEB_URL:-http://localhost:$(API_PORT)} \
 	  DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} DESIGN_WORKER_URL=$${DESIGN_WORKER_URL:-http://localhost:$(WEB_PORT)/internal/designs}; \
 	  if command -v air >/dev/null; then air; else go run ./cmd/vesper serve; fi
 
 runner: ## Run a runner on the host (RUNNER_BACKEND=microvm needs the app's kernel and rootfs; =fake needs RUNNER_CLAUDE_BIN/RUNNER_CODEX_BIN)
 	cd server && RUNNER_MCP_URL=$${RUNNER_MCP_URL:-http://localhost:$(API_PORT)/mcp} go run ./cmd/vesper runner
 
-WEB_DEPS := web/node_modules/.package-lock.json
+WORKER_DEPS := design-worker/node_modules/.package-lock.json
 
-$(WEB_DEPS): web/package-lock.json
-	cd web && npm ci
+$(WORKER_DEPS): design-worker/package-lock.json
+	cd design-worker && npm ci
 	@touch $@
 
-web-deps: $(WEB_DEPS) ## Install web dependencies if the lockfile changed
+worker-deps: $(WORKER_DEPS) ## Install design-worker dependencies if the lockfile changed
 
-web: web-deps ## Run the Vite dev server
-	cd web && DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} npm run dev
+worker: worker-deps ## Run the headless design & PDF worker
+	cd design-worker && DESIGN_WORKER_TOKEN=$${DESIGN_WORKER_TOKEN:-vesper-local-design-worker} npm run dev
 
-gen: web-deps ## Regenerate API code (Go, TS and the Mac app's Swift) and sqlc queries. Needs sqlc 1.31+ on PATH.
+gen: ## Regenerate API code (Go and the Mac app's Swift) and sqlc queries. Needs sqlc 1.31+ on PATH.
 	cd server && go generate ./...
 	cd server && sqlc generate
-	cd web && npm run gen
 	cd server && go run ./cmd/gen-swift-api -spec ../api/openapi.yaml -out ../macos/Sources/VesperCore/API/Generated
 
 gen-check: gen ## Fail if generated code is out of date
-	@git diff --exit-code -- server/internal/api server/internal/store web/lib/api macos/Sources/VesperCore/API/Generated || \
+	@git diff --exit-code -- server/internal/api server/internal/store macos/Sources/VesperCore/API/Generated || \
 	  (echo "generated code is stale: run 'make gen' and commit" && exit 1)
 
-test: test-server test-web ## Run backend and UI tests
+test: test-server test-worker ## Run backend and design-worker tests
 
 # httpapi and runner take ~17-19 min on a 4-core machine, past go test's 10m default.
 test-server: ## Run Go tests (database tests need TEST_DATABASE_URL)
 	cd server && go test -timeout 30m ./...
 
-test-web: web-deps ## Typecheck the web app and run its unit tests
-	cd web && npm run typecheck
-	cd web && npm run test:unit
+test-worker: worker-deps ## Typecheck the design worker and run its unit tests
+	cd design-worker && npm run typecheck
+	cd design-worker && npm test
 
-lint: web-deps ## Vet Go, lint web
+lint: worker-deps ## Vet Go, typecheck design-worker
 	cd server && go vet ./... && test -z "$$(gofmt -l cmd internal)"
-	cd web && npm run lint
+	cd design-worker && npm run typecheck
 
-build: web-deps ## Build both apps
+build: worker-deps ## Build server and design-worker
 	cd server && go build ./...
-	cd web && npm run build
+	cd design-worker && npm run build
 
 reset: ## Stop the dev Postgres and delete all local dev data (.dev/pgdata, blobs)
 	-@scripts/dev-postgres.sh stop

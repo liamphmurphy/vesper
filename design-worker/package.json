@@ -1,0 +1,34 @@
+{
+  "name": "vesper-design-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "node scripts/build.mjs",
+    "start": "node dist/server.mjs",
+    "dev": "node --experimental-strip-types src/main.ts",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test lib/*.test.mjs",
+    "gen:inter-metrics": "node --experimental-strip-types scripts/gen-inter-metrics.mjs",
+    "gen:design-tokens": "node --experimental-strip-types scripts/gen-design-tokens.mjs"
+  },
+  "dependencies": {
+    "@resvg/resvg-js": "2.6.2",
+    "elkjs": "^0.12.1",
+    "pdfjs-dist": "^6.5.438"
+  },
+  "devDependencies": {
+    "@types/node": "^20",
+    "@types/pngjs": "^6.0.5",
+    "esbuild": "^0.28.2",
+    "fflate": "^0.8.3",
+    "katex": "^0.19.1",
+    "mermaid": "^12.3.0",
+    "pngjs": "^7.0.0",
+    "shiki": "^4.6.0",
+    "typescript": "^5"
+  },
+  "overrides": {
+    "image-size": "^2.1.0"
+  }
+}

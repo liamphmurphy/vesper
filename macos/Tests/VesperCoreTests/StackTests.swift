@@ -114,7 +114,7 @@ final class StackLaunchTests: XCTestCase {
         BundledResources(
             baseDir: URL(fileURLWithPath: "/x"), vesperBin: URL(fileURLWithPath: "/x/bin/vesper"),
             postgresBinDir: URL(fileURLWithPath: "/x/postgres/bin"), kernelPath: URL(fileURLWithPath: "/x/images/vmlinux"),
-            webDistDir: URL(fileURLWithPath: "/x/web"), nodeBin: URL(fileURLWithPath: "/x/node/bin/node")
+            designWorkerDir: URL(fileURLWithPath: "/x/design-worker"), nodeBin: URL(fileURLWithPath: "/x/node/bin/node")
         )
     }
 
@@ -131,7 +131,7 @@ final class StackLaunchTests: XCTestCase {
         XCTAssertEqual(env["VESPER_APP_ADDR"], "127.0.0.1:8080")
         XCTAssertEqual(env["VESPER_POSTGRES_BIN_DIR"], "/x/postgres/bin")
         XCTAssertEqual(env["VESPER_KERNEL_PATH"], "/x/images/vmlinux")
-        XCTAssertEqual(env["VESPER_WEB_DIST_DIR"], "/x/web")
+        XCTAssertEqual(env["VESPER_DESIGN_WORKER_DIR"], "/x/design-worker")
         XCTAssertEqual(env["VESPER_NODE_BIN"], "/x/node/bin/node")
         XCTAssertEqual(env["VESPER_ROOTFS_URL"], launch.rootfsUrl)
         XCTAssertEqual(env["RUNNER_MAX_CONCURRENT"], "3")
@@ -168,7 +168,7 @@ final class StackLaunchTests: XCTestCase {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent("vesper-res-\(UUID().uuidString)")
         defer { try? FileManager.default.removeItem(at: dir) }
         XCTAssertNil(BundledResources.resolve(baseDir: dir))
-        for p in ["bin/vesper", "postgres/bin/postgres", "images/vmlinux", "web/index.html"] {
+        for p in ["bin/vesper", "postgres/bin/postgres", "images/vmlinux", "design-worker/server.mjs"] {
             let url = dir.appendingPathComponent(p)
             try FileManager.default.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
             FileManager.default.createFile(atPath: url.path, contents: Data("x".utf8))
@@ -176,7 +176,7 @@ final class StackLaunchTests: XCTestCase {
         let r = try XCTUnwrap(BundledResources.resolve(baseDir: dir))
         XCTAssertEqual(r.postgresBinDir.path, dir.appendingPathComponent("postgres/bin").path)
         XCTAssertNotNil(r.kernelPath)
-        XCTAssertNotNil(r.webDistDir)
+        XCTAssertNotNil(r.designWorkerDir)
         XCTAssertNil(r.nodeBin)
         XCTAssertEqual(BundledResources.locate(environment: ["VESPER_RESOURCES_DIR": dir.path]), URL(fileURLWithPath: dir.path, isDirectory: true))
         // Without the bundled node, dev falls back to VESPER_NODE_BIN.

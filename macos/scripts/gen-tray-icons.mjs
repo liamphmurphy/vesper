@@ -7,8 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { createRequire } from "node:module";
 
-// @resvg/resvg-js comes from web/node_modules (run `npm ci` in web/ first).
-const { Resvg } = createRequire(import.meta.url)("../../web/node_modules/@resvg/resvg-js");
+// @resvg/resvg-js comes from design-worker/node_modules (run `npm ci` in design-worker/ first).
+const { Resvg } = createRequire(import.meta.url)("../../design-worker/node_modules/@resvg/resvg-js");
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const outDir = path.resolve(__dirname, "..", "Resources", "tray");

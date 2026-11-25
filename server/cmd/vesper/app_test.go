@@ -107,7 +107,7 @@ func TestAppBootsSealedAndRedeemsSignInCode(t *testing.T) {
 	t.Setenv("VESPER_NO_SIGNIN", "")
 	t.Setenv("VESPER_POSTGRES_BIN_DIR", pgBin)
 	t.Setenv("VESPER_APP_DISABLE_RUNNER", "1")
-	t.Setenv("VESPER_WEB_DIST_DIR", "")
+	t.Setenv("VESPER_DESIGN_WORKER_DIR", "")
 
 	dataDir := t.TempDir()
 	ctx, cancel := context.WithCancel(context.Background())

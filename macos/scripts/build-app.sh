@@ -89,7 +89,7 @@ mkdir -p "${contents}/MacOS" "${contents}/Resources/node/bin" "${contents}/Resou
 cp "${bin_dir}/Vesper" "${contents}/MacOS/Vesper"
 chmod 0755 "${contents}/MacOS/Vesper"
 ditto "${core_bundle}" "${contents}/Resources/Vesper_VesperCore.bundle"
-for sub in bin postgres web images; do
+for sub in bin postgres design-worker images; do
   ditto "${res_src}/${sub}" "${contents}/Resources/${sub}"
 done
 cp "${node_bin}" "${contents}/Resources/node/bin/node"
@@ -97,7 +97,7 @@ chmod 0755 "${contents}/Resources/node/bin/node"
 cp "${macos_dir}/Resources/AppIcon.icns" "${contents}/Resources/AppIcon.icns"
 cp "${macos_dir}/Resources/tray/"*.png "${contents}/Resources/tray/"
 
-version="$(plutil -extract version raw "${repo_root}/web/package.json")"
+version="$(tr -d '[:space:]' < "${repo_root}/VERSION")"
 build="$(git -C "${repo_root}" rev-list --count HEAD 2>/dev/null || echo 1)"
 sed -e "s/@VERSION@/${version}/g" -e "s/@BUILD@/${build}/g" "${macos_dir}/Resources/Info.plist" > "${contents}/Info.plist"
 plutil -lint "${contents}/Info.plist" >/dev/null
@@ -112,7 +112,7 @@ ditto "${safari_src}/Resources" "${appex}/Contents/Resources"
 sed -e "s/@VERSION@/${version}/g" -e "s/@BUILD@/${build}/g" "${safari_src}/Info.plist" > "${appex}/Contents/Info.plist"
 plutil -lint "${appex}/Contents/Info.plist" >/dev/null
 
-# 5. Sign inside-out, every Mach-O under postgres, web and node, then
+# 5. Sign inside-out, every Mach-O under postgres, design-worker and node, then
 #    bin/vesper with the Virtualization entitlement (no hardened runtime), then VesperCore's resource
 #    bundle (no code, but a bundle the app's seal would otherwise treat as unsigned), then the Safari extension
 #    with its sandbox entitlements, then the app (no --deep, so both keep their entitlements).
@@ -123,7 +123,7 @@ else
   log "signing with '${identity}'"
 fi
 count=0
-for sub in postgres web node; do
+for sub in postgres design-worker node; do
   while IFS= read -r f; do
     sign "${f}" >/dev/null 2>&1 || { echo "codesign failed: ${f}" >&2; sign "${f}"; exit 1; }
     count=$((count + 1))

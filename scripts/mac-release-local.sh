@@ -172,7 +172,7 @@ tmp_dir=""
 version_bumped=0
 cleanup() {
   if [[ "$version_bumped" == "1" ]]; then
-    git -C "$repo_root" checkout -- web/package.json web/package-lock.json 2>/dev/null || true
+    git -C "$repo_root" checkout -- VERSION 2>/dev/null || true
   fi
   if [[ -n "$tmp_dir" && -d "$tmp_dir" ]]; then
     rm -rf "$tmp_dir"
@@ -226,15 +226,15 @@ if [[ "$dmg_only" == "0" ]]; then
   fi
 fi
 
-# Build the DMG with the tag's version stamped into web/package.json (restored on EXIT).
+# Build the DMG with the tag's version stamped into VERSION (restored on EXIT).
 if [[ "$skip_build" == "0" ]]; then
-  if ! git -C "$repo_root" diff --quiet -- web/package.json web/package-lock.json; then
-    die "web/package.json or web/package-lock.json has uncommitted changes; commit or stash them first"
+  if ! git -C "$repo_root" diff --quiet -- VERSION; then
+    die "VERSION has uncommitted changes; commit or stash it first"
   fi
 
-  log "stamping version ${version} into web/package.json (temporary)"
+  log "stamping version ${version} into VERSION (temporary)"
   version_bumped=1
-  npm --prefix "${repo_root}/web" version "$version" --no-git-tag-version --allow-same-version >/dev/null
+  printf '%s\n' "$version" > "${repo_root}/VERSION"
 
   log "building macos/build/Vesper-arm64.dmg (VESPER_IMAGES_DIR=${img_dir})"
   VESPER_IMAGES_DIR="$img_dir" make -C "$repo_root" mac-dmg
