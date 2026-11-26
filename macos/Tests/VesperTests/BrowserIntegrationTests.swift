@@ -19,13 +19,12 @@ struct BrowserIntegrationTests {
 
     @Test("Browser web views isolate cookies per profile, away from Vesper's default store, and use standard Safari UA")
     func webViewIsolationAndUserAgent() {
-        let regular = BrowserWebViewFactory.makeWebView(isPrivate: false, contentRuleList: nil)
-        let priv = BrowserWebViewFactory.makeWebView(isPrivate: true, contentRuleList: nil)
+        let regular = BrowserWebViewFactory.makeWebView(isPrivate: false)
+        let priv = BrowserWebViewFactory.makeWebView(isPrivate: true)
         let workStoreID = UUID()
         let work = BrowserWebViewFactory.makeWebView(
             isPrivate: false,
-            profileDataStoreID: workStoreID,
-            contentRuleList: nil
+            profileDataStoreID: workStoreID
         )
 
         #expect(regular.configuration.websiteDataStore !== WKWebsiteDataStore.default())
@@ -75,7 +74,6 @@ struct BrowserIntegrationTests {
         let wv = BrowserWebViewFactory.makeWebView(
             isPrivate: false,
             profileDataStoreID: dataStoreID,
-            contentRuleList: nil,
             webExtensionController: host.controller
         )
         #expect(wv.configuration.webExtensionController === host.controller)
@@ -189,5 +187,230 @@ struct BrowserIntegrationTests {
         #expect(next?.keyEquivalentModifierMask == [.command, .control])
         #expect(prev?.keyEquivalent == "[")
         #expect(prev?.keyEquivalentModifierMask == [.command, .control])
+    }
+
+    @Test("BrowserAdBlockEngine compiles all bundled starter filter lists into real WebKit WKContentRuleLists")
+    func adBlockEngineCompilesBundledStarterListsInWebKit() async {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vesper-adblock-test-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let engine = BrowserAdBlockEngine(dataDirectory: tempRoot)
+        await engine.recompile(enabled: true, config: .default)
+
+        #expect(engine.lastError == nil)
+        #expect(engine.compiledRuleLists.count >= 4)
+        #expect(engine.compiledPageScript != nil)
+        #expect(engine.stats.networkBlockRules > 150)
+        #expect(engine.stats.cosmeticRules > 50)
+        #expect(engine.stats.scriptletRules > 10)
+
+        // Instant per-tab attach/detach when switching between protected and allowlisted hosts.
+        let record = BrowserTabRecord(url: "", title: "Test")
+        let session = BrowserTabSession(
+            record: record,
+            contentRuleLists: engine.compiledRuleLists,
+            adBlockPageScript: engine.compiledPageScript,
+            adBlockActive: true
+        )
+        defer { session.teardown() }
+        session.adBlockActiveProvider = { url in
+            BrowserContentBlockerRules.isAdBlockActive(
+                globalEnabled: true,
+                host: url,
+                disabledHosts: ["trusted.example"]
+            )
+        }
+
+        // Attached initially: metrics bridge + autofill + adblock page script = 3 user scripts.
+        #expect(session.webView.configuration.userContentController.userScripts.count == 3)
+
+        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill & metrics bridge.
+        session.syncAdBlockForURL("https://trusted.example/page")
+        #expect(session.webView.configuration.userContentController.userScripts.count == 2)
+
+        // Navigating back to a protected host reattaches the adblock page script instantaneously.
+        session.syncAdBlockForURL("https://news.example/article")
+        #expect(session.webView.configuration.userContentController.userScripts.count == 3)
+    }
+
+    @Test("BrowserAdBlockEngine downloads, caches, handles 304 ETag, and compiles upstream filter lists")
+    func adBlockEngineUpdaterCachesAndCompilesRemoteLists() async {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vesper-adblock-update-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let mockList = """
+        ! Mock Upstream EasyList
+        ||mocked-ad-network.example^$third-party
+        ##.mocked-ad-slot
+        example.com##+js(set-constant, mockedAdFlag, false)
+        """
+        let counter = FetchCounter()
+        let engine = BrowserAdBlockEngine(dataDirectory: tempRoot) { url, etag, _ in
+            let call = await counter.increment()
+            if call == 1 {
+                return BrowserFilterListFetchResponse(
+                    statusCode: 200,
+                    body: Data(mockList.utf8),
+                    etag: "\"v1\""
+                )
+            }
+            #expect(etag == "\"v1\"")
+            return BrowserFilterListFetchResponse(statusCode: 304, body: Data(), etag: "\"v1\"")
+        }
+
+        var cfg = BrowserAdBlockConfig(
+            enabledCategories: [.ads, .scriptlets],
+            subscriptions: [
+                BrowserFilterListSubscription(
+                    id: "mock-list",
+                    name: "Mock Upstream",
+                    category: .ads,
+                    url: "https://filters.example.com/list.txt",
+                    isBuiltIn: false,
+                    isEnabled: true
+                ),
+            ],
+            youtubeAdShieldEnabled: false
+        )
+
+        let first = await engine.updateFilterLists(config: cfg)
+        #expect(first.updatedCount == 1)
+        #expect(first.errorCount == 0)
+        #expect(first.config.subscriptions[0].ruleCount == 3)
+        #expect(first.config.subscriptions[0].lastUpdatedAt != nil)
+        cfg = first.config
+
+        // Second refresh sends If-None-Match and handles 304 cleanly.
+        let second = await engine.updateFilterLists(config: cfg)
+        #expect(second.updatedCount == 1)
+        #expect(second.errorCount == 0)
+
+        await engine.recompile(enabled: true, config: second.config, force: true)
+        #expect(engine.lastError == nil)
+        #expect(!engine.compiledRuleLists.isEmpty)
+        #expect(engine.compiledPageScript != nil)
+    }
+
+    @Test("Phase B page-world runtime executes scriptlets, YouTube ad pruning, extended CSS, and :style() in live WKWebView")
+    func phaseBRuntimeExecutesInLiveWebView() async throws {
+        let rulesText = """
+        ##+js(set-constant, canRunAds, true)
+        ##body.scroll-locked:style(overflow: auto !important;)
+        youtube.com##div.feed-card:has-text(Sponsored):upward(1)
+        """
+        let compiled = BrowserAdBlockCompiler.compile(
+            sources: [BrowserAdBlockFilterSource(category: .scriptlets, text: rulesText)],
+            youtubeAdShieldEnabled: true
+        )
+        let source = try #require(BrowserAdBlockScripts.makePageRuntimeSource(for: compiled.advanced))
+        let pageScript = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page)
+
+        var hitCount = 0
+        let metricsProxy = BrowserScriptMessageProxy { _ in
+            hitCount += 1
+        }
+        let webView = BrowserWebViewFactory.makeWebView(
+            isPrivate: true,
+            adBlockPageScript: pageScript,
+            adBlockMetricsHandler: metricsProxy
+        )
+        defer {
+            webView.configuration.userContentController.removeScriptMessageHandler(
+                forName: BrowserAdBlockScripts.metricsHandlerName,
+                contentWorld: .defaultClient
+            )
+            webView.navigationDelegate = nil
+        }
+
+        let navDelegate = TestNavigationWaiter()
+        webView.navigationDelegate = navDelegate
+
+        let html = """
+        <!doctype html>
+        <html>
+        <head>
+          <style>body.scroll-locked { overflow: hidden; }</style>
+          <script>
+            window.ytInitialPlayerResponse = {
+              videoDetails: { title: "Demo Video" },
+              adPlacements: [{ id: "pre-roll" }],
+              playerAds: [{ id: "mid-roll" }],
+              adSlots: [{ id: "slot-1" }]
+            };
+            window.__parsedTest = JSON.parse('{"adPlacements":[1],"video":"ok"}');
+          </script>
+        </head>
+        <body class="scroll-locked">
+          <section id="wrapper-sponsored">
+            <div class="feed-card"><span>Sponsored</span></div>
+          </section>
+          <section id="wrapper-organic">
+            <div class="feed-card"><span>Real Video</span></div>
+          </section>
+        </body>
+        </html>
+        """
+        webView.loadHTMLString(html, baseURL: URL(string: "https://www.youtube.com/watch?v=test123")!)
+        await navDelegate.waitForFinish()
+        // Allow the 120ms DOM observer pass to settle.
+        try await Task.sleep(for: .milliseconds(250))
+
+        let checkJS = """
+        ({
+          canRunAds: window.canRunAds,
+          ytTitle: window.ytInitialPlayerResponse && window.ytInitialPlayerResponse.videoDetails && window.ytInitialPlayerResponse.videoDetails.title,
+          ytHasAdPlacements: window.ytInitialPlayerResponse && ('adPlacements' in window.ytInitialPlayerResponse),
+          ytHasPlayerAds: window.ytInitialPlayerResponse && ('playerAds' in window.ytInitialPlayerResponse),
+          ytHasAdSlots: window.ytInitialPlayerResponse && ('adSlots' in window.ytInitialPlayerResponse),
+          parsedHasAdPlacements: window.__parsedTest && ('adPlacements' in window.__parsedTest),
+          parsedVideo: window.__parsedTest && window.__parsedTest.video,
+          sponsoredDisplay: getComputedStyle(document.getElementById('wrapper-sponsored')).display,
+          organicDisplay: getComputedStyle(document.getElementById('wrapper-organic')).display,
+          bodyOverflow: getComputedStyle(document.body).overflow
+        })
+        """
+        let raw = try await webView.evaluateJavaScript(checkJS)
+        let dict = try #require(raw as? [String: Any])
+
+        #expect((dict["canRunAds"] as? Bool) == true)
+        #expect((dict["ytTitle"] as? String) == "Demo Video")
+        #expect((dict["ytHasAdPlacements"] as? Bool) == false)
+        #expect((dict["ytHasPlayerAds"] as? Bool) == false)
+        #expect((dict["ytHasAdSlots"] as? Bool) == false)
+        #expect((dict["parsedHasAdPlacements"] as? Bool) == false)
+        #expect((dict["parsedVideo"] as? String) == "ok")
+        #expect((dict["sponsoredDisplay"] as? String) == "none")
+        #expect((dict["organicDisplay"] as? String) != "none")
+        #expect((dict["bodyOverflow"] as? String) == "auto")
+        #expect(hitCount > 0)
+    }
+}
+
+private actor FetchCounter {
+    private var value = 0
+    func increment() -> Int {
+        value += 1
+        return value
+    }
+}
+
+@MainActor
+private final class TestNavigationWaiter: NSObject, WKNavigationDelegate {
+    private var continuation: CheckedContinuation<Void, Never>?
+    private var finished = false
+
+    func waitForFinish() async {
+        if finished { return }
+        await withCheckedContinuation { cont in
+            self.continuation = cont
+        }
+    }
+
+    func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        finished = true
+        continuation?.resume()
+        continuation = nil
     }
 }
