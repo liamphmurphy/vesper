@@ -38,12 +38,12 @@ func TestCodexAuthRefreshed(t *testing.T) {
 		next string
 		want bool
 	}{
-		"newer":         {codexAuth("acct", now.Add(time.Minute)), true},
-		"unchanged":     {cur, false},
-		"older":         {codexAuth("acct", now.Add(-time.Minute)), false},
-		"other account": {codexAuth("attacker", now.Add(time.Minute)), false},
-		"far future":    {codexAuth("acct", time.Now().Add(time.Hour)), false},
-		"garbage":       {"{}", false},
+		"newer":          {codexAuth("acct", now.Add(time.Minute)), true},
+		"unchanged":      {cur, false},
+		"older":          {codexAuth("acct", now.Add(-time.Minute)), false},
+		"other account":  {codexAuth("attacker", now.Add(time.Minute)), false},
+		"far future":     {codexAuth("acct", time.Now().Add(time.Hour)), false},
+		"garbage":        {"{}", false},
 		"dropped access": {fmt.Sprintf(`{"auth_mode":"chatgpt","last_refresh":%q,"tokens":{"access_token":"","refresh_token":"r2","id_token":"i","account_id":"acct"}}`, now.Add(time.Minute).Format(time.RFC3339)), false},
 	} {
 		if got := CodexAuthRefreshed(cur, tc.next); got != tc.want {
@@ -104,14 +104,14 @@ func TestClaudeAuthRefreshed(t *testing.T) {
 		next string
 		want bool
 	}{
-		"newer":            {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), true},
-		"unchanged":        {cur, false},
-		"unrotated":        {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(time.Minute).UnixMilli()), false},
-		"bad access pfx":   {claudeAuthJSON("evil-token", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), false},
-		"bad refresh pfx":  {claudeAuthJSON("sk-ant-oat01-new", "evil-refresh", base.Add(time.Minute).UnixMilli()), false},
-		"older":            {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(-time.Minute).UnixMilli()), false},
-		"far future":       {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", time.Now().Add(45*24*time.Hour).UnixMilli()), false},
-		"empty":            {`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`, false},
+		"newer":           {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), true},
+		"unchanged":       {cur, false},
+		"unrotated":       {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(time.Minute).UnixMilli()), false},
+		"bad access pfx":  {claudeAuthJSON("evil-token", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), false},
+		"bad refresh pfx": {claudeAuthJSON("sk-ant-oat01-new", "evil-refresh", base.Add(time.Minute).UnixMilli()), false},
+		"older":           {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(-time.Minute).UnixMilli()), false},
+		"far future":      {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", time.Now().Add(45*24*time.Hour).UnixMilli()), false},
+		"empty":           {`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`, false},
 	} {
 		if got := ClaudeAuthRefreshed(cur, tc.next); got != tc.want {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)

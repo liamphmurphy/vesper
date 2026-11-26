@@ -29,9 +29,9 @@ func (g *dockerGuard) resolveAndPinBind(src string) (string, error) {
 	scratch := resolvedRoot(g.binds.scratch)
 
 	var (
-		rootDir     string
-		rel         string
-		needOwnUID  bool
+		rootDir    string
+		rel        string
+		needOwnUID bool
 	)
 	switch {
 	case within(clean, g.binds.workspace):

@@ -102,9 +102,9 @@ type MicroVM struct {
 	// guest OAuth credentials before persisting them back to the host store.
 	VerifyClaudeAuth func(ctx context.Context, auth string) error
 	VerifyCodexAuth  func(ctx context.Context, auth string) error
-	Log            *slog.Logger
-	ModelsTimeout  time.Duration
-	UsageTimeout   time.Duration
+	Log              *slog.Logger
+	ModelsTimeout    time.Duration
+	UsageTimeout     time.Duration
 
 	// Optional disk template sizes (defaults to 64G/16G/32G sparse ext4 images).
 	TestWorkspaceBytes     int64
