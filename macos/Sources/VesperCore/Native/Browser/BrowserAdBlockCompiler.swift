@@ -48,23 +48,26 @@ public struct BrowserScriptletRule: Codable, Sendable, Equatable {
     }
 }
 
-/// A parsed extended/procedural cosmetic rule (e.g. `:has-text()`, `:upward()`, `:matches-css()`, `:remove()`).
+/// A parsed extended/procedural cosmetic rule (e.g. `:has-text()`, `:upward()`, `:matches-css()`, `:remove()`, `:style()`).
 public struct BrowserExtendedCSSRule: Codable, Sendable, Equatable {
     public let selector: String
     public let includeDomains: [String]
     public let excludeDomains: [String]
     public let removeNode: Bool
+    public let styleCSS: String?
 
     public init(
         selector: String,
         includeDomains: [String] = [],
         excludeDomains: [String] = [],
-        removeNode: Bool = false
+        removeNode: Bool = false,
+        styleCSS: String? = nil
     ) {
         self.selector = selector
         self.includeDomains = includeDomains
         self.excludeDomains = excludeDomains
         self.removeNode = removeNode
+        self.styleCSS = styleCSS
     }
 }
 
@@ -184,9 +187,26 @@ public enum BrowserAdBlockCompiler {
     public static let genericCosmeticBatchSize = 40
 
     private static let unsupportedNetworkOptionPrefixes: [String] = [
-        "csp=", "redirect=", "redirect-rule=", "removeparam=", "replace=",
-        "denyallow=", "header=", "permissions=", "uritransform=", "rewrite=",
-        "app=", "method=", "to=", "from=", "ipaddress=", "reason=", "urlskip=",
+        "csp=", "redirect-rule=", "removeparam=", "replace=",
+        "header=", "permissions=", "uritransform=", "rewrite=",
+        "app=", "method=", "to=", "ipaddress=", "reason=", "urlskip=",
+    ]
+
+    /// Safe empty/noop `$redirect=` targets that can be downgraded to standard WebKit `block` rules
+    /// when a content blocker cannot synthesize surrogate response bodies.
+    private static let safeNoopRedirectTargets: Set<String> = [
+        "empty", "noopjs", "noop.js", "nooptext", "noop.txt", "noopcss", "noop.css",
+        "noopframe", "noop.html", "1x1.gif", "2x2.png", "3x2.png", "32x32.png",
+        "noopmp3-0.1s", "noopmp4-1s",
+    ]
+
+    /// Top TLDs used to expand entity domains (`example.*`) for WebKit network `if-domain`/`unless-domain` triggers.
+    /// Phase B scriptlets and CSS injection match `example.*` dynamically for *all* TLDs without expansion.
+    private static let entityNetworkTLDs: [String] = [
+        "com", "net", "org", "co", "io", "tv", "me", "info", "biz", "cc",
+        "to", "sx", "xxx", "pro", "live", "site", "online", "xyz", "club",
+        "de", "fr", "es", "it", "nl", "pl", "ru", "uk", "co.uk", "ca",
+        "au", "com.au", "br", "com.br", "jp", "co.jp", "in", "se", "ch", "at", "be",
     ]
 
     private static let extendedCSSMarkers: [String] = [
@@ -239,6 +259,7 @@ public enum BrowserAdBlockCompiler {
             var networkBlocks: [WebKitRule] = []
             var networkExceptions: [WebKitRule] = []
             var importantBlocks: [WebKitRule] = []
+            var denyAllowGroups: [DenyAllowRuleGroup] = []
 
             var genericCosmeticSelectors: [String] = []
             var genericCosmeticSeen = Set<String>()
@@ -261,6 +282,13 @@ public enum BrowserAdBlockCompiler {
                         allScriptlets.append(adguardScriptlet.rule)
                         stats.scriptletRules += 1
                     }
+                    continue
+                }
+
+                // 1b. AdGuard CSS injection: `domains#$#selector { css }`
+                if let adguardStyle = parseAdGuardCSSInjection(line) {
+                    allInjectedStyles.append(adguardStyle)
+                    stats.injectedStyleRules += 1
                     continue
                 }
 
@@ -309,15 +337,34 @@ public enum BrowserAdBlockCompiler {
                         continue
                     }
 
-                    // Style injection rule: `selector:style(css)`
-                    if let styleRule = parseStyleInjectionRule(
+                    // Action pseudo-classes `:remove-attr(...)` / `:remove-class(...)` -> Phase B DOM scriptlets.
+                    if !cosmeticOp.isException,
+                       let actionScriptlet = parseCosmeticActionScriptlet(
+                           body: body,
+                           includeDomains: parsedDomains.include,
+                           excludeDomains: parsedDomains.exclude
+                       )
+                    {
+                        allScriptlets.append(actionScriptlet)
+                        stats.scriptletRules += 1
+                        continue
+                    }
+
+                    // Style injection rule: `selector:style(css)` (supports both standard and procedural selectors).
+                    if let styleOutcome = parseStyleInjectionRule(
                         body: body,
                         includeDomains: parsedDomains.include,
                         excludeDomains: parsedDomains.exclude
                     ) {
                         if !cosmeticOp.isException {
-                            allInjectedStyles.append(styleRule)
-                            stats.injectedStyleRules += 1
+                            switch styleOutcome {
+                            case .standard(let styleRule):
+                                allInjectedStyles.append(styleRule)
+                                stats.injectedStyleRules += 1
+                            case .procedural(let extRule):
+                                allExtendedCSS.append(extRule)
+                                stats.extendedCSSRules += 1
+                            }
                         }
                         continue
                     }
@@ -370,7 +417,7 @@ public enum BrowserAdBlockCompiler {
                     continue
                 }
 
-                // Skip AdGuard CSS injection `#$$`, `#$#`, `#%#` (non-scriptlet arbitrary JS is intentionally blocked for security).
+                // Skip AdGuard arbitrary JS (`#%#`, `#@%#`), exception CSS injection (`#@$#`), and HTML `$$` filters.
                 if line.contains("#%#") || line.contains("#@%#") || line.contains("#$#") || line.contains("#@$#") || line.contains("$$") {
                     stats.skippedRules += 1
                     continue
@@ -404,6 +451,13 @@ public enum BrowserAdBlockCompiler {
                         }
                         stats.networkBlockRules += 1
                     }
+                case .denyAllow(let group):
+                    let dedupKey = "da:\(group.block.dedupKey)|\(group.allowRules.map(\.urlFilter).joined(separator: ","))"
+                    if networkRuleDedup.insert(dedupKey).inserted {
+                        denyAllowGroups.append(group)
+                        stats.networkBlockRules += 1
+                        stats.networkExceptionRules += group.allowRules.count
+                    }
                 case .exception(let rule, let cosmeticAllowDomains):
                     for d in cosmeticAllowDomains {
                         cosmeticExceptionDomains.insert(d)
@@ -432,6 +486,16 @@ public enum BrowserAdBlockCompiler {
             )
             allChunks.append(contentsOf: networkChunks)
 
+            // `$denyallow=` rules live in their own isolated chunk(s) so their `ignore-previous-rules`
+            // entries only relax their paired broad block rule and never cancel specific blocks in `ads-net`.
+            let denyAllowChunks = buildDenyAllowChunks(
+                category: category,
+                groups: denyAllowGroups,
+                exceptions: networkExceptions,
+                maxRulesPerChunk: clampedChunkLimit
+            )
+            allChunks.append(contentsOf: denyAllowChunks)
+
             // Resolve cosmetic exceptions and build cosmetic chunks for this category.
             var resolvedCosmeticRules: [WebKitRule] = []
             var pureGenericSelectors: [String] = []
@@ -439,13 +503,24 @@ public enum BrowserAdBlockCompiler {
             for selector in genericCosmeticSelectors {
                 if genericCosmeticExceptions.contains(selector) { continue }
                 if let excluded = domainCosmeticExceptions[selector], !excluded.isEmpty {
-                    let unlessDomains = excluded.sorted().map { "*\($0)" }
-                    resolvedCosmeticRules.append(WebKitRule(
-                        urlFilter: ".*",
-                        unlessDomain: unlessDomains,
-                        actionType: .cssDisplayNone(selector: selector)
-                    ))
-                    stats.cosmeticRules += 1
+                    let concreteExcluded = excluded.filter { !isEntityDomain($0) }
+                    if !concreteExcluded.isEmpty {
+                        let unlessDomains = concreteExcluded.sorted().map { "*\($0)" }
+                        resolvedCosmeticRules.append(WebKitRule(
+                            urlFilter: ".*",
+                            unlessDomain: unlessDomains,
+                            actionType: .cssDisplayNone(selector: selector)
+                        ))
+                        stats.cosmeticRules += 1
+                    } else {
+                        allInjectedStyles.append(BrowserInjectedStyleRule(
+                            selector: selector,
+                            cssBody: "display: none !important;",
+                            includeDomains: [],
+                            excludeDomains: excluded.sorted()
+                        ))
+                        stats.injectedStyleRules += 1
+                    }
                 } else {
                     pureGenericSelectors.append(selector)
                 }
@@ -474,6 +549,23 @@ public enum BrowserAdBlockCompiler {
                 let filteredInclude = rule.includeDomains.filter { !exceptionSet.contains($0) }
                 let mergedExclude = Set(rule.excludeDomains).union(exceptionSet)
 
+                // Entity domains (`example.*`) cannot be encoded directly in WebKit `if-domain`/`unless-domain`,
+                // so route them to Phase B `<style>` injection where `hostCoveredBy` matches any TLD natively.
+                let hasEntityDomain = filteredInclude.contains(where: isEntityDomain)
+                    || mergedExclude.contains(where: isEntityDomain)
+                if hasEntityDomain {
+                    if !filteredInclude.isEmpty || (rule.includeDomains.isEmpty && !mergedExclude.isEmpty) {
+                        allInjectedStyles.append(BrowserInjectedStyleRule(
+                            selector: rule.selector,
+                            cssBody: "display: none !important;",
+                            includeDomains: filteredInclude.sorted(),
+                            excludeDomains: mergedExclude.sorted()
+                        ))
+                        stats.injectedStyleRules += 1
+                    }
+                    continue
+                }
+
                 // WebKit forbids both if-domain and unless-domain on the same trigger.
                 if !filteredInclude.isEmpty && mergedExclude.isEmpty {
                     let domains = filteredInclude.sorted().map { "*\($0)" }
@@ -498,14 +590,14 @@ public enum BrowserAdBlockCompiler {
                         stats.cosmeticRules += 1
                     }
                 } else if !filteredInclude.isEmpty {
-                    // Mixed include + exclude domains: route to advanced cosmetic bundle so exclusions are exact.
-                    allExtendedCSS.append(BrowserExtendedCSSRule(
+                    // Mixed include + exclude domains: route to Phase B `<style>` injection so exclusions are exact.
+                    allInjectedStyles.append(BrowserInjectedStyleRule(
                         selector: rule.selector,
+                        cssBody: "display: none !important;",
                         includeDomains: filteredInclude.sorted(),
-                        excludeDomains: mergedExclude.sorted(),
-                        removeNode: false
+                        excludeDomains: mergedExclude.sorted()
                     ))
-                    stats.extendedCSSRules += 1
+                    stats.injectedStyleRules += 1
                 }
             }
 
@@ -595,10 +687,21 @@ public enum BrowserAdBlockCompiler {
         let domains: [String]
     }
 
+    private struct DenyAllowRuleGroup {
+        let block: WebKitRule
+        let allowRules: [WebKitRule]
+    }
+
     private enum NetworkParseResult {
         case block(WebKitRule, important: Bool)
+        case denyAllow(DenyAllowRuleGroup)
         case exception(WebKitRule?, cosmeticAllowDomains: [String])
         case skipped
+    }
+
+    private enum StyleParseOutcome {
+        case standard(BrowserInjectedStyleRule)
+        case procedural(BrowserExtendedCSSRule)
     }
 
     // MARK: - Chunk Builders
@@ -647,6 +750,51 @@ public enum BrowserAdBlockCompiler {
             idx = end
             chunkIndex += 1
         }
+        return chunks
+    }
+
+    private static func buildDenyAllowChunks(
+        category: BrowserAdBlockCategory,
+        groups: [DenyAllowRuleGroup],
+        exceptions: [WebKitRule],
+        maxRulesPerChunk: Int
+    ) -> [BrowserCompiledRuleChunk] {
+        guard !groups.isEmpty else { return [] }
+
+        let maxTail = max(0, maxRulesPerChunk / 4)
+        let boundedExceptions = exceptions.count > maxTail ? Array(exceptions.prefix(maxTail)) : exceptions
+        let bodyCapacity = max(2, maxRulesPerChunk - boundedExceptions.count)
+
+        var chunks: [BrowserCompiledRuleChunk] = []
+        var current: [WebKitRule] = []
+        var chunkIndex = 0
+
+        func flush() {
+            guard !current.isEmpty else { return }
+            let rules = current + boundedExceptions
+            if let chunk = encodeChunk(
+                id: "\(category.rawValue)-denyallow-\(chunkIndex)",
+                category: category,
+                kind: .network,
+                rules: rules
+            ) {
+                chunks.append(chunk)
+                chunkIndex += 1
+            }
+            current.removeAll(keepingCapacity: true)
+        }
+
+        for group in groups {
+            let groupRules = [group.block] + group.allowRules
+            if groupRules.count > bodyCapacity {
+                continue
+            }
+            if current.count + groupRules.count > bodyCapacity {
+                flush()
+            }
+            current.append(contentsOf: groupRules)
+        }
+        flush()
         return chunks
     }
 
@@ -741,10 +889,11 @@ public enum BrowserAdBlockCompiler {
         }
         guard !working.isEmpty else { return .skipped }
 
-        // Split pattern and `$options` (ignore `$` inside raw `/regex/`).
+        // Split pattern and `$options`. Only skip when the entire rule is a bare `/regex/` with no trailing options.
         var pattern = working
         var rawOptions: [String] = []
-        if !working.hasPrefix("/"), let dollarIdx = working.lastIndex(of: "$") {
+        let isBareRegex = working.hasPrefix("/") && working.hasSuffix("/") && working.count >= 2
+        if !isBareRegex, let dollarIdx = working.lastIndex(of: "$") {
             let candidateOptions = String(working[working.index(after: dollarIdx)...])
             if !candidateOptions.isEmpty && !candidateOptions.contains("/") {
                 pattern = String(working[..<dollarIdx])
@@ -764,13 +913,23 @@ public enum BrowserAdBlockCompiler {
         var excludeResources = Set<String>()
         var includeDomains: [String] = []
         var excludeDomains: [String] = []
+        var denyAllowDomains: [String] = []
         var isCosmeticExceptionOnly = false
         var isDocumentException = false
 
         for opt in rawOptions {
             let lower = opt.lowercased()
-            if lower.isEmpty || lower == "all" { continue }
+            if lower.isEmpty || lower == "all" || lower == "empty" || lower == "mp4" { continue }
             if unsupportedNetworkOptionPrefixes.contains(where: { lower.hasPrefix($0) }) {
+                return .skipped
+            }
+            if lower.hasPrefix("redirect=") {
+                if isException { return .skipped }
+                let targetRaw = String(lower.dropFirst("redirect=".count))
+                let targetName = targetRaw.split(separator: ":", maxSplits: 1).first.map(String.init) ?? targetRaw
+                if safeNoopRedirectTargets.contains(targetName) {
+                    continue
+                }
                 return .skipped
             }
             if lower == "match-case" {
@@ -781,11 +940,11 @@ public enum BrowserAdBlockCompiler {
                 isImportant = true
                 continue
             }
-            if lower == "third-party" || lower == "3p" {
+            if lower == "third-party" || lower == "3p" || lower == "~first-party" || lower == "~1p" || lower == "strict3p" {
                 loadType = ["third-party"]
                 continue
             }
-            if lower == "~third-party" || lower == "first-party" || lower == "1p" {
+            if lower == "~third-party" || lower == "~3p" || lower == "first-party" || lower == "1p" || lower == "strict1p" {
                 loadType = ["first-party"]
                 continue
             }
@@ -801,12 +960,23 @@ public enum BrowserAdBlockCompiler {
                 includeResources.insert("document")
                 continue
             }
-            if lower.hasPrefix("domain=") {
-                let domStr = String(opt.dropFirst("domain=".count))
+            if lower.hasPrefix("domain=") || lower.hasPrefix("from=") {
+                let prefixLen = lower.hasPrefix("domain=") ? "domain=".count : "from=".count
+                let domStr = String(opt.dropFirst(prefixLen))
                 let parsed = parseDomainList(domStr, separator: "|")
                 if parsed.hasInvalidDomain { return .skipped }
-                includeDomains = parsed.include
-                excludeDomains = parsed.exclude
+                includeDomains.append(contentsOf: parsed.include)
+                excludeDomains.append(contentsOf: parsed.exclude)
+                continue
+            }
+            if lower.hasPrefix("denyallow=") {
+                if isException { return .skipped }
+                let domStr = String(opt.dropFirst("denyallow=".count))
+                let parsed = parseDomainList(domStr, separator: "|")
+                if parsed.hasInvalidDomain || !parsed.exclude.isEmpty || parsed.include.isEmpty {
+                    return .skipped
+                }
+                denyAllowDomains.append(contentsOf: parsed.include)
                 continue
             }
 
@@ -840,6 +1010,12 @@ public enum BrowserAdBlockCompiler {
             return .skipped
         }
 
+        // Safety guard: never emit a global wildcard block rule (`*` or empty pattern) without a domain scope.
+        let trimmedPattern = pattern.trimmingCharacters(in: .whitespaces)
+        if !isException && (trimmedPattern.isEmpty || trimmedPattern == "*") && includeDomains.isEmpty {
+            return .skipped
+        }
+
         let resolvedResources: [String]?
         if !includeResources.isEmpty {
             resolvedResources = includeResources.subtracting(excludeResources).sorted()
@@ -856,6 +1032,15 @@ public enum BrowserAdBlockCompiler {
             resolvedResources = nil
         }
 
+        // Expand entity domains (`example.*`) into concrete WebKit `if-domain`/`unless-domain` triggers.
+        guard let expandedInclude = expandDomainsForWebKitTrigger(includeDomains),
+              let expandedExclude = expandDomainsForWebKitTrigger(excludeDomains)
+        else {
+            return isException && !cosmeticAllowDomains.isEmpty
+                ? .exception(nil, cosmeticAllowDomains: cosmeticAllowDomains)
+                : .skipped
+        }
+
         guard let urlFilter = compileURLPatternToWebKitRegex(pattern) else {
             return isException && !cosmeticAllowDomains.isEmpty
                 ? .exception(nil, cosmeticAllowDomains: cosmeticAllowDomains)
@@ -867,14 +1052,35 @@ public enum BrowserAdBlockCompiler {
             isCaseSensitive: isCaseSensitive,
             loadType: loadType,
             resourceType: resolvedResources,
-            ifDomain: includeDomains.isEmpty ? nil : includeDomains.map { "*\($0)" },
-            unlessDomain: excludeDomains.isEmpty ? nil : excludeDomains.map { "*\($0)" },
+            ifDomain: expandedInclude.isEmpty ? nil : expandedInclude,
+            unlessDomain: expandedExclude.isEmpty ? nil : expandedExclude,
             actionType: isException ? .ignorePreviousRules : .block
         )
 
         if isException {
             return .exception(rule, cosmeticAllowDomains: cosmeticAllowDomains)
         }
+
+        if !denyAllowDomains.isEmpty {
+            var allowRules: [WebKitRule] = []
+            for host in expandDenyAllowHosts(denyAllowDomains) {
+                let escaped = escapeForWebKitRegex(host)
+                let filter = "^https?://+([^:/]+\\.)?\(escaped)[^a-zA-Z0-9._%-]"
+                guard isValidWebKitURLFilter(filter) else { continue }
+                allowRules.append(WebKitRule(
+                    urlFilter: filter,
+                    isCaseSensitive: false,
+                    loadType: loadType,
+                    resourceType: resolvedResources,
+                    ifDomain: expandedInclude.isEmpty ? nil : expandedInclude,
+                    unlessDomain: expandedExclude.isEmpty ? nil : expandedExclude,
+                    actionType: .ignorePreviousRules
+                ))
+            }
+            guard !allowRules.isEmpty else { return .skipped }
+            return .denyAllow(DenyAllowRuleGroup(block: rule, allowRules: allowRules))
+        }
+
         return .block(rule, important: isImportant)
     }
 
@@ -885,10 +1091,10 @@ public enum BrowserAdBlockCompiler {
         case "stylesheet", "css": return ["style-sheet"]
         case "font": return ["font"]
         case "media": return ["media"]
-        case "popup": return ["popup"]
+        case "popup", "popunder": return ["popup"]
         case "ping", "beacon": return ["ping"]
         case "websocket": return ["websocket"]
-        case "subdocument", "frame": return ["document"]
+        case "subdocument", "frame", "document", "doc": return ["document"]
         case "xmlhttprequest", "xhr", "fetch": return ["raw", "fetch"]
         case "other", "object", "object-subrequest": return ["raw"]
         default: return nil
@@ -936,8 +1142,10 @@ public enum BrowserAdBlockCompiler {
         // Reject non-ASCII patterns immediately (WebKit content blockers are strictly ASCII).
         guard working.utf8.allSatisfy({ $0 < 128 }) else { return nil }
 
-        // Trim redundant leading/trailing `*` wildcards.
-        while working.hasPrefix("*") { working.removeFirst() }
+        // Trim redundant leading `*` only when unanchored, and trailing `*` always.
+        if regex.isEmpty {
+            while working.hasPrefix("*") { working.removeFirst() }
+        }
         while working.hasSuffix("*") { working.removeLast() }
         if working.isEmpty && !hasEndAnchor {
             return regex.isEmpty ? ".*" : nil
@@ -982,6 +1190,7 @@ public enum BrowserAdBlockCompiler {
         let chars = Array(filter)
         var parenDepth = 0
         var inCharClass = false
+        var charClassLength = 0
         var escaped = false
         var prevWasQuantifier = false
         var prevWasAtom = false
@@ -993,8 +1202,12 @@ public enum BrowserAdBlockCompiler {
                     return false
                 }
                 escaped = false
-                prevWasQuantifier = false
-                prevWasAtom = true
+                if inCharClass {
+                    charClassLength += 1
+                } else {
+                    prevWasQuantifier = false
+                    prevWasAtom = true
+                }
                 continue
             }
 
@@ -1005,9 +1218,12 @@ public enum BrowserAdBlockCompiler {
 
             if inCharClass {
                 if ch == "]" {
+                    if charClassLength == 0 { return false }
                     inCharClass = false
                     prevWasAtom = true
                     prevWasQuantifier = false
+                } else {
+                    charClassLength += 1
                 }
                 continue
             }
@@ -1015,6 +1231,7 @@ public enum BrowserAdBlockCompiler {
             switch ch {
             case "[":
                 inCharClass = true
+                charClassLength = 0
                 prevWasQuantifier = false
                 prevWasAtom = false
             case "]":
@@ -1104,25 +1321,79 @@ public enum BrowserAdBlockCompiler {
         extendedCSSMarkers.contains(where: { selector.contains($0) })
     }
 
+    private static func parseAdGuardCSSInjection(_ line: String) -> BrowserInjectedStyleRule? {
+        guard let range = line.range(of: "#$#"), !line.contains("#@$#") else { return nil }
+        let domainPart = String(line[..<range.lowerBound])
+        if domainPart.contains("/") || domainPart.contains(" ") { return nil }
+        let body = String(line[range.upperBound...]).trimmingCharacters(in: .whitespaces)
+        guard let openBrace = body.firstIndex(of: "{"), body.hasSuffix("}") else { return nil }
+        let selector = String(body[..<openBrace]).trimmingCharacters(in: .whitespaces)
+        let css = String(body[body.index(after: openBrace)..<body.index(before: body.endIndex)]).trimmingCharacters(in: .whitespaces)
+        guard !selector.isEmpty, !css.isEmpty else { return nil }
+        guard !css.contains("{"), !css.contains("}") else { return nil }
+        let lowerCSS = css.lowercased()
+        guard !lowerCSS.contains("</style"), !lowerCSS.contains("@import") else { return nil }
+        guard !isExtendedCSSSelector(selector), isValidStandardCSSSelector(selector) else { return nil }
+
+        let parsedDomains = parseDomainList(domainPart, separator: ",")
+        guard !parsedDomains.hasInvalidDomain else { return nil }
+        return BrowserInjectedStyleRule(
+            selector: selector,
+            cssBody: css,
+            includeDomains: parsedDomains.include,
+            excludeDomains: parsedDomains.exclude
+        )
+    }
+
+    private static func parseCosmeticActionScriptlet(
+        body: String,
+        includeDomains: [String],
+        excludeDomains: [String]
+    ) -> BrowserScriptletRule? {
+        for (marker, scriptletName) in [(":remove-attr(", "remove-attr"), (":remove-class(", "remove-class")] {
+            guard let range = body.range(of: marker), body.hasSuffix(")") else { continue }
+            let selector = String(body[..<range.lowerBound]).trimmingCharacters(in: .whitespaces)
+            let arg = String(body[range.upperBound..<body.index(before: body.endIndex)]).trimmingCharacters(in: .whitespaces)
+            guard !selector.isEmpty, !arg.isEmpty else { return nil }
+            guard !isExtendedCSSSelector(selector), isValidStandardCSSSelector(selector) else { return nil }
+            return BrowserScriptletRule(
+                name: scriptletName,
+                args: [arg, selector],
+                includeDomains: includeDomains,
+                excludeDomains: excludeDomains
+            )
+        }
+        return nil
+    }
+
     private static func parseStyleInjectionRule(
         body: String,
         includeDomains: [String],
         excludeDomains: [String]
-    ) -> BrowserInjectedStyleRule? {
+    ) -> StyleParseOutcome? {
         guard let styleRange = body.range(of: ":style("), body.hasSuffix(")") else { return nil }
         let selector = String(body[..<styleRange.lowerBound]).trimmingCharacters(in: .whitespaces)
         let css = String(body[styleRange.upperBound..<body.index(before: body.endIndex)]).trimmingCharacters(in: .whitespaces)
         guard !selector.isEmpty, !css.isEmpty else { return nil }
-        // Reject extended procedural markers inside the selector part for pure style injection.
-        guard !isExtendedCSSSelector(selector), isValidStandardCSSSelector(selector) else { return nil }
-        // Prevent breaking out of `<style>` tag.
-        guard !css.lowercased().contains("</style") else { return nil }
-        return BrowserInjectedStyleRule(
+        // Prevent breaking out of `<style>` tag or loading external sheets.
+        let lowerCSS = css.lowercased()
+        guard !lowerCSS.contains("</style"), !lowerCSS.contains("@import") else { return nil }
+        if isExtendedCSSSelector(selector) {
+            return .procedural(BrowserExtendedCSSRule(
+                selector: selector,
+                includeDomains: includeDomains,
+                excludeDomains: excludeDomains,
+                removeNode: false,
+                styleCSS: css
+            ))
+        }
+        guard isValidStandardCSSSelector(selector) else { return nil }
+        return .standard(BrowserInjectedStyleRule(
             selector: selector,
             cssBody: css,
             includeDomains: includeDomains,
             excludeDomains: excludeDomains
-        )
+        ))
     }
 
     /// Checks whether a CSS selector is safe to emit into a WebKit `css-display-none` rule
@@ -1283,8 +1554,13 @@ public enum BrowserAdBlockCompiler {
         case "no-xhr-if", "prevent-xhr": return "no-xhr-if"
         case "aeld", "addEventListener-defuser".lowercased(), "prevent-addeventlistener": return "prevent-addEventListener"
         case "nowoif", "no-window-open-if", "prevent-window-open": return "nowoif"
+        case "noeval-if", "prevent-eval-if": return "noeval-if"
         case "ra", "remove-attr": return "remove-attr"
         case "rc", "remove-class": return "remove-class"
+        case "set-attr": return "set-attr"
+        case "set-local-storage-item": return "set-local-storage-item"
+        case "set-session-storage-item": return "set-session-storage-item"
+        case "disable-newtab-links": return "disable-newtab-links"
         case "trusted-click-element", "click-element": return "click-element"
         default: return name
         }
@@ -1329,6 +1605,64 @@ public enum BrowserAdBlockCompiler {
         var hasInvalidDomain = false
     }
 
+    private static func isEntityDomain(_ domain: String) -> Bool {
+        domain.hasSuffix(".*")
+    }
+
+    private static func normalizeEntityDomain(_ raw: String) -> String? {
+        let lower = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard lower.hasSuffix(".*") else { return nil }
+        var stem = String(lower.dropLast(2))
+        while stem.hasPrefix(".") { stem.removeFirst() }
+        guard stem.count >= 2, stem.count <= 240, !stem.contains("*"), !stem.contains("..") else { return nil }
+        guard stem.utf8.allSatisfy({ b in
+            (b >= 0x61 && b <= 0x7A) || (b >= 0x30 && b <= 0x39) || b == 0x2D || b == 0x2E
+        }) else { return nil }
+        guard !stem.hasPrefix("-"), !stem.hasSuffix("-"), !stem.hasSuffix(".") else { return nil }
+        return "\(stem).*"
+    }
+
+    private static func expandDomainsForWebKitTrigger(_ domains: [String]) -> [String]? {
+        guard !domains.isEmpty else { return [] }
+        var expanded: [String] = []
+        var seen = Set<String>()
+        for domain in domains {
+            if isEntityDomain(domain) {
+                let stem = String(domain.dropLast(2))
+                for tld in entityNetworkTLDs {
+                    let entry = "*\(stem).\(tld)"
+                    if seen.insert(entry).inserted {
+                        expanded.append(entry)
+                    }
+                }
+            } else {
+                let entry = "*\(domain)"
+                if seen.insert(entry).inserted {
+                    expanded.append(entry)
+                }
+            }
+            if expanded.count > 250 { return nil }
+        }
+        return expanded
+    }
+
+    private static func expandDenyAllowHosts(_ domains: [String]) -> [String] {
+        var out: [String] = []
+        var seen = Set<String>()
+        for domain in domains {
+            if isEntityDomain(domain) {
+                let stem = String(domain.dropLast(2))
+                for tld in entityNetworkTLDs {
+                    let host = "\(stem).\(tld)"
+                    if seen.insert(host).inserted { out.append(host) }
+                }
+            } else if seen.insert(domain).inserted {
+                out.append(domain)
+            }
+        }
+        return out
+    }
+
     private static func parseDomainList(_ raw: String, separator: Character) -> ParsedDomains {
         let trimmed = raw.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return ParsedDomains() }
@@ -1338,12 +1672,18 @@ public enum BrowserAdBlockCompiler {
             guard !token.isEmpty else { continue }
             let isNegated = token.hasPrefix("~")
             if isNegated { token.removeFirst() }
-            // Skip regex/wildcard entity domains like `example.*` or `/regex/` that WebKit triggers can't encode.
-            if token.contains("*") || token.contains("/") {
+            // Regex domains (`/regex/`) are unsupported; entity domains (`example.*`) are supported.
+            if token.contains("/") {
                 parsed.hasInvalidDomain = true
                 return parsed
             }
-            guard let host = normalizeASCIIHost(token) else {
+            let normalized: String?
+            if token.contains("*") {
+                normalized = normalizeEntityDomain(token)
+            } else {
+                normalized = normalizeASCIIHost(token)
+            }
+            guard let host = normalized else {
                 parsed.hasInvalidDomain = true
                 return parsed
             }
@@ -1391,7 +1731,7 @@ public enum BrowserAdBlockCompiler {
     private static func deduplicateExtendedCSS(_ list: [BrowserExtendedCSSRule]) -> [BrowserExtendedCSSRule] {
         var seen = Set<String>()
         return list.filter { item in
-            let key = "\(item.selector)|\(item.removeNode)|\(item.includeDomains.joined(separator: ","))|\(item.excludeDomains.joined(separator: ","))"
+            let key = "\(item.selector)|\(item.removeNode)|\(item.styleCSS ?? "")|\(item.includeDomains.joined(separator: ","))|\(item.excludeDomains.joined(separator: ","))"
             return seen.insert(key).inserted
         }
     }

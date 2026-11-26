@@ -1,9 +1,29 @@
 import AppKit
 import Foundation
+import LocalAuthentication
 import Observation
 import Security
 import VesperCore
 import WebKit
+
+// MARK: - Biometric Gate (Touch ID / macOS Owner Auth + Test Double)
+
+@MainActor
+protocol BrowserBiometricAuthenticator: AnyObject {
+    func authenticate(reason: String) async -> Bool
+}
+
+@MainActor
+final class LocalAuthenticationBiometricAuthenticator: BrowserBiometricAuthenticator {
+    func authenticate(reason: String) async -> Bool {
+        let context = LAContext()
+        var error: NSError?
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: &error) else {
+            return false
+        }
+        return (try? await context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason)) ?? false
+    }
+}
 
 // MARK: - Credential Store Protocol (Keychain + In-Memory Test Double)
 
@@ -227,7 +247,9 @@ enum BrowserAutofillScripts {
 
     /// Fills matching username & password inputs using native value setters + input/change events
     /// so React, Vue, Svelte, and vanilla forms all register the filled values.
+    /// Guards against cross-origin iframe injection by refusing to run outside the top frame.
     static let fillCredentialFunctionBody = """
+    if (window !== window.top) return false;
     const setNativeValue = (el, value) => {
       const proto = Object.getPrototypeOf(el);
       const desc = Object.getOwnPropertyDescriptor(proto, "value") || Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
@@ -304,11 +326,34 @@ final class BrowserAutofillManager {
     private(set) var lastError: String?
 
     @ObservationIgnored private let store: any BrowserCredentialStore
+    @ObservationIgnored private let authenticator: any BrowserBiometricAuthenticator
 
-    init(profileID: UUID, store: any BrowserCredentialStore = KeychainBrowserCredentialStore()) {
+    init(
+        profileID: UUID,
+        store: any BrowserCredentialStore = KeychainBrowserCredentialStore(),
+        authenticator: any BrowserBiometricAuthenticator = LocalAuthenticationBiometricAuthenticator()
+    ) {
         self.profileID = profileID
         self.store = store
+        self.authenticator = authenticator
         reload()
+    }
+
+    func authenticateIfRequired(requireTouchID: Bool, reason: String) async -> Bool {
+        guard requireTouchID else { return true }
+        return await authenticator.authenticate(reason: reason)
+    }
+
+    @discardableResult
+    func importApplePasswordsCSV(_ csv: String) -> Int {
+        let parsed = BrowserAutofillLogic.parseApplePasswordsCSV(csv)
+        var imported = 0
+        for cred in parsed {
+            if saveCredential(host: cred.host, username: cred.username, password: cred.password) {
+                imported += 1
+            }
+        }
+        return imported
     }
 
     func reload() {
@@ -384,12 +429,26 @@ final class BrowserAutofillManager {
     }
 
     /// Fills `credential` into the active `WKWebView` inside the isolated `.defaultClient` world.
-    func fill(_ credential: BrowserCredential, into webView: WKWebView) async -> Bool {
+    /// Blocks mixed-content HTTPS pages (`hasOnlySecureContent == false`) and optionally gates on Touch ID.
+    func fill(
+        _ credential: BrowserCredential,
+        into webView: WKWebView,
+        requireTouchID: Bool = false
+    ) async -> Bool {
         guard let currentURL = webView.url?.absoluteString,
-              BrowserAutofillLogic.isSecureAutofillOrigin(currentURL)
+              BrowserAutofillLogic.canAutofill(
+                  urlString: currentURL,
+                  hasOnlySecureContent: webView.hasOnlySecureContent
+              )
         else { return false }
         let allowed = BrowserAutofillLogic.matchingCredentials(for: currentURL, in: [credential])
         guard !allowed.isEmpty else { return false }
+        guard await authenticateIfRequired(
+            requireTouchID: requireTouchID,
+            reason: "Fill saved password for \(credential.host)"
+        ) else {
+            return false
+        }
         let result = try? await webView.callAsyncJavaScript(
             BrowserAutofillScripts.fillCredentialFunctionBody,
             arguments: ["username": credential.username, "password": credential.password],

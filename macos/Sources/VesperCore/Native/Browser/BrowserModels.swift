@@ -288,6 +288,12 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
     public var siteZooms: [String: Double]
     public var extensions: [BrowserExtensionRecord]
     public var autofillNeverSaveHosts: [String]
+    public var httpsOnlyExceptions: [String]
+    public var lockdownEnabledHosts: [String]
+    public var lockdownDisabledHosts: [String]
+    public var javascriptDisabledHosts: [String]
+    public var sitePermissions: [String: [String: BrowserPermissionSetting]]
+    public var proxyConfig: BrowserProxyConfig
 
     public init(
         id: UUID = UUID(),
@@ -305,7 +311,13 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         adBlockDisabledHosts: [String] = [],
         siteZooms: [String: Double] = [:],
         extensions: [BrowserExtensionRecord] = [],
-        autofillNeverSaveHosts: [String] = []
+        autofillNeverSaveHosts: [String] = [],
+        httpsOnlyExceptions: [String] = [],
+        lockdownEnabledHosts: [String] = [],
+        lockdownDisabledHosts: [String] = [],
+        javascriptDisabledHosts: [String] = [],
+        sitePermissions: [String: [String: BrowserPermissionSetting]] = [:],
+        proxyConfig: BrowserProxyConfig = .none
     ) {
         self.id = id
         self.name = name
@@ -323,6 +335,12 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         self.siteZooms = siteZooms
         self.extensions = extensions
         self.autofillNeverSaveHosts = autofillNeverSaveHosts
+        self.httpsOnlyExceptions = httpsOnlyExceptions
+        self.lockdownEnabledHosts = lockdownEnabledHosts
+        self.lockdownDisabledHosts = lockdownDisabledHosts
+        self.javascriptDisabledHosts = javascriptDisabledHosts
+        self.sitePermissions = sitePermissions
+        self.proxyConfig = proxyConfig
     }
 
     public static func defaultPersonal(
@@ -365,6 +383,12 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         case siteZooms = "site_zooms"
         case extensions
         case autofillNeverSaveHosts = "autofill_never_save_hosts"
+        case httpsOnlyExceptions = "https_only_exceptions"
+        case lockdownEnabledHosts = "lockdown_enabled_hosts"
+        case lockdownDisabledHosts = "lockdown_disabled_hosts"
+        case javascriptDisabledHosts = "javascript_disabled_hosts"
+        case sitePermissions = "site_permissions"
+        case proxyConfig = "proxy_config"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -385,6 +409,12 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         siteZooms = try c.decodeIfPresent([String: Double].self, forKey: .siteZooms) ?? [:]
         extensions = try c.decodeIfPresent([BrowserExtensionRecord].self, forKey: .extensions) ?? []
         autofillNeverSaveHosts = try c.decodeIfPresent([String].self, forKey: .autofillNeverSaveHosts) ?? []
+        httpsOnlyExceptions = try c.decodeIfPresent([String].self, forKey: .httpsOnlyExceptions) ?? []
+        lockdownEnabledHosts = try c.decodeIfPresent([String].self, forKey: .lockdownEnabledHosts) ?? []
+        lockdownDisabledHosts = try c.decodeIfPresent([String].self, forKey: .lockdownDisabledHosts) ?? []
+        javascriptDisabledHosts = try c.decodeIfPresent([String].self, forKey: .javascriptDisabledHosts) ?? []
+        sitePermissions = try c.decodeIfPresent([String: [String: BrowserPermissionSetting]].self, forKey: .sitePermissions) ?? [:]
+        proxyConfig = try c.decodeIfPresent(BrowserProxyConfig.self, forKey: .proxyConfig) ?? .none
     }
 }
 
@@ -402,6 +432,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
     public var activeProfileId: UUID?
     public var autofillEnabled: Bool
     public var adBlockConfig: BrowserAdBlockConfig
+    public var securityConfig: BrowserSecurityConfig
 
     public init(
         tabs: [BrowserTabRecord] = [],
@@ -416,7 +447,8 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         profiles: [BrowserProfile] = [],
         activeProfileId: UUID? = nil,
         autofillEnabled: Bool = true,
-        adBlockConfig: BrowserAdBlockConfig = .default
+        adBlockConfig: BrowserAdBlockConfig = .default,
+        securityConfig: BrowserSecurityConfig = .default
     ) {
         self.tabs = tabs
         self.activeTabId = activeTabId
@@ -444,6 +476,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         }
         self.autofillEnabled = autofillEnabled
         self.adBlockConfig = adBlockConfig
+        self.securityConfig = securityConfig
     }
 
     public static let empty = BrowserPersistedState()
@@ -462,6 +495,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         case activeProfileId = "active_profile_id"
         case autofillEnabled = "autofill_enabled"
         case adBlockConfig = "ad_block_config"
+        case securityConfig = "security_config"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -477,6 +511,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         siteZooms = try c.decodeIfPresent([String: Double].self, forKey: .siteZooms) ?? [:]
         autofillEnabled = try c.decodeIfPresent(Bool.self, forKey: .autofillEnabled) ?? true
         adBlockConfig = try c.decodeIfPresent(BrowserAdBlockConfig.self, forKey: .adBlockConfig) ?? .default
+        securityConfig = try c.decodeIfPresent(BrowserSecurityConfig.self, forKey: .securityConfig) ?? .default
 
         let decodedProfiles = try c.decodeIfPresent([BrowserProfile].self, forKey: .profiles) ?? []
         if decodedProfiles.isEmpty {

@@ -142,24 +142,49 @@
 ||plista.com^$third-party
 ||spklw.com^$third-party
 
-! --- Popunders / Malvertising / Aggressive Ad Networks ---
+! --- Popunders / Malvertising / Aggressive & In-Page Ad Networks ---
 ||popads.net^$third-party
 ||popcash.net^$third-party
 ||propellerads.com^$third-party
 ||adsterra.com^$third-party
 ||highperformanceformat.com^$third-party
-||exoclick.com^$third-party
-||exosrv.com^$third-party
-||juicyads.com^$third-party
-||trafficjunky.net^$third-party
-||trafficstars.com^$third-party
+||exoclick.com^
+||exosrv.com^
+||exdynsrv.com^
+||realsrv.com^
+||magsrv.com^
+||pemsrv.com^
+||juicyads.com^
+||jads.co^
+||trafficjunky.net^
+||trafficjunky.com^
+||adtng.com^
+||trafficstars.com^
+||tsyndicate.com^
+||tsdtocl.com^
+||traffichaus.com^
+||thaudray.com^
+||plugrush.com^
+||ero-advertising.com^
+||bngpt.com^
+||bngprm.com^
+||xlirdr.com^
+||twinrdengine.com^
+||twinrdsrv.com^
+||twinrdsyn.com^
+||adspyglass.com^
+||clickaine.com^
 ||hilltopads.net^$third-party
 ||monetag.com^$third-party
 ||admaven.com^$third-party
+||ad-maven.com^$third-party
 ||clickadu.com^$third-party
 ||galaksion.com^$third-party
 ||richads.com^$third-party
 ||pushame.com^$third-party
+||onclkds.com^$third-party
+||wpadmngr.com^$third-party
+||popunderjs.com^$third-party
 
 ! --- Ad Verification & Viewability ---
 ||moatads.com^$third-party
@@ -184,6 +209,24 @@
 ##iframe[id^="google_ads_frame"]
 ##iframe[src*="doubleclick.net/"]
 ##iframe[src*="googlesyndication.com/"]
+##iframe[src*="trafficjunky."]
+##iframe[src*="adtng.com"]
+##iframe[src*="exoclick.com"]
+##iframe[src*="exosrv.com"]
+##iframe[src*="realsrv.com"]
+##iframe[src*="magsrv.com"]
+##iframe[src*="juicyads.com"]
+##iframe[src*="tsyndicate.com"]
+##iframe[src*="bngpt.com"]
+##a[href*="trafficjunky."]
+##a[href*="adtng.com"]
+##div:has(> iframe[src*="trafficjunky."])
+##div:has(> iframe[src*="adtng.com"])
+##div:has(> a[href*="trafficjunky."])
+##div:has(> a[href*="adtng.com"])
+##section:has(> iframe[src*="trafficjunky."])
+##aside:has(> iframe[src*="trafficjunky."])
+##.tj-ad
 ##.OUTBRAIN
 ##[data-widget-id^="OUTBRAIN"]
 ##.ob-widget

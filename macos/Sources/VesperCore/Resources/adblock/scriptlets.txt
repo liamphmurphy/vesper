@@ -25,7 +25,7 @@ youtube.com##tp-yt-paper-dialog:has-text(/Ad blockers violate YouTube|Ad blocker
 ##+js(abort-on-property-read, _adblock)
 
 ! --- Popup / Aggressive Ad Timer Defusers ---
-##+js(nowoif, popads|popcash|propellerads|adsterra|exoclick)
+##+js(nowoif, /popads|popcash|propellerads|adsterra|exoclick|exosrv|realsrv|trafficjunky|adtng|juicyads|tsyndicate|clickadu|monetag|admaven|bngpt/i)
 
 ! --- Procedural Feed & Promoted Card Hiding (Extended CSS) ---
 reddit.com##article:has-text(/^Promoted$/):remove()

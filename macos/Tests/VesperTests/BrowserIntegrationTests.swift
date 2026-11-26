@@ -222,16 +222,16 @@ struct BrowserIntegrationTests {
             )
         }
 
-        // Attached initially: metrics bridge + autofill + adblock page script = 3 user scripts.
-        #expect(session.webView.configuration.userContentController.userScripts.count == 3)
+        // Attached initially: metrics bridge + passkey bridge + passkey observer + autofill + adblock page script = 5 user scripts.
+        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
 
-        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill & metrics bridge.
+        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill, passkey & metrics scripts.
         session.syncAdBlockForURL("https://trusted.example/page")
-        #expect(session.webView.configuration.userContentController.userScripts.count == 2)
+        #expect(session.webView.configuration.userContentController.userScripts.count == 4)
 
         // Navigating back to a protected host reattaches the adblock page script instantaneously.
         session.syncAdBlockForURL("https://news.example/article")
-        #expect(session.webView.configuration.userContentController.userScripts.count == 3)
+        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
     }
 
     @Test("BrowserAdBlockEngine downloads, caches, handles 304 ETag, and compiles upstream filter lists")
@@ -385,6 +385,201 @@ struct BrowserIntegrationTests {
         #expect((dict["organicDisplay"] as? String) != "none")
         #expect((dict["bodyOverflow"] as? String) == "auto")
         #expect(hitCount > 0)
+    }
+
+    @Test("BrowserAdBlockEngine resiliently isolates an invalid WebKit rule instead of dropping the whole chunk")
+    func adBlockEngineResilientCompilationIsolatesInvalidRules() async {
+        let tempRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vesper-adblock-resilient-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tempRoot) }
+
+        let engine = BrowserAdBlockEngine(dataDirectory: tempRoot)
+        let testID = "com.vesper.mac.browser.adblock.v2.test-resilient-\(UUID().uuidString.lowercased())"
+        defer {
+            Task { try? await WKContentRuleListStore.default()?.removeContentRuleList(forIdentifier: testID) }
+        }
+
+        // Mix 2 valid WebKit rules with 1 poison rule containing a `|` disjunction WebKit rejects.
+        let poisonChunkJSON = """
+        [
+          {"trigger":{"url-filter":"^https?://+([^:/]+\\\\.)?trafficjunky\\\\.net[^a-zA-Z0-9._%-]"},"action":{"type":"block"}},
+          {"trigger":{"url-filter":"^https?://(bad|poison)\\\\.example\\\\.com/"},"action":{"type":"block"}},
+          {"trigger":{"url-filter":"^https?://+([^:/]+\\\\.)?adtng\\\\.com[^a-zA-Z0-9._%-]"},"action":{"type":"block"}}
+        ]
+        """
+
+        let recovered = await engine.loadOrCompileRuleList(identifier: testID, json: poisonChunkJSON)
+        #expect(recovered != nil)
+
+        // Also verify `needsAutoUpdate` triggers when a newly added built-in subscription has never been fetched.
+        var cfg = BrowserAdBlockConfig.default
+        cfg.lastUpdatedAt = Date()
+        for idx in cfg.subscriptions.indices {
+            cfg.subscriptions[idx].lastUpdatedAt = Date()
+        }
+        #expect(!engine.needsAutoUpdate(config: cfg))
+        cfg.subscriptions[0].lastUpdatedAt = nil
+        #expect(engine.needsAutoUpdate(config: cfg))
+    }
+
+    @Test("Phase B runtime enforces entity domains, procedural :-abp-has/:matches-attr/:style, noeval-if, nowoif, and disable-newtab-links in live WKWebView")
+    func phaseBRuntimeHandlesEntityDomainsAndAdvancedRulesInLiveWebView() async throws {
+        let rulesText = """
+        videohub.*##.tj-banner
+        videohub.*##div.ad-slot:-abp-has(> a[href*="trafficjunky"]):upward(1)
+        videohub.*##div:matches-attr(data-ad-zone=/^tj_/):style(opacity: 0 !important)
+        videohub.*##+js(noeval-if, trafficjunky)
+        videohub.*##+js(nowoif, /trafficjunky|exoclick/i)
+        videohub.*##+js(disable-newtab-links, trafficjunky)
+        """
+        let compiled = BrowserAdBlockCompiler.compile(
+            sources: [BrowserAdBlockFilterSource(category: .scriptlets, text: rulesText)],
+            youtubeAdShieldEnabled: false
+        )
+        let source = try #require(BrowserAdBlockScripts.makePageRuntimeSource(for: compiled.advanced))
+        let pageScript = WKUserScript(source: source, injectionTime: .atDocumentStart, forMainFrameOnly: false, in: .page)
+
+        let webView = BrowserWebViewFactory.makeWebView(
+            isPrivate: true,
+            adBlockPageScript: pageScript
+        )
+        defer { webView.navigationDelegate = nil }
+
+        let navDelegate = TestNavigationWaiter()
+        webView.navigationDelegate = navDelegate
+
+        let html = """
+        <!doctype html>
+        <html>
+        <head>
+          <script>
+            window.__evalBlocked = (eval('window.__tjRan = true; "trafficjunky"') === undefined && !window.__tjRan);
+            window.__evalBenign = eval('2 + 3');
+            window.__popupBlocked = (window.open('https://ads.trafficjunky.net/pop') === null);
+          </script>
+        </head>
+        <body>
+          <div id="banner" class="tj-banner">TrafficJunky Ad</div>
+          <section id="tj-card">
+            <div class="ad-slot"><a href="https://ads.trafficjunky.com/click">Promo</a></div>
+          </section>
+          <section id="organic-card">
+            <div class="ad-slot"><a href="https://www.videohub.org/watch/2">Real Video</a></div>
+          </section>
+          <div id="attr-ad" data-ad-zone="tj_sidebar">Sidebar Ad</div>
+          <a id="hijack-link" href="https://ads.trafficjunky.net/go" target="_blank">Ad Link</a>
+          <a id="normal-link" href="https://www.videohub.org/about" target="_blank">About</a>
+        </body>
+        </html>
+        """
+        webView.loadHTMLString(html, baseURL: URL(string: "https://www.videohub.org/watch/1")!)
+        await navDelegate.waitForFinish()
+        try await Task.sleep(for: .milliseconds(250))
+
+        let checkJS = """
+        ({
+          evalBlocked: window.__evalBlocked,
+          evalBenign: window.__evalBenign,
+          popupBlocked: window.__popupBlocked,
+          bannerDisplay: getComputedStyle(document.getElementById('banner')).display,
+          tjCardDisplay: getComputedStyle(document.getElementById('tj-card')).display,
+          organicCardDisplay: getComputedStyle(document.getElementById('organic-card')).display,
+          attrAdOpacity: getComputedStyle(document.getElementById('attr-ad')).opacity,
+          hijackTarget: document.getElementById('hijack-link').getAttribute('target') || '',
+          normalTarget: document.getElementById('normal-link').getAttribute('target') || ''
+        })
+        """
+        let raw = try await webView.evaluateJavaScript(checkJS)
+        let dict = try #require(raw as? [String: Any])
+
+        #expect((dict["evalBlocked"] as? Bool) == true)
+        #expect((dict["evalBenign"] as? Int) == 5)
+        #expect((dict["popupBlocked"] as? Bool) == true)
+        #expect((dict["bannerDisplay"] as? String) == "none")
+        #expect((dict["tjCardDisplay"] as? String) == "none")
+        #expect((dict["organicCardDisplay"] as? String) != "none")
+        #expect((dict["attrAdOpacity"] as? String) == "0")
+        #expect((dict["hijackTarget"] as? String) == "")
+        #expect((dict["normalTarget"] as? String) == "_blank")
+    }
+
+    @Test("BrowserWebViewFactory enables upgradeKnownHostsToHTTPS, Lockdown Mode, aligned UA, and per-profile proxyConfigurations")
+    func webViewSecurityHardeningConfiguration() {
+        let proxy = BrowserProxyConfig(mode: .socks5, host: "127.0.0.1", port: 1080, applyToPrivateTabs: true)
+        let webView = BrowserWebViewFactory.makeWebView(
+            isPrivate: true,
+            lockdownModeEnabled: true,
+            proxyConfig: proxy
+        )
+        #expect(webView.configuration.upgradeKnownHostsToHTTPS == true)
+        #expect(webView.configuration.preferences.isFraudulentWebsiteWarningEnabled == true)
+        #expect(webView.configuration.defaultWebpagePreferences.isLockdownModeEnabled == true)
+        #expect(webView.configuration.websiteDataStore.proxyConfigurations.count == 1)
+        #expect(webView.customUserAgent?.contains("Version/18.4") == false)
+    }
+
+    @Test("WebDownloads stamps macOS Gatekeeper web-download quarantine metadata on downloaded files")
+    func downloadsStampQuarantineMetadata() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vesper-quarantine-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fileURL = tempDir.appendingPathComponent("sample.txt")
+        try Data("hello".utf8).write(to: fileURL)
+
+        let dataURL = try #require(URL(string: "https://downloads.example.com/sample.txt"))
+        let originURL = try #require(URL(string: "https://example.com/releases"))
+        let stamped = WebDownloads.applyWebDownloadQuarantine(to: fileURL, dataURL: dataURL, originURL: originURL)
+        #expect(stamped == true)
+
+        let values = try fileURL.resourceValues(forKeys: [.quarantinePropertiesKey])
+        let props = try #require(values.quarantineProperties)
+        #expect((props[kLSQuarantineTypeKey as String] as? String) == (kLSQuarantineTypeWebDownload as String))
+        #expect((props[kLSQuarantineAgentNameKey as String] as? String) == "Vesper")
+    }
+
+    @Test("BrowserAutofillManager enforces biometric Touch ID gate and Apple Passwords CSV import")
+    func autofillBiometricGateAndCSVImport() async {
+        let store = InMemoryBrowserCredentialStore()
+        let denyingAuth = StubBiometricAuthenticator(shouldSucceed: false)
+        let manager = BrowserAutofillManager(
+            profileID: UUID(),
+            store: store,
+            authenticator: denyingAuth
+        )
+
+        let imported = manager.importApplePasswordsCSV("Title,URL,Username,Password\nExample,https://example.com,alice,secret123\n")
+        #expect(imported == 1)
+        #expect(manager.credentials.count == 1)
+
+        let allowedWithoutGate = await manager.authenticateIfRequired(requireTouchID: false, reason: "test")
+        #expect(allowedWithoutGate == true)
+        #expect(denyingAuth.callCount == 0)
+
+        let deniedWithGate = await manager.authenticateIfRequired(requireTouchID: true, reason: "test")
+        #expect(deniedWithGate == false)
+        #expect(denyingAuth.callCount == 1)
+
+        denyingAuth.shouldSucceed = true
+        let grantedWithGate = await manager.authenticateIfRequired(requireTouchID: true, reason: "test")
+        #expect(grantedWithGate == true)
+        #expect(denyingAuth.callCount == 2)
+    }
+}
+
+@MainActor
+private final class StubBiometricAuthenticator: BrowserBiometricAuthenticator {
+    var shouldSucceed: Bool
+    var callCount: Int = 0
+
+    init(shouldSucceed: Bool) {
+        self.shouldSucceed = shouldSucceed
+    }
+
+    func authenticate(reason: String) async -> Bool {
+        callCount += 1
+        return shouldSucceed
     }
 }
 

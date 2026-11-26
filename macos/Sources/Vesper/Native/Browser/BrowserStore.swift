@@ -26,6 +26,12 @@ final class BrowserProfileRuntime: Identifiable {
     var adBlockDisabledHosts: [String] = []
     var siteZooms: [String: Double] = [:]
     var autofillNeverSaveHosts: [String] = []
+    var httpsOnlyExceptions: [String] = []
+    var lockdownEnabledHosts: [String] = []
+    var lockdownDisabledHosts: [String] = []
+    var javascriptDisabledHosts: [String] = []
+    var sitePermissions: [String: [String: BrowserPermissionSetting]] = [:]
+    var proxyConfig: BrowserProxyConfig = .none
 
     let extensionHost: BrowserExtensionHost
     let autofill: BrowserAutofillManager
@@ -49,6 +55,13 @@ final class BrowserProfileRuntime: Identifiable {
         self.adBlockDisabledHosts = profile.adBlockDisabledHosts
         self.siteZooms = profile.siteZooms
         self.autofillNeverSaveHosts = profile.autofillNeverSaveHosts
+        self.httpsOnlyExceptions = profile.httpsOnlyExceptions
+        self.lockdownEnabledHosts = profile.lockdownEnabledHosts
+        self.lockdownDisabledHosts = profile.lockdownDisabledHosts
+        self.javascriptDisabledHosts = profile.javascriptDisabledHosts
+        self.sitePermissions = profile.sitePermissions
+        self.proxyConfig = profile.proxyConfig
+        BrowserWebViewFactory.applyProxy(profile.proxyConfig, toProfileID: profile.dataStoreID)
         self.extensionHost = BrowserExtensionHost(
             profileID: profile.id,
             dataStoreID: profile.dataStoreID,
@@ -75,7 +88,13 @@ final class BrowserProfileRuntime: Identifiable {
             adBlockDisabledHosts: adBlockDisabledHosts,
             siteZooms: siteZooms,
             extensions: extensionHost.records,
-            autofillNeverSaveHosts: autofillNeverSaveHosts
+            autofillNeverSaveHosts: autofillNeverSaveHosts,
+            httpsOnlyExceptions: httpsOnlyExceptions,
+            lockdownEnabledHosts: lockdownEnabledHosts,
+            lockdownDisabledHosts: lockdownDisabledHosts,
+            javascriptDisabledHosts: javascriptDisabledHosts,
+            sitePermissions: sitePermissions,
+            proxyConfig: proxyConfig
         )
     }
 }
@@ -98,6 +117,7 @@ final class BrowserStore {
 
     var adBlockEnabled: Bool = true
     var adBlockConfig: BrowserAdBlockConfig = .default
+    var securityConfig: BrowserSecurityConfig = .default
     var openExternalLinksInBrowser: Bool = true
     var searchEngine: BrowserSearchEngine = .duckDuckGo
     var autofillEnabled: Bool = true
@@ -229,6 +249,7 @@ final class BrowserStore {
         let persisted = BrowserStorage.load(from: storageURL)
         adBlockEnabled = persisted.adBlockEnabled
         adBlockConfig = persisted.adBlockConfig
+        securityConfig = persisted.securityConfig
         openExternalLinksInBrowser = persisted.openExternalLinksInBrowser
         searchEngine = persisted.searchEngine
         autofillEnabled = persisted.autofillEnabled
@@ -356,7 +377,8 @@ final class BrowserStore {
             profiles: persistedProfiles,
             activeProfileId: activeProfileId,
             autofillEnabled: autofillEnabled,
-            adBlockConfig: adBlockConfig
+            adBlockConfig: adBlockConfig,
+            securityConfig: securityConfig
         )
         do {
             try BrowserStorage.save(snapshot, to: storageURL)
@@ -429,11 +451,35 @@ final class BrowserStore {
             contentRuleLists: adBlockEngine.compiledRuleLists,
             adBlockPageScript: adBlockEngine.compiledPageScript,
             adBlockActive: isAdBlockActive(for: record.url, in: runtime),
-            webExtensionController: runtime.extensionHost.controller
+            webExtensionController: runtime.extensionHost.controller,
+            lockdownModeEnabled: isLockdownActive(for: record.url, in: runtime),
+            proxyConfig: runtime.proxyConfig
         )
         session.adBlockActiveProvider = { [weak self, weak runtime] url in
             guard let self, let runtime else { return true }
             return self.isAdBlockActive(for: url, in: runtime)
+        }
+        session.securityConfigProvider = { [weak self] in
+            self?.securityConfig ?? .default
+        }
+        session.httpsOnlyExceptionsProvider = { [weak runtime] in
+            runtime?.httpsOnlyExceptions ?? []
+        }
+        session.lockdownActiveProvider = { [weak self, weak runtime] url in
+            guard let self, let runtime else { return false }
+            return self.isLockdownActive(for: url, in: runtime)
+        }
+        session.javascriptAllowedProvider = { [weak runtime] url in
+            guard let runtime else { return true }
+            return BrowserHTTPSGuard.isJavaScriptAllowed(for: url, disabledHosts: runtime.javascriptDisabledHosts)
+        }
+        session.sitePermissionProvider = { [weak runtime] host, kind in
+            guard let runtime, let normalized = BrowserPageGuard.normalizeHost(host) else { return .ask }
+            return runtime.sitePermissions[normalized]?[kind.rawValue] ?? .ask
+        }
+        session.onSitePermissionChanged = { [weak self, weak runtime] host, kind, setting in
+            guard let self, let runtime else { return }
+            self.setSitePermission(host: host, kind: kind, setting: setting, in: runtime)
         }
         session.neverShareProvider = { [weak self] in self?.extensionConfig.neverShare ?? BrowserNeverShareLists() }
         session.hostZoomProvider = { [weak runtime] host in
@@ -952,11 +998,152 @@ final class BrowserStore {
 
     func fillCredential(_ credential: BrowserCredential, into tab: BrowserTabSession? = nil) async {
         guard let target = tab ?? activeTab else { return }
-        let ok = await currentRuntime.autofill.fill(credential, into: target.webView)
+        let ok = await currentRuntime.autofill.fill(
+            credential,
+            into: target.webView,
+            requireTouchID: securityConfig.requireTouchIDForAutofill
+        )
         if ok {
             showToast("Filled \(credential.username) from Keychain", tone: .success)
+        } else if !BrowserAutofillLogic.canAutofill(
+            urlString: target.urlString,
+            hasOnlySecureContent: target.hasOnlySecureContent
+        ) {
+            showToast("AutoFill blocked on insecure or mixed-content page", tone: .error)
         } else {
-            showToast("No matching login form found on this page", tone: .neutral)
+            showToast("AutoFill cancelled or no matching login form found", tone: .neutral)
+        }
+    }
+
+    func copyCredentialPassword(_ credential: BrowserCredential) async {
+        let allowed = await currentRuntime.autofill.authenticateIfRequired(
+            requireTouchID: securityConfig.requireTouchIDForAutofill,
+            reason: "Copy saved password for \(credential.host)"
+        )
+        guard allowed else {
+            showToast("Authentication required to copy password", tone: .error)
+            return
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(credential.password, forType: .string)
+        showToast("Copied password for \(credential.host)", tone: .neutral)
+    }
+
+    func importApplePasswordsCSV(from url: URL) {
+        guard let csv = try? String(contentsOf: url, encoding: .utf8) else {
+            showToast("Couldn't read CSV file", tone: .error)
+            return
+        }
+        let count = currentRuntime.autofill.importApplePasswordsCSV(csv)
+        if count > 0 {
+            showToast("Imported \(count) login\(count == 1 ? "" : "s") into Keychain", tone: .success)
+        } else {
+            showToast("No valid logins found in CSV (expected Apple Passwords format)", tone: .neutral)
+        }
+    }
+
+    // MARK: Security, Permissions & Per-Profile Proxy
+
+    func isLockdownActive(for urlString: String, in runtime: BrowserProfileRuntime? = nil) -> Bool {
+        let target = runtime ?? currentRuntime
+        return BrowserHTTPSGuard.isLockdownActive(
+            for: urlString,
+            globalEnabled: securityConfig.lockdownModeEnabled,
+            enabledHosts: target.lockdownEnabledHosts,
+            disabledHosts: target.lockdownDisabledHosts
+        )
+    }
+
+    func isJavaScriptAllowed(for urlString: String, in runtime: BrowserProfileRuntime? = nil) -> Bool {
+        let target = runtime ?? currentRuntime
+        return BrowserHTTPSGuard.isJavaScriptAllowed(
+            for: urlString,
+            disabledHosts: target.javascriptDisabledHosts
+        )
+    }
+
+    func toggleLockdown(forHost rawHost: String) {
+        guard let host = BrowserPageGuard.normalizeHost(rawHost) else { return }
+        let runtime = currentRuntime
+        if securityConfig.lockdownModeEnabled {
+            if let idx = runtime.lockdownDisabledHosts.firstIndex(of: host) {
+                runtime.lockdownDisabledHosts.remove(at: idx)
+            } else {
+                runtime.lockdownDisabledHosts.append(host)
+            }
+        } else {
+            if let idx = runtime.lockdownEnabledHosts.firstIndex(of: host) {
+                runtime.lockdownEnabledHosts.remove(at: idx)
+            } else {
+                runtime.lockdownEnabledHosts.append(host)
+            }
+        }
+        scheduleSave()
+        activeTab?.reload()
+    }
+
+    func toggleJavaScript(forHost rawHost: String) {
+        guard let host = BrowserPageGuard.normalizeHost(rawHost) else { return }
+        let runtime = currentRuntime
+        if let idx = runtime.javascriptDisabledHosts.firstIndex(of: host) {
+            runtime.javascriptDisabledHosts.remove(at: idx)
+        } else {
+            runtime.javascriptDisabledHosts.append(host)
+        }
+        scheduleSave()
+        activeTab?.reload()
+    }
+
+    func allowHTTPFallback(for tab: BrowserTabSession) {
+        guard let fallbackURL = tab.pendingHTTPSFallbackURL else { return }
+        if let host = fallbackURL.host, let normalized = BrowserPageGuard.normalizeHost(host) {
+            if !currentRuntime.httpsOnlyExceptions.contains(normalized) {
+                currentRuntime.httpsOnlyExceptions.append(normalized)
+                scheduleSave()
+            }
+        }
+        tab.pendingHTTPSFallbackURL = nil
+        tab.load(fallbackURL)
+    }
+
+    func sitePermission(forHost rawHost: String, kind: BrowserPermissionKind, in runtime: BrowserProfileRuntime? = nil) -> BrowserPermissionSetting {
+        let target = runtime ?? currentRuntime
+        guard let host = BrowserPageGuard.normalizeHost(rawHost) else { return .ask }
+        return target.sitePermissions[host]?[kind.rawValue] ?? .ask
+    }
+
+    func setSitePermission(
+        host rawHost: String,
+        kind: BrowserPermissionKind,
+        setting: BrowserPermissionSetting,
+        in runtime: BrowserProfileRuntime? = nil
+    ) {
+        let target = runtime ?? currentRuntime
+        guard let host = BrowserPageGuard.normalizeHost(rawHost) else { return }
+        var map = target.sitePermissions[host] ?? [:]
+        if setting == .ask {
+            map.removeValue(forKey: kind.rawValue)
+        } else {
+            map[kind.rawValue] = setting
+        }
+        if map.isEmpty {
+            target.sitePermissions.removeValue(forKey: host)
+        } else {
+            target.sitePermissions[host] = map
+        }
+        scheduleSave()
+    }
+
+    func updateProxyConfig(_ config: BrowserProxyConfig, for runtime: BrowserProfileRuntime? = nil) {
+        let target = runtime ?? currentRuntime
+        target.proxyConfig = config
+        BrowserWebViewFactory.applyProxy(config, toProfileID: target.dataStoreID)
+        scheduleSave()
+        if config.isConfigured {
+            showToast("Applied \(config.mode.label) proxy (\(config.host):\(config.port)) for \(target.name)", tone: .success)
+        } else {
+            showToast("Reset \(target.name) proxy to System Default", tone: .neutral)
         }
     }
 

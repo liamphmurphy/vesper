@@ -95,15 +95,12 @@ final class BrowserAdBlockEngine {
         }
 
         let sources = collectFilterSources(config: config)
-        let includeAdvanced = config.isCategoryEnabled(.scriptlets)
-            || config.isCategoryEnabled(.annoyances)
-            || config.youtubeAdShieldEnabled
-            || !config.customRules.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let scriptletsEnabled = config.isCategoryEnabled(.scriptlets)
 
         let signature = compilationSignature(
             sources: sources,
             youtubeShield: config.youtubeAdShieldEnabled,
-            includeAdvanced: includeAdvanced
+            includeAdvanced: scriptletsEnabled
         )
         if !force, signature == lastCompilationSignature, !compiledRuleLists.isEmpty || compiledPageScript != nil {
             return
@@ -141,15 +138,9 @@ final class BrowserAdBlockEngine {
         await pruneStaleRuleLists(keeping: activeIdentifiers)
         guard generation == compileGeneration else { return }
 
-        let effectiveAdvanced: BrowserAdvancedBlockingBundle
-        if includeAdvanced {
-            var bundle = compiled.advanced
-            if !config.isCategoryEnabled(.scriptlets) {
-                bundle.scriptlets = []
-            }
-            effectiveAdvanced = bundle
-        } else {
-            effectiveAdvanced = BrowserAdvancedBlockingBundle(youtubeAdShieldEnabled: false)
+        var effectiveAdvanced = compiled.advanced
+        if !scriptletsEnabled {
+            effectiveAdvanced.scriptlets = []
         }
 
         let script: WKUserScript?
@@ -177,6 +168,10 @@ final class BrowserAdBlockEngine {
 
     func needsAutoUpdate(config: BrowserAdBlockConfig, now: Date = Date()) -> Bool {
         guard config.autoUpdateEnabled else { return false }
+        let activeTargets = config.subscriptions.filter { $0.isEnabled && config.isCategoryEnabled($0.category) }
+        if activeTargets.contains(where: { $0.lastUpdatedAt == nil && $0.lastError == nil }) {
+            return true
+        }
         guard let last = config.lastUpdatedAt else { return true }
         return now.timeIntervalSince(last) >= Self.autoUpdateInterval
     }
@@ -322,20 +317,80 @@ final class BrowserAdBlockEngine {
         return sources
     }
 
-    private func loadOrCompileRuleList(identifier: String, json: String) async -> WKContentRuleList? {
-        let store = WKContentRuleListStore.default()
-        if let existing = try? await store?.contentRuleList(forIdentifier: identifier) {
+    func loadOrCompileRuleList(identifier: String, json: String) async -> WKContentRuleList? {
+        guard let store = WKContentRuleListStore.default() else { return nil }
+        if let existing = try? await store.contentRuleList(forIdentifier: identifier) {
             return existing
         }
         do {
-            return try await store?.compileContentRuleList(
+            return try await store.compileContentRuleList(
                 forIdentifier: identifier,
                 encodedContentRuleList: json
             )
         } catch {
-            vlog("browser adblock chunk \(identifier) compile failed: \(error)")
-            return nil
+            vlog("browser adblock chunk \(identifier) compile failed (\(error)); isolating invalid rules")
+            return await compileResilientFallback(store: store, identifier: identifier, json: json)
         }
+    }
+
+    /// Binary-splits a failing WebKit content-blocker chunk to quarantine the offending rule(s)
+    /// instead of dropping the entire chunk, then compiles and caches the clean remainder under `identifier`.
+    private func compileResilientFallback(
+        store: WKContentRuleListStore,
+        identifier: String,
+        json: String
+    ) async -> WKContentRuleList? {
+        guard let data = json.data(using: .utf8),
+              let rules = (try? JSONSerialization.jsonObject(with: data)) as? [[String: Any]],
+              rules.count > 1
+        else { return nil }
+
+        let scratchPrefix = "\(Self.identifierPrefix)probe.\(UUID().uuidString.lowercased())"
+        var probeCounter = 0
+        var droppedCount = 0
+        let maxDropped = 64
+
+        func probe(_ slice: [[String: Any]]) async -> [[String: Any]] {
+            guard !slice.isEmpty else { return [] }
+            guard let sliceData = try? JSONSerialization.data(withJSONObject: slice),
+                  let sliceJSON = String(data: sliceData, encoding: .utf8)
+            else { return [] }
+
+            probeCounter += 1
+            let probeID = "\(scratchPrefix).\(probeCounter)"
+            if let _ = try? await store.compileContentRuleList(
+                forIdentifier: probeID,
+                encodedContentRuleList: sliceJSON
+            ) {
+                try? await store.removeContentRuleList(forIdentifier: probeID)
+                return slice
+            }
+
+            if slice.count == 1 {
+                droppedCount += 1
+                return []
+            }
+            if droppedCount >= maxDropped {
+                return []
+            }
+
+            let mid = slice.count / 2
+            let left = await probe(Array(slice[..<mid]))
+            let right = await probe(Array(slice[mid...]))
+            return left + right
+        }
+
+        let validRules = await probe(rules)
+        guard !validRules.isEmpty,
+              let cleanData = try? JSONSerialization.data(withJSONObject: validRules),
+              let cleanJSON = String(data: cleanData, encoding: .utf8)
+        else { return nil }
+
+        vlog("browser adblock chunk \(identifier) recovered \(validRules.count)/\(rules.count) rules (quarantined \(rules.count - validRules.count))")
+        return try? await store.compileContentRuleList(
+            forIdentifier: identifier,
+            encodedContentRuleList: cleanJSON
+        )
     }
 
     private func pruneStaleRuleLists(keeping active: Set<String>) async {

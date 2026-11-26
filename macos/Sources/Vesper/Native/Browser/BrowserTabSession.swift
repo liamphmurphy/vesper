@@ -1,5 +1,7 @@
 import AppKit
 import Observation
+import Security
+import SecurityInterface
 import VesperCore
 import WebKit
 
@@ -23,6 +25,13 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     var isReaderMode: Bool = false
     var isAudioPlaying: Bool = false
     var loadError: String?
+    var tlsErrorMessage: String?
+    var pendingHTTPSFallbackURL: URL?
+    var passkeyFallbackSuggested: Bool = false
+    var certificateSummary: BrowserCertificateSummary?
+    var cameraCaptureState: WKMediaCaptureState = .none
+    var microphoneCaptureState: WKMediaCaptureState = .none
+    var trackingParamsStrippedCount: Int = 0
     var zoom: Double = 1.0
     var favicon: NSImage?
     var hasLoginForm: Bool = false
@@ -42,6 +51,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored private var appliedRuleLists: [WKContentRuleList] = []
     @ObservationIgnored private var appliedAdBlockPageScript: WKUserScript?
     @ObservationIgnored private var isAdBlockAttached: Bool = false
+    @ObservationIgnored private var inFlightHTTPSUpgradeOriginalURL: URL?
+    @ObservationIgnored private var inFlightHTTPSUpgradeTargetURL: URL?
+    @ObservationIgnored private var lastStrippedURL: String?
 
     @ObservationIgnored var onOpenNewTab: ((URL, Bool) -> Void)?
     @ObservationIgnored var onPageCommitted: ((BrowserTabSession) -> Void)?
@@ -55,12 +67,36 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored var neverShareProvider: (() -> BrowserNeverShareLists)?
     @ObservationIgnored var hostZoomProvider: ((String) -> Double?)?
     @ObservationIgnored var adBlockActiveProvider: ((String) -> Bool)?
+    @ObservationIgnored var securityConfigProvider: (() -> BrowserSecurityConfig)?
+    @ObservationIgnored var httpsOnlyExceptionsProvider: (() -> [String])?
+    @ObservationIgnored var lockdownActiveProvider: ((String) -> Bool)?
+    @ObservationIgnored var javascriptAllowedProvider: ((String) -> Bool)?
+    @ObservationIgnored var sitePermissionProvider: ((String, BrowserPermissionKind) -> BrowserPermissionSetting)?
+    @ObservationIgnored var onSitePermissionChanged: ((String, BrowserPermissionKind, BrowserPermissionSetting) -> Void)?
 
     var hasLoadedPage: Bool { !urlString.isEmpty }
+
+    var hostSecurityDisplay: BrowserHostSecurityDisplay {
+        BrowserIDNGuard.inspect(urlString: urlString)
+    }
+
+    var connectionSecurity: BrowserConnectionSecurity {
+        BrowserHTTPSGuard.connectionSecurity(
+            urlString: urlString,
+            hasOnlySecureContent: hasOnlySecureContent,
+            tlsError: tlsErrorMessage
+        )
+    }
+
+    var isCapturingMedia: Bool {
+        cameraCaptureState == .active || microphoneCaptureState == .active
+    }
 
     var displayTitle: String {
         let trimmed = title.trimmingCharacters(in: .whitespacesAndNewlines)
         if !trimmed.isEmpty { return trimmed }
+        let idn = hostSecurityDisplay
+        if idn.isSuspiciousIDN && !idn.displayHost.isEmpty { return idn.displayHost }
         let host = BrowserURLResolver.displayHost(for: urlString)
         return host.isEmpty ? (isPrivate ? "Private Tab" : "New Tab") : host
     }
@@ -68,6 +104,10 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     var displayHost: String {
         if urlString.lowercased().hasPrefix("webkit-extension://") {
             return "Extension"
+        }
+        let idn = hostSecurityDisplay
+        if idn.isSuspiciousIDN && !idn.displayHost.isEmpty {
+            return idn.displayHost
         }
         return BrowserURLResolver.displayHost(for: urlString)
     }
@@ -96,7 +136,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         contentRuleLists: [WKContentRuleList] = [],
         adBlockPageScript: WKUserScript? = nil,
         adBlockActive: Bool = true,
-        webExtensionController: WKWebExtensionController? = nil
+        webExtensionController: WKWebExtensionController? = nil,
+        lockdownModeEnabled: Bool = false,
+        proxyConfig: BrowserProxyConfig = .none
     ) {
         self.id = record.id
         self.profileID = profileID
@@ -121,6 +163,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         let adBlockMetricsProxy = BrowserScriptMessageProxy { _ in
             weakSessionBox?.session?.adBlockInterventionsCount += 1
         }
+        let passkeyProxy = BrowserScriptMessageProxy { _ in
+            weakSessionBox?.session?.passkeyFallbackSuggested = true
+        }
         self.webView = BrowserWebViewFactory.makeWebView(
             isPrivate: record.isPrivate,
             profileDataStoreID: profileDataStoreID,
@@ -128,7 +173,10 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             adBlockPageScript: adBlockActive ? adBlockPageScript : nil,
             webExtensionController: webExtensionController,
             autofillMessageHandler: autofillProxy,
-            adBlockMetricsHandler: adBlockMetricsProxy
+            adBlockMetricsHandler: adBlockMetricsProxy,
+            passkeyMessageHandler: passkeyProxy,
+            lockdownModeEnabled: lockdownModeEnabled,
+            proxyConfig: proxyConfig
         )
         super.init()
         box.session = self
@@ -178,6 +226,12 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             webView.observe(\.hasOnlySecureContent, options: [.initial, .new]) { [weak self] wv, _ in
                 MainActor.assumeIsolated { self?.hasOnlySecureContent = wv.hasOnlySecureContent }
             },
+            webView.observe(\.cameraCaptureState, options: [.initial, .new]) { [weak self] wv, _ in
+                MainActor.assumeIsolated { self?.cameraCaptureState = wv.cameraCaptureState }
+            },
+            webView.observe(\.microphoneCaptureState, options: [.initial, .new]) { [weak self] wv, _ in
+                MainActor.assumeIsolated { self?.microphoneCaptureState = wv.microphoneCaptureState }
+            },
         ]
 
         if let initialURL = URL(string: record.url), Self.isLoadableTabURL(initialURL) {
@@ -189,18 +243,105 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
 
     func load(_ url: URL) {
         loadError = nil
+        tlsErrorMessage = nil
+        pendingHTTPSFallbackURL = nil
+        passkeyFallbackSuggested = false
+        inFlightHTTPSUpgradeOriginalURL = nil
+        inFlightHTTPSUpgradeTargetURL = nil
         isReaderMode = false
         hasLoginForm = false
         adBlockInterventionsCount = 0
-        urlString = url.absoluteString
-        favicon = BrowserFaviconCache.shared.cachedIcon(for: url.absoluteString)
-        syncAdBlockForURL(url.absoluteString)
-        if let host = url.host, let savedZoom = hostZoomProvider?(host) {
+
+        var targetURL = url
+        if securityConfigProvider?().stripTrackingParameters ?? true {
+            let stripped = BrowserTrackingParamStripper.strip(from: targetURL)
+            if stripped.removedCount > 0 {
+                targetURL = stripped.url
+                trackingParamsStrippedCount += stripped.removedCount
+                lastStrippedURL = targetURL.absoluteString
+            }
+        }
+        urlString = targetURL.absoluteString
+        favicon = BrowserFaviconCache.shared.cachedIcon(for: targetURL.absoluteString)
+        syncAdBlockForURL(targetURL.absoluteString)
+        if let host = targetURL.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom
         }
-        webView.load(URLRequest(url: url))
+        webView.load(URLRequest(url: targetURL))
         onStateChanged?()
+    }
+
+    func stopMediaCapture() {
+        webView.setCameraCaptureState(.none)
+        webView.setMicrophoneCaptureState(.none)
+    }
+
+    func showSystemCertificatePanel() {
+        guard let trust = webView.serverTrust else { return }
+        if let window = webView.window {
+            SFCertificatePanel.shared().beginSheet(
+                for: window,
+                modalDelegate: nil,
+                didEnd: nil,
+                contextInfo: nil,
+                trust: trust,
+                showGroup: true
+            )
+        } else {
+            SFCertificatePanel.shared().runModal(for: trust, showGroup: true)
+        }
+    }
+
+    func refreshCertificateSummary() {
+        guard let trust = webView.serverTrust,
+              let chain = SecTrustCopyCertificateChain(trust) as? [SecCertificate],
+              let leaf = chain.first
+        else {
+            certificateSummary = nil
+            return
+        }
+        let subject = (SecCertificateCopySubjectSummary(leaf) as String?) ?? displayHost
+        var issuer = ""
+        var validFrom: Date?
+        var validUntil: Date?
+
+        let keys: [CFString] = [
+            kSecOIDX509V1IssuerName,
+            kSecOIDX509V1ValidityNotBefore,
+            kSecOIDX509V1ValidityNotAfter,
+        ]
+        if let values = SecCertificateCopyValues(leaf, keys as CFArray, nil) as? [String: Any] {
+            if let issuerDict = values[kSecOIDX509V1IssuerName as String] as? [String: Any],
+               let entries = issuerDict[kSecPropertyKeyValue as String] as? [[String: Any]]
+            {
+                let cn = entries.first(where: { ($0[kSecPropertyKeyLabel as String] as? String) == (kSecOIDCommonName as String) })?[kSecPropertyKeyValue as String] as? String
+                let org = entries.first(where: { ($0[kSecPropertyKeyLabel as String] as? String) == (kSecOIDOrganizationName as String) })?[kSecPropertyKeyValue as String] as? String
+                issuer = cn ?? org ?? ""
+            }
+            if let fromDict = values[kSecOIDX509V1ValidityNotBefore as String] as? [String: Any] {
+                if let num = fromDict[kSecPropertyKeyValue as String] as? Double {
+                    validFrom = Date(timeIntervalSinceReferenceDate: num)
+                } else if let date = fromDict[kSecPropertyKeyValue as String] as? Date {
+                    validFrom = date
+                }
+            }
+            if let toDict = values[kSecOIDX509V1ValidityNotAfter as String] as? [String: Any] {
+                if let num = toDict[kSecPropertyKeyValue as String] as? Double {
+                    validUntil = Date(timeIntervalSinceReferenceDate: num)
+                } else if let date = toDict[kSecPropertyKeyValue as String] as? Date {
+                    validUntil = date
+                }
+            }
+        }
+        certificateSummary = BrowserCertificateSummary(
+            subject: subject,
+            issuer: issuer,
+            validFrom: validFrom,
+            validUntil: validUntil,
+            chainCount: chain.count,
+            isTrusted: tlsErrorMessage == nil
+        )
     }
 
     func reload(fromOrigin: Bool = false) {
@@ -282,13 +423,25 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
                 ucc.add(ruleList)
             }
         }
-        // Rebuild user scripts cleanly so AutoFill & metrics bridge scripts are always preserved.
+        // Rebuild user scripts cleanly so AutoFill, passkey observer & metrics bridge scripts are always preserved.
         ucc.removeAllUserScripts()
         ucc.addUserScript(WKUserScript(
             source: BrowserAdBlockScripts.metricsBridgeScriptSource,
             injectionTime: .atDocumentStart,
             forMainFrameOnly: false,
             in: .defaultClient
+        ))
+        ucc.addUserScript(WKUserScript(
+            source: BrowserPasskeyBridgeScripts.bridgeScriptSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .defaultClient
+        ))
+        ucc.addUserScript(WKUserScript(
+            source: BrowserPasskeyBridgeScripts.pageObserverScriptSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .page
         ))
         ucc.addUserScript(WKUserScript(
             source: BrowserAutofillScripts.detectorScriptSource,
@@ -368,6 +521,10 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         )
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: BrowserAdBlockScripts.metricsHandlerName,
+            contentWorld: .defaultClient
+        )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: BrowserPasskeyBridgeScripts.handlerName,
             contentWorld: .defaultClient
         )
         webView.contextCallbacks = nil
@@ -478,36 +635,86 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
 
     // MARK: WKNavigationDelegate
 
-    func webView(_ webView: WKWebView, decidePolicyFor navigationAction: WKNavigationAction) async -> WKNavigationActionPolicy {
-        if navigationAction.shouldPerformDownload { return .download }
-        guard let url = navigationAction.request.url else { return .cancel }
+    func webView(
+        _ webView: WKWebView,
+        decidePolicyFor navigationAction: WKNavigationAction,
+        preferences: WKWebpagePreferences
+    ) async -> (WKNavigationActionPolicy, WKWebpagePreferences) {
+        if navigationAction.shouldPerformDownload { return (.download, preferences) }
+        guard let url = navigationAction.request.url else { return (.cancel, preferences) }
         let scheme = url.scheme?.lowercased() ?? ""
+        let isMainFrame = navigationAction.targetFrame?.isMainFrame ?? true
+        let secConfig = securityConfigProvider?() ?? .default
 
         if scheme == "mailto" || scheme == "tel" {
             NSWorkspace.shared.open(url)
-            return .cancel
+            return (.cancel, preferences)
+        }
+        if BrowserHTTPSGuard.shouldBlockNavigation(
+            url: url,
+            isMainFrame: isMainFrame,
+            blockTopLevelData: secConfig.blockTopLevelDataNavigations
+        ) {
+            return (.cancel, preferences)
         }
         if scheme == "about" || scheme == "blob" || scheme == "data" || scheme == "webkit-extension" {
-            return .allow
+            return (.allow, preferences)
         }
         guard scheme == "http" || scheme == "https" else {
-            return .cancel
+            return (.cancel, preferences)
         }
+
+        // Apply per-site Lockdown Mode and JavaScript preferences on main-frame navigations.
+        if isMainFrame {
+            preferences.isLockdownModeEnabled = lockdownActiveProvider?(url.absoluteString) ?? secConfig.lockdownModeEnabled
+            preferences.allowsContentJavaScript = javascriptAllowedProvider?(url.absoluteString) ?? true
+        }
+
         // Middle-click / Cmd-click / target="_blank" links open in a new browser tab.
         if navigationAction.targetFrame == nil {
             onOpenNewTab?(url, isPrivate)
-            return .cancel
+            return (.cancel, preferences)
         }
         if navigationAction.navigationType == .linkActivated,
            navigationAction.modifierFlags.contains(.command)
         {
             onOpenNewTab?(url, isPrivate)
-            return .cancel
+            return (.cancel, preferences)
         }
-        if navigationAction.targetFrame?.isMainFrame == true {
+
+        // Strip cross-site tracking query parameters on top-level GET navigations.
+        if isMainFrame,
+           secConfig.stripTrackingParameters,
+           (navigationAction.request.httpMethod ?? "GET").uppercased() == "GET",
+           lastStrippedURL != url.absoluteString
+        {
+            let stripped = BrowserTrackingParamStripper.strip(from: url)
+            if stripped.removedCount > 0 {
+                trackingParamsStrippedCount += stripped.removedCount
+                lastStrippedURL = stripped.url.absoluteString
+                webView.load(URLRequest(url: stripped.url))
+                return (.cancel, preferences)
+            }
+        }
+
+        // Strict HTTPS-Only mode: upgrade remote HTTP main-frame navigations and track fallback URL.
+        if isMainFrame,
+           let upgraded = BrowserHTTPSGuard.upgradedHTTPSURL(
+               for: url,
+               httpsOnlyEnabled: secConfig.httpsOnlyMode,
+               exceptions: httpsOnlyExceptionsProvider?() ?? []
+           )
+        {
+            inFlightHTTPSUpgradeOriginalURL = url
+            inFlightHTTPSUpgradeTargetURL = upgraded
+            webView.load(URLRequest(url: upgraded))
+            return (.cancel, preferences)
+        }
+
+        if isMainFrame {
             syncAdBlockForURL(url.absoluteString)
         }
-        return .allow
+        return (.allow, preferences)
     }
 
     func webView(_ webView: WKWebView, decidePolicyFor navigationResponse: WKNavigationResponse) async -> WKNavigationResponsePolicy {
@@ -515,18 +722,72 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     }
 
     func webView(_ webView: WKWebView, navigationAction: WKNavigationAction, didBecome download: WKDownload) {
-        WebDownloads.shared.adopt(download, in: webView)
+        adoptDownloadWithConfirmation(download)
     }
 
     func webView(_ webView: WKWebView, navigationResponse: WKNavigationResponse, didBecome download: WKDownload) {
-        WebDownloads.shared.adopt(download, in: webView)
+        adoptDownloadWithConfirmation(download)
+    }
+
+    private func adoptDownloadWithConfirmation(_ download: WKDownload) {
+        WebDownloads.shared.adopt(download, in: webView) { [weak self] filename, dataURL, originURL in
+            guard let self else { return false }
+            return await self.confirmDownload(filename: filename, dataURL: dataURL, originURL: originURL)
+        }
+    }
+
+    private func confirmDownload(filename: String, dataURL: URL?, originURL: URL?) async -> Bool {
+        let secConfig = securityConfigProvider?() ?? .default
+        let host = BrowserPageGuard.normalizeHost(originURL?.absoluteString ?? dataURL?.absoluteString ?? urlString) ?? displayHost
+        let isRisky = BrowserDownloadGuard.isRiskyFilename(filename)
+        let savedSetting = host.isEmpty ? .ask : (sitePermissionProvider?(host, .downloads) ?? .ask)
+
+        if savedSetting == .deny {
+            return false
+        }
+        if !isRisky && (!secConfig.confirmDownloads || savedSetting == .allow) {
+            return true
+        }
+
+        let alert = NSAlert()
+        alert.alertStyle = isRisky ? .warning : .informational
+        let hostLabel = host.isEmpty ? "This site" : host
+        alert.messageText = isRisky
+            ? "Download executable or installer “\(filename)” from \(hostLabel)?"
+            : "Allow downloads from \(hostLabel)?"
+        if let risk = BrowserDownloadGuard.riskWarning(for: filename) {
+            alert.informativeText = risk
+        } else {
+            alert.informativeText = "File: \(filename)\nIt will be saved to ~/Downloads with macOS Gatekeeper quarantine."
+        }
+        alert.addButton(withTitle: "Allow Once")
+        if !isRisky && !host.isEmpty {
+            alert.addButton(withTitle: "Always Allow for \(host)")
+        }
+        alert.addButton(withTitle: "Cancel")
+
+        let response = await presentAlert(alert)
+        if response == .alertFirstButtonReturn {
+            return true
+        }
+        if !isRisky && !host.isEmpty && response == .alertSecondButtonReturn {
+            onSitePermissionChanged?(host, .downloads, .allow)
+            return true
+        }
+        return false
     }
 
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         loadError = nil
+        tlsErrorMessage = nil
+        pendingHTTPSFallbackURL = nil
+        passkeyFallbackSuggested = false
+        inFlightHTTPSUpgradeOriginalURL = nil
+        inFlightHTTPSUpgradeTargetURL = nil
         isReaderMode = false
         hasLoginForm = false
         adBlockInterventionsCount = 0
+        refreshCertificateSummary()
         if let host = webView.url?.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom
@@ -536,6 +797,8 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadError = nil
+        tlsErrorMessage = nil
+        refreshCertificateSummary()
         if isMuted { applyMuteToPage() }
         refreshMediaState()
         refreshFavicon()
@@ -555,6 +818,24 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         let ns = error as NSError
         if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
         if ns.domain == "WebKitErrorDomain" && ns.code == 102 { return }
+
+        // If an automatic HTTPS-Only upgrade failed, surface an explicit fallback prompt instead of silently downgrading.
+        if let originalHTTP = inFlightHTTPSUpgradeOriginalURL {
+            inFlightHTTPSUpgradeOriginalURL = nil
+            inFlightHTTPSUpgradeTargetURL = nil
+            pendingHTTPSFallbackURL = originalHTTP
+            loadError = nil
+            tlsErrorMessage = nil
+            return
+        }
+
+        if BrowserHTTPSGuard.isTLSError(domain: ns.domain, code: ns.code) {
+            tlsErrorMessage = ns.localizedDescription
+            loadError = nil
+            certificateSummary = nil
+            return
+        }
+
         loadError = ns.localizedDescription
     }
 
@@ -601,19 +882,41 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         initiatedBy frame: WKFrameInfo,
         type: WKMediaCaptureType
     ) async -> WKPermissionDecision {
-        let kind: String = switch type {
+        let host = BrowserPageGuard.normalizeHost(origin.host) ?? origin.host.lowercased()
+        let kinds: [BrowserPermissionKind] = switch type {
+        case .camera: [.camera]
+        case .microphone: [.microphone]
+        case .cameraAndMicrophone: [.camera, .microphone]
+        @unknown default: [.camera]
+        }
+
+        let settings = kinds.map { sitePermissionProvider?(host, $0) ?? .ask }
+        if settings.contains(.deny) { return .deny }
+        if settings.allSatisfy({ $0 == .allow }) { return .grant }
+
+        let kindLabel: String = switch type {
         case .camera: "camera"
         case .microphone: "microphone"
         case .cameraAndMicrophone: "camera and microphone"
         @unknown default: "media device"
         }
         let alert = NSAlert()
-        alert.messageText = "Allow \(origin.host) to use your \(kind)?"
-        alert.informativeText = "Only allow sites you trust."
-        alert.addButton(withTitle: "Allow")
+        alert.messageText = "Allow \(host) to use your \(kindLabel)?"
+        alert.informativeText = "Only allow sites you trust. You can change this anytime from the address bar."
+        alert.addButton(withTitle: "Allow Once")
+        alert.addButton(withTitle: "Always Allow")
         alert.addButton(withTitle: "Deny")
         let response = await presentAlert(alert)
-        return response == .alertFirstButtonReturn ? .grant : .deny
+        switch response {
+        case .alertFirstButtonReturn:
+            return .grant
+        case .alertSecondButtonReturn:
+            for k in kinds { onSitePermissionChanged?(host, k, .allow) }
+            return .grant
+        default:
+            for k in kinds { onSitePermissionChanged?(host, k, .deny) }
+            return .deny
+        }
     }
 
     func webView(_ webView: WKWebView, runJavaScriptAlertPanelWithMessage message: String, initiatedByFrame frame: WKFrameInfo) async {
