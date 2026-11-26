@@ -6,7 +6,7 @@ release"); the in-app check is still off by default. Option B is still open.
 
 ## The constraint
 
-`make mac-dmg` builds an ad-hoc signed, not notarised app
+`make -C macos dmg` builds an ad-hoc signed, not notarised app
 (`docs/dev/microvm-architecture.md`, "Signed, notarised distribution" is out of
 scope). That rules out an in-place updater such as Sparkle or Squirrel.Mac:
 
@@ -59,7 +59,7 @@ git tag v0.2.0 && git push origin v0.2.0
 ```
 
 - The tag sets the app version (`web/package.json` stays as it is in
-  git; the workflow rewrites it before `make mac-dmg`, and `build-app.sh`
+  git; the workflow rewrites it before `make -C macos dmg`, and `build-app.sh`
   puts it in `Info.plist`). A suffix, like `v0.2.0-rc.1`, publishes a pre-release, which
   installed apps don't announce: use it to try a build first.
 - The release carries `Vesper-arm64.dmg` (+ `.sha256`) and
@@ -77,7 +77,7 @@ git tag v0.2.0 && git push origin v0.2.0
 
 When GitHub's `macos-26` runner pool is slow or stuck queued, build the DMG on
 an Apple Silicon Mac and publish the same release assets with
-`scripts/mac-release-local.sh` (or `make mac-release`):
+`scripts/mac-release-local.sh`:
 
 ```sh
 git checkout v0.3.0
@@ -94,8 +94,8 @@ scripts/mac-release-local.sh v0.3.0 --build-images
 scripts/mac-release-local.sh v0.3.0 --dmg-only
 ```
 
-- Temporarily stamps the tag's version into `web/package.json` for `make mac-dmg`
-  and restores `web/package.json` and `web/package-lock.json` on exit.
+- Temporarily stamps the tag's version into `VERSION` for `make -C macos dmg`
+  and restores `VERSION` on exit.
 - Creates the release (with `--prerelease` for suffixed tags like `v0.3.0-rc.1`)
   if it doesn't exist yet, or updates it with `--clobber` if it does.
 - Pass `--no-upload` to test the build without touching GitHub, or

@@ -55,9 +55,11 @@ elif [[ -x "${repo_root}/macos/.build/release/vesper-matte" ]]; then
 fi
 
 if [[ ! -s "${img_cache}/vmlinux" ]]; then
-  echo "Missing ${img_cache}/vmlinux (run deploy/microvm/build-images.sh --kernel)" >&2
+  echo "Missing ${img_cache}/vmlinux (run make mac-app or deploy/microvm/build-images.sh --auto)" >&2
   exit 1
 fi
+rm -rf "${res_dir}/images"
+mkdir -p "${res_dir}/images"
 cp -f "${img_cache}/vmlinux" "${res_dir}/images/vmlinux"
 if [[ -f "${img_cache}/vmlinux.sha256" ]]; then
   cp -f "${img_cache}/vmlinux.sha256" "${res_dir}/images/vmlinux.sha256"

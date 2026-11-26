@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Assembles and signs macos/build/Vesper.app (docs/dev/native-mac-app.md, "Processes and files").
 #
-#   make -C macos app                 stage resources (slow: design worker, Postgres, vesper) then assemble
-#   make -C macos app SKIP_STAGE=1    reuse macos/staged as it is
+#   make mac-app                 rebuild stale VM images, build Vesper.app, and install to /Applications
+#   SKIP_STAGE=1 make mac-app    reuse macos/staged as it is
 #
 # Environment:
 #   VESPER_CODESIGN_IDENTITY  a code-signing identity (see macos/README.md); default "-" (ad hoc)

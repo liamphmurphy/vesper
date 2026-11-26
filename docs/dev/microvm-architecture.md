@@ -204,7 +204,7 @@ type VM interface {
 #### macOS guest VMs (`mac`)
 
 Personas build and test the Apple-platform parts of a repository (`macos/`,
-`xcodebuild`, `make mac-test`) in a macOS guest VM, which they reach from their
+`xcodebuild`, `make test-mac`) in a macOS guest VM, which they reach from their
 Linux run VM with `mac COMMAND`. The harness, git, Docker and services all stay
 in the Linux VM; the macOS VM only receives files and runs commands.
 
@@ -537,11 +537,11 @@ and the runner container holds the host's Docker socket (`docker-compose.yml:108
 `docker-compose.dev.yml:79`). The desktop app (`desktop/src/main.ts:49, 663`) is
 a thin client pointed at `http://localhost:8080` that asks for a Vesper
 checkout containing `docker-compose.yml` and runs `docker compose up -d`
-(`desktop/src/docker.ts:105`). `make mac-dmg` builds an unsigned arm64 DMG
-via `make mac-dmg` (`macos/Makefile`).
+(`desktop/src/docker.ts:105`). `make -C macos dmg` builds an unsigned arm64 DMG
+(`macos/Makefile`).
 
 **Target:** `vesper` must run natively on macOS to hold
-`com.apple.security.virtualization`, and `make mac-dmg` builds a
+`com.apple.security.virtualization`, and `make -C macos dmg` builds a
 **self-contained `Vesper.app`** carrying the whole local stack. Install is drag
 to Applications; first launch downloads `agent-base.erofs` (with progress) and
 opens Vesper, already signed in.
@@ -760,7 +760,7 @@ this branch (build + sign helper on macOS:
   wire Electron stack supervision, Keychain `SECRETS_KEY`, automatic
   `sign-in-link`, menu bar tray lifecycle, `session.setDisplayMediaRequestHandler`,
   first-launch `agent-base.erofs` downloader, and inside-out DMG signing via
-  `make mac-dmg`.
+  `make -C macos dmg`.
 
 ## Remaining open questions
 

@@ -1,8 +1,10 @@
 # The native macOS app. See ../docs/dev/native-mac-app.md.
+# To rebuild images (if needed), build Vesper.app, and install to /Applications,
+# run `make mac-app` from the repository root.
 APP := build/Vesper.app
 DMG := build/Vesper-arm64.dmg
 
-.PHONY: build test safari-test app dmg run reinstall clean
+.PHONY: build test safari-test dmg clean
 
 build:
 	swift build
@@ -14,15 +16,11 @@ test:
 safari-test:
 	node --test SafariExtension/tests/lib.test.cjs
 
-# Assembles and signs build/Vesper.app. SKIP_STAGE=1 reuses macos/staged as it is;
-# VESPER_CODESIGN_IDENTITY picks the signing identity (default: ad hoc).
-app:
+# Builds build/Vesper.app and packs build/Vesper-arm64.dmg (+ .sha256) for releases.
+# Used by .github/workflows/mac-release.yml and scripts/mac-release-local.sh.
+# SKIP_STAGE=1 reuses macos/staged as-is; VESPER_CODESIGN_IDENTITY picks the signing identity.
+dmg:
 	./scripts/build-app.sh
-
-# Packs the signed app into build/Vesper-arm64.dmg (the app plus an /Applications link, volume "Vesper")
-# and writes build/Vesper-arm64.dmg.sha256. Builds the app first (SKIP_STAGE=1 and the signing
-# identity apply as for `app`).
-dmg: app
 	rm -rf build/dmg-root $(DMG)
 	mkdir -p build/dmg-root
 	ditto $(APP) build/dmg-root/Vesper.app
@@ -31,21 +29,6 @@ dmg: app
 	rm -rf build/dmg-root
 	cd build && shasum -a 256 Vesper-arm64.dmg > Vesper-arm64.dmg.sha256
 	@echo "Built $(DMG)"
-
-# Runs the built app in the foreground, so its output is in this terminal.
-run: $(APP)
-	$(APP)/Contents/MacOS/Vesper
-
-$(APP):
-	./scripts/build-app.sh
-
-# Quits Vesper and replaces /Applications/Vesper.app with the built one.
-reinstall: app
-	-osascript -e 'tell application "Vesper" to quit' >/dev/null 2>&1
-	@for i in 1 2 3 4 5 6 7 8 9 10; do pgrep -x Vesper >/dev/null || break; sleep 1; done
-	rm -rf /Applications/Vesper.app
-	ditto $(APP) /Applications/Vesper.app
-	@echo "Installed /Applications/Vesper.app"
 
 clean:
 	rm -rf build .build

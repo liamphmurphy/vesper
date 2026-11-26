@@ -158,15 +158,13 @@ To connect providers with API keys or subscription sign-ins later, open **Settin
 
 ### Build from source
 
-Building `Vesper.app` locally requires Xcode 16+ / Swift 6, Go 1.26+, Node 24+, and Nix (for the embedded Postgres 17 bundle; the guest kernel is cached at `~/.cache/vesper/images/vmlinux` via `deploy/microvm/build-images.sh --kernel`):
+Building `Vesper.app` locally requires Xcode 16+ / Swift 6, Go 1.26+, Node 24+, Docker (only when the guest kernel or rootfs needs rebuilding), and Nix (for the embedded Postgres 17 bundle):
 
 ```sh
 git clone https://github.com/liamphmurphy/Vesper.git
 cd Vesper
-make mac-app    # stage resources, assemble and sign macos/build/Vesper.app
-make mac-run    # build and launch it, output in this terminal
-make mac-dmg    # macos/build/Vesper-arm64.dmg (+ .sha256)
-make mac-test   # run Swift tests (VesperCore & Safari bridge)
+make mac-app    # auto-rebuild stale VM images, build/sign Vesper.app, install to /Applications
+make test-mac   # run Swift tests (VesperCore & Safari bridge)
 make mac-golden # optional: set up headless macOS guest VM for `mac` builds
 ```
 
