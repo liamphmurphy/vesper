@@ -3,9 +3,44 @@ import Foundation
 
 // MARK: - Wiki Target
 
+/// Explicit Obsidian-style display dimensions parsed from `![[img.png|400]]` or `![[img.png|400x300]]`.
+public struct KnowledgeEmbedDimensions: Sendable, Equatable, Hashable {
+    public let width: CGFloat
+    public let height: CGFloat?
+
+    public init(width: CGFloat, height: CGFloat? = nil) {
+        self.width = width
+        self.height = height
+    }
+
+    /// Parses an Obsidian dimension token (`"400"` or `"400x300"`), clamping values to sensible display bounds.
+    public static func parse(_ raw: String) -> KnowledgeEmbedDimensions? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !trimmed.isEmpty else { return nil }
+        if let xIdx = trimmed.firstIndex(of: "x") {
+            let wStr = String(trimmed[..<xIdx])
+            let hStr = String(trimmed[trimmed.index(after: xIdx)...])
+            guard !wStr.isEmpty, wStr.allSatisfy(\.isNumber),
+                  !hStr.isEmpty, hStr.allSatisfy(\.isNumber),
+                  let w = Int(wStr), let h = Int(hStr),
+                  w > 0, h > 0 else {
+                return nil
+            }
+            return KnowledgeEmbedDimensions(
+                width: CGFloat(max(60, min(2400, w))),
+                height: CGFloat(max(40, min(2400, h)))
+            )
+        }
+        guard trimmed.allSatisfy(\.isNumber), let w = Int(trimmed), w > 0 else {
+            return nil
+        }
+        return KnowledgeEmbedDimensions(width: CGFloat(max(60, min(2400, w))), height: nil)
+    }
+}
+
 /// Parsed target of a `[[link]]` or `![[embed]]` matching `web/lib/wikilinks.ts` and `web/lib/knowledge-editor.ts`.
 public struct KnowledgeWikiTarget: Sendable, Equatable, Hashable {
-    /// Whole token as written, e.g. `[[Folder/Note#Intro|Overview]]` or `![[diagram.png]]`.
+    /// Whole token as written, e.g. `[[Folder/Note#Intro|Overview]]` or `![[diagram.png|400]]`.
     public let raw: String
     /// Inner text with escaped `\|` normalized to `|`, as sent to `/knowledge/resolve`.
     public let ref: String
@@ -42,9 +77,31 @@ public struct KnowledgeWikiTarget: Sendable, Equatable, Hashable {
         self.isEmbed = isEmbed
     }
 
+    /// Explicit width (and optional height) parsed from Obsidian-style embed sizing
+    /// (`![[img.png|400]]`, `![[img.png|400x260]]`, or `![[img.png|Alt text|400]]`).
+    public var embedDimensions: KnowledgeEmbedDimensions? {
+        guard isEmbed, let alias, !alias.isEmpty else { return nil }
+        let trailing = alias.split(separator: "|", omittingEmptySubsequences: false).last.map(String.init) ?? alias
+        return KnowledgeEmbedDimensions.parse(trailing)
+    }
+
     /// Display text matching `defaultLabel` in `web/lib/wikilinks.ts`.
     public func displayLabel(resolvedTitle: String? = nil) -> String {
-        if let alias, !alias.isEmpty { return alias }
+        if let alias, !alias.isEmpty {
+            if isEmbed {
+                let parts = alias.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+                if parts.count == 1 && KnowledgeEmbedDimensions.parse(parts[0]) != nil {
+                    // Pure dimension alias like `|400`: fall through to target/title.
+                } else if parts.count > 1, let last = parts.last, KnowledgeEmbedDimensions.parse(last) != nil {
+                    let caption = parts.dropLast().joined(separator: "|").trimmingCharacters(in: .whitespacesAndNewlines)
+                    if !caption.isEmpty { return caption }
+                } else {
+                    return alias
+                }
+            } else {
+                return alias
+            }
+        }
         let effectiveTarget = resolvedTitle ?? target
         if effectiveTarget.isEmpty { return anchor ?? "" }
         let leaf = effectiveTarget.components(separatedBy: "/").last ?? effectiveTarget
@@ -690,13 +747,51 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return nil
     }
 
+    /// Rewrites an embed token's Obsidian width specifier (`![[target|400]]`), preserving any
+    /// non-dimension caption alias (`![[target|Caption|400]]`). Passing `width: nil` removes
+    /// any existing dimension suffix to restore default sizing.
+    public static func updatingEmbedWidth(in rawToken: String, width: Int?) -> String {
+        guard rawToken.hasPrefix("![["), rawToken.hasSuffix("]]"), rawToken.count >= 5 else {
+            return rawToken
+        }
+        let inner = String(rawToken.dropFirst(3).dropLast(2))
+        var parts = inner.split(separator: "|", omittingEmptySubsequences: false).map(String.init)
+        guard !parts.isEmpty else { return rawToken }
+
+        // Strip existing trailing dimension segment if present (keep target at index 0).
+        if parts.count > 1, let last = parts.last, KnowledgeEmbedDimensions.parse(last) != nil {
+            parts.removeLast()
+        }
+        if let width {
+            let clamped = max(60, min(2400, width))
+            parts.append("\(clamped)")
+        }
+        return "![[\(parts.joined(separator: "|"))]]"
+    }
+
+    /// Matches a server-resolved `KnowledgeEmbed` against a parsed `![[...]]` target,
+    /// including when the user edits an inline `|width` alias before the next save round-trip.
+    private static func embedMatchesTarget(_ embed: KnowledgeEmbed, target: KnowledgeWikiTarget) -> Bool {
+        if embed.ref == target.raw || embed.ref == target.ref || embed.ref == target.target {
+            return true
+        }
+        if let parsedEmbed = parseWikiTarget(raw: embed.ref),
+           !parsedEmbed.target.isEmpty,
+           parsedEmbed.target == target.target,
+           parsedEmbed.anchor == target.anchor {
+            return true
+        }
+        return false
+    }
+
     // MARK: Inline Embed Resolution
 
     /// Resolves `![[...]]` embeds referenced in `markdown` against the server-resolved `embeds`
     /// list, preserving document order and deduplicating by `embed.ref`.
     ///
     /// The server returns `embed.ref` as the full raw token (`![[attachment:<uuid>/name.png]]`),
-    /// so matching checks `target.raw` in addition to the inner `target.ref` and `target.target`.
+    /// so matching checks `target.raw` in addition to the inner `target.ref`, `target.target`,
+    /// and target identity ignoring `|width` resize edits.
     public static func resolveInlineEmbeds(
         in markdown: String,
         embeds: [KnowledgeEmbed]
@@ -706,9 +801,7 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         var result: [KnowledgeEmbed] = []
         for token in scan(markdown) {
             guard case .embed(let target) = token.kind else { continue }
-            if let match = embeds.first(where: {
-                $0.available && ($0.ref == target.raw || $0.ref == target.ref || $0.ref == target.target)
-            }),
+            if let match = embeds.first(where: { $0.available && embedMatchesTarget($0, target: target) }),
                seen.insert(match.ref).inserted {
                 result.append(match)
             }
@@ -744,9 +837,7 @@ public enum KnowledgeMarkdownSyntax: Sendable {
 
         for token in scanned {
             guard case .embed(let target) = token.kind else { continue }
-            guard let embed = embeds.first(where: {
-                $0.hasInlinePreview && ($0.ref == target.raw || $0.ref == target.ref || $0.ref == target.target)
-            }) else {
+            guard let embed = embeds.first(where: { $0.hasInlinePreview && embedMatchesTarget($0, target: target) }) else {
                 continue
             }
 
@@ -774,8 +865,9 @@ public enum KnowledgeMarkdownSyntax: Sendable {
             var placements: [KnowledgeInlineEmbedPlacement] = []
             placements.reserveCapacity(entries.count)
             for entry in entries {
+                let stableKey = updatingEmbedWidth(in: entry.embed.ref, width: nil)
                 placements.append(KnowledgeInlineEmbedPlacement(
-                    id: "\(occurrenceIndex):\(entry.embed.ref)",
+                    id: "\(occurrenceIndex):\(stableKey)",
                     occurrenceIndex: occurrenceIndex,
                     tokenRange: entry.token.range,
                     lineContentRange: lineContentRange,
@@ -788,7 +880,7 @@ public enum KnowledgeMarkdownSyntax: Sendable {
             }
 
             let groupIndex = groups.count
-            let groupID = "\(groupIndex):\(placements.map(\.embed.ref).joined(separator: "|"))"
+            let groupID = "\(groupIndex):\(placements.map { updatingEmbedWidth(in: $0.embed.ref, width: nil) }.joined(separator: "|"))"
             groups.append(KnowledgeInlineEmbedParagraph(
                 id: groupID,
                 groupIndex: groupIndex,
@@ -820,14 +912,42 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return false
     }
 
-    /// Computes the aspect-fitted display size for an inline image without upscaling past its natural size.
+    /// Computes the aspect-fitted display size for an inline image.
+    /// When `explicitDimensions` is `nil`, scales down to `maxWidth × maxHeight` without upscaling past `naturalSize`.
+    /// When `explicitDimensions` is provided (from `![[img.png|400]]` or `![[img.png|400x300]]`), honors the requested
+    /// width clamped to `containerMaxWidth` (defaulting to `maxWidth`) while preserving aspect ratio.
     public static func fittedInlineImageSize(
         naturalSize: CGSize,
         maxWidth: CGFloat,
-        maxHeight: CGFloat
+        maxHeight: CGFloat,
+        explicitDimensions: KnowledgeEmbedDimensions? = nil,
+        containerMaxWidth: CGFloat? = nil
     ) -> CGSize {
         let clampedMaxW = max(1, maxWidth)
         let clampedMaxH = max(1, maxHeight)
+        if let explicit = explicitDimensions {
+            let capW = max(60, containerMaxWidth ?? clampedMaxW)
+            let targetW = max(60, min(capW, explicit.width))
+            if let explicitH = explicit.height {
+                let targetH = max(40, min(2400, explicitH))
+                guard naturalSize.width > 0, naturalSize.height > 0 else {
+                    return CGSize(width: ceil(targetW), height: ceil(targetH))
+                }
+                let scale = min(targetW / naturalSize.width, targetH / naturalSize.height)
+                return CGSize(
+                    width: max(1, ceil(naturalSize.width * scale)),
+                    height: max(1, ceil(naturalSize.height * scale))
+                )
+            }
+            guard naturalSize.width > 0, naturalSize.height > 0 else {
+                return CGSize(width: ceil(targetW), height: ceil(targetW * 0.75))
+            }
+            let aspectH = targetW * (naturalSize.height / naturalSize.width)
+            return CGSize(
+                width: max(1, ceil(targetW)),
+                height: max(1, min(2400, ceil(aspectH)))
+            )
+        }
         guard naturalSize.width > 0, naturalSize.height > 0 else {
             return CGSize(width: min(clampedMaxW, 160), height: min(clampedMaxH, 120))
         }

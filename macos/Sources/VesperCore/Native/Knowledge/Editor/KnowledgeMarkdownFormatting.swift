@@ -129,6 +129,84 @@ public enum KnowledgeMarkdownFormatting {
         )
     }
 
+    /// Returns a normalized single-line URL string if `raw` looks like a link suitable
+    /// for wrapping selected text on Cmd+V paste (e.g. `https://...`, `http://...`, `mailto:...`).
+    public static func pastableURL(from raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let components = URLComponents(string: trimmed),
+              let scheme = components.scheme?.lowercased() else {
+            return nil
+        }
+        switch scheme {
+        case "http", "https", "ftp":
+            guard let host = components.host, !host.isEmpty else { return nil }
+            return trimmed
+        case "mailto":
+            let remainder = String(trimmed.dropFirst("mailto:".count))
+            guard remainder.contains("@"), remainder.count >= 3 else { return nil }
+            return trimmed
+        case "vesper", "obsidian":
+            guard trimmed.count > scheme.count + 3 else { return nil }
+            return trimmed
+        default:
+            return nil
+        }
+    }
+
+    /// When text is selected and the pasted string is a valid URL, wraps the selection as
+    /// `[selected](url)` with the caret placed immediately after the closing `)`.
+    /// Returns `nil` when selection is collapsed, empty/whitespace, already a URL, inside code/frontmatter,
+    /// or when `pastedString` is not a URL.
+    public static func pasteURLOverSelection(
+        text: String,
+        selection: NSRange,
+        pastedString: String
+    ) -> EditResult? {
+        guard selection.length > 0, let url = pastableURL(from: pastedString) else {
+            return nil
+        }
+        let ns = text as NSString
+        guard selection.location >= 0, selection.location + selection.length <= ns.length else {
+            return nil
+        }
+        if KnowledgeMarkdownSyntax.isInsideCodeOrFrontmatter(utf16Offset: selection.location, in: text) {
+            return nil
+        }
+        let selected = ns.substring(with: selection)
+        let trimmedSelected = selected.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedSelected.isEmpty,
+              !selected.contains("\n"),
+              !selected.contains("\r"),
+              pastableURL(from: trimmedSelected) == nil else {
+            return nil
+        }
+        let escapedLabel = selected.replacingOccurrences(of: "]", with: "\\]")
+        let replacement = "[\(escapedLabel)](\(url))"
+        let next = ns.replacingCharacters(in: selection, with: replacement)
+        let caretAfter = selection.location + (replacement as NSString).length
+        return EditResult(text: next, selection: NSRange(location: caretAfter, length: 0))
+    }
+
+    /// Generates a deterministic, filesystem-safe screenshot filename (e.g. `Screenshot-2026-11-26-062500.png`).
+    public static func screenshotFilename(
+        date: Date = Date(),
+        extension ext: String = "png",
+        calendar: Calendar = .current
+    ) -> String {
+        let comps = calendar.dateComponents([.year, .month, .day, .hour, .minute, .second], from: date)
+        let y = comps.year ?? 2026
+        let mo = comps.month ?? 1
+        let d = comps.day ?? 1
+        let h = comps.hour ?? 0
+        let mi = comps.minute ?? 0
+        let s = comps.second ?? 0
+        let cleanExt = ext.trimmingCharacters(in: CharacterSet(charactersIn: ". ")).lowercased()
+        let finalExt = cleanExt.isEmpty ? "png" : cleanExt
+        return String(format: "Screenshot-%04d-%02d-%02d-%02d%02d%02d.%@", y, mo, d, h, mi, s, finalExt)
+    }
+
     private static func isHeadingPrefix(_ prefix: String) -> Bool {
         guard prefix.hasSuffix(" ") else { return false }
         let hashes = prefix.dropLast()

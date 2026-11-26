@@ -51,12 +51,21 @@ public struct KnowledgeCompletionCandidate: Sendable, Equatable, Hashable {
     public let insertRef: String
     /// Secondary detail line (e.g. folder path, MIME type, usage count).
     public let detail: String
+    /// Optional SF Symbol name override (e.g. `film`, `waveform`, `doc.richtext` for `![[` attachment types).
+    public let symbolName: String?
 
-    public init(kind: KnowledgeCompletionCandidateKind, title: String, insertRef: String, detail: String = "") {
+    public init(
+        kind: KnowledgeCompletionCandidateKind,
+        title: String,
+        insertRef: String,
+        detail: String = "",
+        symbolName: String? = nil
+    ) {
         self.kind = kind
         self.title = title
         self.insertRef = insertRef
         self.detail = detail
+        self.symbolName = symbolName
     }
 }
 
@@ -306,6 +315,7 @@ public enum KnowledgeCompletionLogic: Sendable {
     private static func matchScore(candidate: KnowledgeCompletionCandidate, query: String) -> Int? {
         let title = candidate.title.lowercased()
         let ref = candidate.insertRef.lowercased()
+        let detail = candidate.detail.lowercased()
         let leaf = ref.components(separatedBy: "/").last ?? ref
 
         if title == query || ref == query || leaf == query { return 1000 }
@@ -314,6 +324,7 @@ public enum KnowledgeCompletionLogic: Sendable {
         if hasWordPrefixMatch(in: title, query: query) || hasWordPrefixMatch(in: ref, query: query) { return 600 }
         if title.contains(query) { return 500 }
         if ref.contains(query) { return 400 }
+        if !detail.isEmpty && detail.contains(query) { return 250 }
         if isSubsequence(query, of: title) || isSubsequence(query, of: leaf) { return 200 }
         return nil
     }

@@ -79,20 +79,35 @@ public struct KnowledgeDragItem: Codable, Sendable, Equatable, Hashable {
     public enum ItemKind: String, Codable, Sendable, Hashable {
         case page
         case folder
+        case attachment
     }
 
     public var kind: ItemKind
     public var id: String
     public var path: String
     public var title: String
+    public var ref: String?
+    public var contentType: String?
+    public var url: String?
 
     private static let payloadPrefix = "vesper-knowledge-drag:"
 
-    public init(kind: ItemKind, id: String, path: String, title: String) {
+    public init(
+        kind: ItemKind,
+        id: String,
+        path: String,
+        title: String,
+        ref: String? = nil,
+        contentType: String? = nil,
+        url: String? = nil
+    ) {
         self.kind = kind
         self.id = id
         self.path = path
         self.title = title
+        self.ref = ref
+        self.contentType = contentType
+        self.url = url
     }
 
     public static func page(_ row: KnowledgePageRow) -> KnowledgeDragItem {
@@ -101,6 +116,30 @@ public struct KnowledgeDragItem: Codable, Sendable, Equatable, Hashable {
 
     public static func folder(_ folder: KnowledgeTreeFolder) -> KnowledgeDragItem {
         KnowledgeDragItem(kind: .folder, id: folder.path, path: folder.path, title: folder.name)
+    }
+
+    public static func attachment(_ attachment: KnowledgeAttachment) -> KnowledgeDragItem {
+        KnowledgeDragItem(
+            kind: .attachment,
+            id: attachment.id,
+            path: attachment.path,
+            title: attachment.filename,
+            ref: attachment.ref,
+            contentType: attachment.contentType,
+            url: attachment.url
+        )
+    }
+
+    public func asKnowledgeEmbed() -> KnowledgeEmbed? {
+        guard kind == .attachment, let ref, !ref.isEmpty, let url, !url.isEmpty else { return nil }
+        return KnowledgeEmbed(
+            ref: "![[\(ref)]]",
+            kind: "file",
+            title: title,
+            url: url,
+            contentType: contentType,
+            available: true
+        )
     }
 
     public func encodeDragPayload() -> String {
@@ -479,6 +518,28 @@ public enum KnowledgeShellLogic: Sendable {
         refs.map { "![[\($0)]]" }.joined(separator: "\n")
     }
 
+    /// Formats a sidebar drag item dropped into a Knowledge markdown editor:
+    /// - `.page` -> `[[path]]` (or `![[path]]` when `optionHeld` is true)
+    /// - `.attachment` -> `![[ref]]`
+    /// - `.folder` -> `nil`
+    public static func droppedMarkdown(for item: KnowledgeDragItem, optionHeld: Bool = false) -> String? {
+        switch item.kind {
+        case .page:
+            let target = item.path.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                ? item.title.trimmingCharacters(in: .whitespacesAndNewlines)
+                : item.path.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !target.isEmpty else { return nil }
+            return optionHeld ? "![[\(target)]]" : "[[\(target)]]"
+        case .attachment:
+            let rawRef = (item.ref?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? item.ref! : item.path)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !rawRef.isEmpty else { return nil }
+            return "![[\(rawRef)]]"
+        case .folder:
+            return nil
+        }
+    }
+
     private final class MutableFolder {
         let name: String
         let path: String
@@ -535,11 +596,12 @@ public enum KnowledgeShellLogic: Sendable {
     }
 
     /// Builds an Obsidian-style tree from flat page rows (folders first, Inbox prioritized at root, daily notes newest-first),
-    /// placing Knowledge attachments in a top-level `attachments` folder when present.
+    /// placing Knowledge attachments in a top-level `attachments` folder when present (or always when `includeEmptyAttachmentsFolder` is true).
     public static func buildTree(
         from rows: [KnowledgePageRow],
         attachments: [KnowledgeAttachment] = [],
-        prioritizeInbox: Bool = true
+        prioritizeInbox: Bool = true,
+        includeEmptyAttachmentsFolder: Bool = false
     ) -> KnowledgeTreeFolder {
         let root = MutableFolder(name: "", path: "")
         for row in rows {
@@ -562,7 +624,7 @@ public enum KnowledgeShellLogic: Sendable {
             }
             current.pages.append(row)
         }
-        if !attachments.isEmpty {
+        if !attachments.isEmpty || includeEmptyAttachmentsFolder {
             let folderName = attachmentsFolderName
             let target: MutableFolder
             if let existing = root.folders[folderName] {
@@ -813,6 +875,8 @@ public enum KnowledgeShellLogic: Sendable {
             var nextExpanded = Set(expanded.map { movedPath($0, from: item.path, to: to) })
             nextExpanded.formUnion(ancestors(of: to))
             return .moveFolder(from: item.path, to: to, updatedExpanded: nextExpanded)
+        case .attachment:
+            return nil
         }
     }
 

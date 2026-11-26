@@ -833,6 +833,18 @@ public struct KnowledgeAssetsResponse: Codable, Sendable, Equatable {
     public var images: [KnowledgeAssetSuggestion]
 }
 
+public struct KnowledgeAttachmentUsage: Codable, Sendable, Equatable, Hashable, Identifiable {
+    public var id: String
+    public var title: String
+    public var path: String
+
+    public init(id: String, title: String, path: String = "") {
+        self.id = id
+        self.title = title
+        self.path = path
+    }
+}
+
 public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Identifiable {
     public var id: String
     public var filename: String
@@ -843,12 +855,18 @@ public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Ident
     public var contentType: String
     public var sizeBytes: Int64
     public var createdAt: String
+    public var usageCount: Int
+    public var usedIn: [KnowledgeAttachmentUsage]
+    public var isOwner: Bool
 
     enum CodingKeys: String, CodingKey {
         case id, filename, title, path, ref, url
         case contentType = "content_type"
         case sizeBytes = "size_bytes"
         case createdAt = "created_at"
+        case usageCount = "usage_count"
+        case usedIn = "used_in"
+        case isOwner = "is_owner"
     }
 
     public init(
@@ -860,7 +878,10 @@ public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Ident
         url: String,
         contentType: String,
         sizeBytes: Int64 = 0,
-        createdAt: String = ""
+        createdAt: String = "",
+        usageCount: Int? = nil,
+        usedIn: [KnowledgeAttachmentUsage] = [],
+        isOwner: Bool = true
     ) {
         self.id = id
         self.filename = filename
@@ -871,6 +892,9 @@ public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Ident
         self.contentType = contentType
         self.sizeBytes = sizeBytes
         self.createdAt = createdAt
+        self.usedIn = usedIn
+        self.usageCount = usageCount ?? usedIn.count
+        self.isOwner = isOwner
     }
 
     public init(from decoder: any Decoder) throws {
@@ -884,6 +908,20 @@ public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Ident
         contentType = try c.decodeIfPresent(String.self, forKey: .contentType) ?? "application/octet-stream"
         sizeBytes = try c.decodeIfPresent(Int64.self, forKey: .sizeBytes) ?? 0
         createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+        let decodedUsedIn = try c.decodeIfPresent([KnowledgeAttachmentUsage].self, forKey: .usedIn) ?? []
+        usedIn = decodedUsedIn
+        usageCount = try c.decodeIfPresent(Int.self, forKey: .usageCount) ?? decodedUsedIn.count
+        isOwner = try c.decodeIfPresent(Bool.self, forKey: .isOwner) ?? true
+    }
+
+    public var isOrphaned: Bool { usageCount == 0 }
+
+    public var usageSummary: String {
+        switch usageCount {
+        case 0: return "Orphaned"
+        case 1: return "Used in 1 doc"
+        default: return "Used in \(usageCount) docs"
+        }
     }
 
     public func asKnowledgeEmbed() -> KnowledgeEmbed {
@@ -895,6 +933,74 @@ public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Ident
             contentType: contentType,
             available: true
         )
+    }
+}
+
+public struct KnowledgeAttachmentDeleteResponse: Codable, Sendable, Equatable {
+    public var deleted: String
+}
+
+public struct KnowledgeHeadingRow: Codable, Sendable, Equatable, Hashable, Identifiable {
+    public var id: String { "\(pageId):\(position):\(anchor)" }
+    public var pageId: String
+    public var pageTitle: String
+    public var pagePath: String
+    public var audience: KnowledgeAudience
+    public var level: Int
+    public var anchor: String
+    public var heading: String
+    public var position: Int
+
+    enum CodingKeys: String, CodingKey {
+        case pageId = "page_id"
+        case pageTitle = "page_title"
+        case pagePath = "page_path"
+        case audience, level, anchor, heading, position
+    }
+
+    public init(
+        pageId: String,
+        pageTitle: String,
+        pagePath: String = "",
+        audience: KnowledgeAudience = .private,
+        level: Int = 1,
+        anchor: String = "",
+        heading: String,
+        position: Int = 0
+    ) {
+        self.pageId = pageId
+        self.pageTitle = pageTitle
+        self.pagePath = pagePath
+        self.audience = audience
+        self.level = level
+        self.anchor = anchor
+        self.heading = heading
+        self.position = position
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        pageId = try c.decode(String.self, forKey: .pageId)
+        pageTitle = try c.decodeIfPresent(String.self, forKey: .pageTitle) ?? ""
+        pagePath = try c.decodeIfPresent(String.self, forKey: .pagePath) ?? ""
+        audience = try c.decodeIfPresent(KnowledgeAudience.self, forKey: .audience) ?? .private
+        level = try c.decodeIfPresent(Int.self, forKey: .level) ?? 1
+        anchor = try c.decodeIfPresent(String.self, forKey: .anchor) ?? ""
+        heading = try c.decodeIfPresent(String.self, forKey: .heading) ?? ""
+        position = try c.decodeIfPresent(Int.self, forKey: .position) ?? 0
+    }
+}
+
+public struct KnowledgeHeadingsResponse: Codable, Sendable, Equatable {
+    public var headings: [KnowledgeHeadingRow]
+
+    public init(headings: [KnowledgeHeadingRow] = []) {
+        self.headings = headings
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        headings = try c.decodeIfPresent([KnowledgeHeadingRow].self, forKey: .headings) ?? []
     }
 }
 
@@ -1013,6 +1119,10 @@ private struct KnowledgeFromCanvasBody: Encodable, Sendable {
 
 private struct KnowledgeConfirmImportBody: Encodable, Sendable {
     var policy: KnowledgeImportPolicy
+}
+
+private struct KnowledgeAttachmentRenameBody: Encodable, Sendable {
+    var filename: String
 }
 
 // MARK: - Requests & Cache Invalidation
@@ -1276,6 +1386,38 @@ public enum KnowledgeAPI {
             method: "GET",
             template: "/knowledge/attachments",
             path: "/api/v1/knowledge/attachments",
+            query: query,
+            decode: .json
+        )
+    }
+
+    public static func renameAttachment(id: String, filename: String) -> APIRequest<KnowledgeAttachment> {
+        APIRequest(
+            method: "PATCH",
+            template: "/knowledge/attachments/{id}",
+            path: "/api/v1/knowledge/attachments/\(APIPath.escape(id))",
+            body: .json(KnowledgeAttachmentRenameBody(filename: filename)),
+            decode: .json
+        )
+    }
+
+    public static func deleteAttachment(id: String) -> APIRequest<KnowledgeAttachmentDeleteResponse> {
+        APIRequest(
+            method: "DELETE",
+            template: "/knowledge/attachments/{id}",
+            path: "/api/v1/knowledge/attachments/\(APIPath.escape(id))",
+            decode: .json
+        )
+    }
+
+    public static func listHeadings(q: String? = nil, includeAgent: Bool = false) -> APIRequest<KnowledgeHeadingsResponse> {
+        var query: [URLQueryItem] = []
+        if let q, !q.isEmpty { APIQuery.append(&query, "q", q) }
+        if includeAgent { APIQuery.append(&query, "include_agent", true) }
+        return APIRequest(
+            method: "GET",
+            template: "/knowledge/headings",
+            path: "/api/v1/knowledge/headings",
             query: query,
             decode: .json
         )
