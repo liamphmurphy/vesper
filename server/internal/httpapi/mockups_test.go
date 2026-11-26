@@ -473,10 +473,24 @@ func TestChatCreateMockupCardAndReview(t *testing.T) {
 		t.Fatalf("review notice: %s %q %v", last.Role, last.BodyMd, refs)
 	}
 
-	// A chat with no project must name one.
+	// A chat with no project creates a standalone mockup without needing a project key.
 	bare := uuid.MustParse(e.newChat(map[string]any{"project": ""})["id"].(string))
 	bareToken := e.canvasToken(bare)
-	e.toolInvalid(bareToken, "create_mockup", map[string]any{"title": "Checkout", "svg": httpSVG}, "project")
+	code, out = e.tool(bareToken, "create_mockup", map[string]any{"title": "Standalone", "svg": httpSVG})
+	if code != 200 || out["version"] != "v1" {
+		t.Fatalf("without a project: %d %v", code, out)
+	}
+	bareID, bareVID := uuid.MustParse(out["artifact_id"].(string)), uuid.MustParse(out["version_id"].(string))
+	bareArt, err := e.q.GetArtifact(ctx, store.GetArtifactParams{ID: bareID, WorkspaceID: ws})
+	if err != nil || bareArt.ProjectID != nil || bareArt.ChatSessionID == nil || *bareArt.ChatSessionID != bare {
+		t.Fatalf("standalone mockup: %+v %v", bareArt, err)
+	}
+	if code, out := e.tool(bareToken, "create_mockup", map[string]any{"mockup_id": bareID.String(), "svg": httpSVG + "<!-- r2 -->", "note": "tweak"}); code != 200 || out["version"] != "v2" {
+		t.Fatalf("revise standalone mockup: %d %v", code, out)
+	} else {
+		bareVID = uuid.MustParse(out["version_id"].(string))
+	}
+	e.want("POST", fmt.Sprintf("/artifacts/%s/versions/%s/review", bareID, bareVID), map[string]any{"decision": "approved"}, http.StatusOK)
 	if code, out := e.tool(bareToken, "create_mockup", map[string]any{"title": "Checkout", "svg": httpSVG, "project": "pay"}); code != 200 {
 		t.Fatalf("with a project: %d %v", code, out)
 	}

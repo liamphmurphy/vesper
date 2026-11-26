@@ -195,9 +195,6 @@ func (s *Service) CreateChatMockup(ctx context.Context, c Caller, in ChatMockup)
 				return err
 			}
 		} else {
-			if projectKey == "" {
-				return apperr.Invalid("project", "is required: this chat has no default project")
-			}
 			var err error
 			if a, err = s.Artifacts.CreateMockupTx(ctx, q, ws, by, projectKey, in.Title, nil, in.SVG); err != nil {
 				return err
