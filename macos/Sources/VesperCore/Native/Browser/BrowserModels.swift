@@ -418,6 +418,54 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
     }
 }
 
+public struct BrowserLayoutConfig: Codable, Sendable, Equatable, Hashable {
+    public static let minZoom: Double = 0.5
+    public static let maxZoom: Double = 2.0
+    public static let presetZooms: [Double] = [0.75, 0.85, 0.90, 1.0, 1.10, 1.25, 1.50]
+
+    public var autoHideOmnibox: Bool
+    public var hoverPeekSidebar: Bool
+    public var defaultZoom: Double
+
+    public static let `default` = BrowserLayoutConfig()
+
+    public init(
+        autoHideOmnibox: Bool = false,
+        hoverPeekSidebar: Bool = true,
+        defaultZoom: Double = 1.0
+    ) {
+        self.autoHideOmnibox = autoHideOmnibox
+        self.hoverPeekSidebar = hoverPeekSidebar
+        self.defaultZoom = Self.clampZoom(defaultZoom)
+    }
+
+    public static func clampZoom(_ value: Double) -> Double {
+        guard value.isFinite else { return 1.0 }
+        let clamped = min(maxZoom, max(minZoom, value))
+        return (clamped * 100).rounded() / 100
+    }
+
+    public func effectiveZoom(for host: String?, siteZooms: [String: Double]) -> Double {
+        if let host, !host.isEmpty, let site = siteZooms[host.lowercased()] {
+            return min(3.0, max(0.3, site))
+        }
+        return Self.clampZoom(defaultZoom)
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case autoHideOmnibox = "auto_hide_omnibox"
+        case hoverPeekSidebar = "hover_peek_sidebar"
+        case defaultZoom = "default_zoom"
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        autoHideOmnibox = try c.decodeIfPresent(Bool.self, forKey: .autoHideOmnibox) ?? false
+        hoverPeekSidebar = try c.decodeIfPresent(Bool.self, forKey: .hoverPeekSidebar) ?? true
+        defaultZoom = Self.clampZoom(try c.decodeIfPresent(Double.self, forKey: .defaultZoom) ?? 1.0)
+    }
+}
+
 public struct BrowserPersistedState: Codable, Sendable, Equatable {
     public var tabs: [BrowserTabRecord]
     public var activeTabId: UUID?
@@ -433,6 +481,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
     public var autofillEnabled: Bool
     public var adBlockConfig: BrowserAdBlockConfig
     public var securityConfig: BrowserSecurityConfig
+    public var layoutConfig: BrowserLayoutConfig
 
     public init(
         tabs: [BrowserTabRecord] = [],
@@ -448,7 +497,8 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         activeProfileId: UUID? = nil,
         autofillEnabled: Bool = true,
         adBlockConfig: BrowserAdBlockConfig = .default,
-        securityConfig: BrowserSecurityConfig = .default
+        securityConfig: BrowserSecurityConfig = .default,
+        layoutConfig: BrowserLayoutConfig = .default
     ) {
         self.tabs = tabs
         self.activeTabId = activeTabId
@@ -477,6 +527,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         self.autofillEnabled = autofillEnabled
         self.adBlockConfig = adBlockConfig
         self.securityConfig = securityConfig
+        self.layoutConfig = layoutConfig
     }
 
     public static let empty = BrowserPersistedState()
@@ -496,6 +547,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         case autofillEnabled = "autofill_enabled"
         case adBlockConfig = "ad_block_config"
         case securityConfig = "security_config"
+        case layoutConfig = "layout_config"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -512,6 +564,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         autofillEnabled = try c.decodeIfPresent(Bool.self, forKey: .autofillEnabled) ?? true
         adBlockConfig = try c.decodeIfPresent(BrowserAdBlockConfig.self, forKey: .adBlockConfig) ?? .default
         securityConfig = try c.decodeIfPresent(BrowserSecurityConfig.self, forKey: .securityConfig) ?? .default
+        layoutConfig = try c.decodeIfPresent(BrowserLayoutConfig.self, forKey: .layoutConfig) ?? .default
 
         let decodedProfiles = try c.decodeIfPresent([BrowserProfile].self, forKey: .profiles) ?? []
         if decodedProfiles.isEmpty {
