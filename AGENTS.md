@@ -65,11 +65,12 @@ playground gateway keeps the `vesper_session` cookie for the outer Vesper.
 
 ## Headless mode
 
-Vesper ships as the native Swift macOS app in `macos/` (`make mac-app`, `mac-run`,
-`mac-dmg`, `mac-test`; see `docs/dev/native-mac-app.md`). It supervises `vesper app`:
-embedded Postgres, a local-directory blob store, microVM runner. Staged resources
-live in the git-ignored `macos/staged/` (`scripts/stage-mac-resources.sh`). Never
-run `make -C macos reinstall` or touch `/Applications/Vesper.app` or the real data
+Vesper ships as the native Swift macOS app in `macos/` (`make mac-app` auto-rebuilds
+stale microVM images, builds `Vesper.app`, and installs it to `/Applications/Vesper.app`;
+`make test-mac` runs Swift tests; see `docs/dev/native-mac-app.md`). It supervises
+`vesper app`: embedded Postgres, a local-directory blob store, microVM runner. Staged
+resources live in the git-ignored `macos/staged/` (`scripts/stage-mac-resources.sh`).
+Never run `make mac-app` or touch `/Applications/Vesper.app` or the real data
 dir from an agent run. CI and the playground run it headless instead:
 `vesper serve` (the API, against `DATABASE_URL`) and `vesper runner` with
 `RUNNER_BACKEND=fake`, blobs in `BLOB_DIR`. There is no Docker or S3 way to run

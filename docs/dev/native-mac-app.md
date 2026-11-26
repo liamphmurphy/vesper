@@ -301,7 +301,7 @@ macos/Tests/VesperCoreTests/        XCTest, incl. bridge fixture decoding
 macos/scripts/build-app.sh          assemble + sign Vesper.app
 macos/Resources/                    Info.plist template, icons, tray images
 macos/scripts/gen-icon.mjs, gen-tray-icons.mjs   regenerate Resources/AppIcon.icns and tray/ from web/public/logo.svg
-macos/Makefile                      build, test, app, dmg, run, reinstall
+macos/Makefile                      build, test, safari-test, dmg, clean
 macos/staged/                       staged resources (git-ignored; scripts/stage-mac-resources.sh)
 ```
 
@@ -341,7 +341,7 @@ one at a time by adding a `NativeScreen` case and a route.
   follow the palette, accent, Light/Dark and Settings → Text size live. Fallbacks are system colours.
 - **Find.** The find bar searches a `FindTarget`: the web view, or the screen's `NativeFindModel`
   (it lists row texts; the screen marks matches and scrolls to `current`).
-- **Debug screen.** `VESPER_NATIVE_DEBUG=1 make -C macos run` (or `defaults write <bundle id>
+- **Debug screen.** `VESPER_NATIVE_DEBUG=1 /Applications/Vesper.app/Contents/MacOS/Vesper` (or `defaults write <bundle id>
   VesperNativeDebugScreens -bool YES`) enables `/native-debug` and `/native-debug/:id`.
 
 Manual click-through for the hosting path (with the debug screen enabled):
@@ -996,11 +996,11 @@ Manual click-through checklist:
 
 ## Build and test
 
-- `make -C macos test` → `swift test` (VesperCore).
-- `make -C macos app` (or `make mac-app`) → `macos/build/Vesper.app`; `make -C macos run` launches
-  it with logs to the terminal; `make -C macos dmg` (`make mac-dmg`) packs the signed app into
-  `macos/build/Vesper-arm64.dmg` (app plus an Applications link, volume "Vesper") with a `.sha256`;
-  `make -C macos reinstall` replaces `/Applications/Vesper.app`. `SKIP_STAGE=1` reuses `macos/staged`.
+- `make test-mac` (or `make -C macos test`) → `swift test` (VesperCore).
+- `make mac-app` → auto-rebuilds stale microVM kernel/rootfs images (`deploy/microvm/build-images.sh --auto`),
+  builds and signs `macos/build/Vesper.app`, and installs it to `/Applications/Vesper.app`
+  (`SKIP_STAGE=1` reuses `macos/staged`; `FORCE_IMAGES=1` forces rebuilding both images; `SKIP_IMAGES=1` skips image checks).
+- `make -C macos dmg` packs the signed app into `macos/build/Vesper-arm64.dmg` (app plus an Applications link, volume "Vesper") with a `.sha256` for releases.
 - Releases: `.github/workflows/mac-release.yml` on a `vX.Y.Z` tag (see [mac-updates.md](mac-updates.md)).
 - Web: `npm --prefix web test`, `npm --prefix web run lint`, `npx --prefix web tsc --noEmit -p web`.
 - Server: see AGENTS.md "Running the server tests".

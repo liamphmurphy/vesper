@@ -9,9 +9,7 @@ directory and runs agents in Apple Virtualization microVMs
 ([native app notes](dev/native-mac-app.md)).
 
 ```sh
-make mac-app   # build the app bundle (macos/Makefile)
-make mac-run   # build and launch it
-make mac-dmg   # package macos/build/Vesper-arm64.dmg (app + Applications link)
+make mac-app   # auto-rebuild stale VM images, build Vesper.app, install to /Applications
 ```
 
 Builds are ad hoc signed and not notarised; a DMG downloaded from a release needs
@@ -423,7 +421,7 @@ make dev     # local Postgres; API on :8000 and Next on :3000 run on the host
 make runner  # optional: a runner on the host (RUNNER_BACKEND=microvm, or fake for tests)
 make gen     # after editing api/openapi.yaml or server/internal/store/queries (needs sqlc)
 make test
-make mac-app # build the macOS app (mac-run launches it, mac-dmg packages it)
+make mac-app # auto-rebuild stale VM images, build Vesper.app, install to /Applications
 make help    # everything else
 ```
 

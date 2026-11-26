@@ -4,12 +4,10 @@ Swift app that supervises the bundled `vesper app` and shows the web UI in nativ
 contracts and the parity checklist: [`docs/dev/native-mac-app.md`](../docs/dev/native-mac-app.md).
 
 ```
-make -C macos test                  # swift test (VesperCore)
-make -C macos app                   # stage resources, assemble and sign build/Vesper.app
-make -C macos app SKIP_STAGE=1      # reuse macos/staged as it is (fast)
-make -C macos run                   # run build/Vesper.app in the foreground, output in this terminal
-make -C macos dmg                   # pack build/Vesper-arm64.dmg (+ .sha256): the app and an /Applications link
-make -C macos reinstall             # quit Vesper and replace /Applications/Vesper.app
+make mac-app                        # auto-rebuild stale VM images, build/sign Vesper.app, install to /Applications
+SKIP_STAGE=1 make mac-app           # reuse macos/staged as it is (fast)
+make test-mac                       # swift test (VesperCore)
+make -C macos dmg                   # pack build/Vesper-arm64.dmg (+ .sha256) for releases
 VESPER_STACK_IT=1 swift test --filter StackIntegrationTests   # starts the real stack (needs macos/staged)
 ```
 
@@ -21,7 +19,7 @@ Vesper at a time). `VESPER_USER_DATA_DIR` points the app somewhere else.
 
 ## Signing with a stable identity
 
-`make app` signs ad hoc (`-`) by default. An ad hoc signature changes with every build, so macOS
+`make mac-app` signs ad hoc (`-`) by default. An ad hoc signature changes with every build, so macOS
 forgets Keychain "Always Allow" choices and privacy grants (Screen Recording, Notifications,
 Automation) each time you rebuild. A self-signed code-signing certificate gives every build the same
 identity, so those grants stick.
@@ -38,7 +36,7 @@ Create one once, in Keychain Access:
 Then build with it:
 
 ```
-VESPER_CODESIGN_IDENTITY="Vesper Local Signing" make -C macos app
+VESPER_CODESIGN_IDENTITY="Vesper Local Signing" make mac-app
 ```
 
 Put the variable in your shell profile to use it for every build. The first launch after switching
