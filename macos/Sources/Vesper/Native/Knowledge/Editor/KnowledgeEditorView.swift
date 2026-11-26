@@ -46,6 +46,7 @@ struct KnowledgeEditorView: View {
 
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @Environment(\.colorScheme) private var colorScheme
 
     /// Hands the screen a way to save unsaved edits now (for Print), and nil when the editor leaves.
     typealias RegisterSave = (_ save: (@MainActor () async -> Void)?) -> Void
@@ -87,6 +88,10 @@ struct KnowledgeEditorView: View {
     @State private var draggedKnowledgeItem: KnowledgeDragItem?
     @State private var uploadingFileCount = 0
     @State private var selectedEmbedID: String?
+    @State private var selectedEmbedSegmentIndex: Int?
+    @State private var embedKeyMonitor: Any?
+    @State private var removedEmbedCache: [KnowledgeEmbed] = []
+    @State private var deletingAttachment: KnowledgeAttachment?
     @State private var inlineDrawerMode: KnowledgeInlineDrawerMode?
     @State private var localHeadingJumpRequest: KnowledgeHeadingJumpRequest?
     @State private var localHeadingJumpToken = 0
@@ -286,12 +291,24 @@ struct KnowledgeEditorView: View {
             onRegisterSave?({ await saveNow() })
         }
         .onDisappear {
+            removeEmbedKeyMonitor()
             onRegisterSave?(nil)
             onSelectedEmbedChange?(nil, [])
             autosaveTask?.cancel()
             if context.find.searcher === findBridge {
                 context.find.searcher = nil
             }
+        }
+        .onChange(of: selectedEmbedID) { _, next in
+            syncEmbedKeyMonitor(active: next != nil)
+        }
+        .sheet(item: $deletingAttachment) { attachment in
+            KnowledgeDeleteSheet(target: .attachment(attachment)) {
+                try await deleteInlineAttachment(attachment)
+            }
+            .environment(context)
+            .environment(\.vesperTheme, theme)
+            .environment(\.colorScheme, colorScheme)
         }
     }
 
@@ -655,6 +672,11 @@ struct KnowledgeEditorView: View {
         }
     }
 
+    private var deletableEmbedURLs: Set<String> {
+        let attachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
+        return Set(attachments.filter(\.isOwner).map(\.url))
+    }
+
     @ViewBuilder
     private func proseSegmentView(prose: KnowledgeProseSegment, index: Int) -> some View {
         KnowledgeTextView(
@@ -667,7 +689,8 @@ struct KnowledgeEditorView: View {
             activeFindMatchRange: activeProseMatchRange(forSegment: index),
             selectionRequest: selectionRequest,
             segmentIndex: index,
-            selectedEmbedID: selectedEmbedID,
+            selectedEmbedID: selectedEmbedSegmentIndex == index ? selectedEmbedID : nil,
+            deletableEmbedURLs: deletableEmbedURLs,
             onTextChange: { updated, range in handleProseEdit(updated, selection: range, at: index) },
             onSelectionChange: { range, isFocused in handleProseSelection(range, isFocused: isFocused, at: index) },
             onOpenLink: { target in openWikiLink(target) },
@@ -695,9 +718,21 @@ struct KnowledgeEditorView: View {
                 handleResizeImage(placement: placement, newWidth: width, segmentIndex: index)
             },
             onSelectEmbed: { placement in
-                selectedEmbedID = placement?.id
+                if let placement {
+                    selectedEmbedID = placement.id
+                    selectedEmbedSegmentIndex = index
+                } else {
+                    selectedEmbedID = nil
+                    selectedEmbedSegmentIndex = nil
+                }
                 let allEmbeds = resolvedEmbeds.filter { $0.available && ($0.url?.isEmpty == false) }
                 onSelectedEmbedChange?(placement?.embed, allEmbeds)
+            },
+            onRemoveEmbed: { placement in
+                handleRemoveEmbed(placement: placement, segmentIndex: index)
+            },
+            onDeleteAttachment: { placement in
+                requestDeleteInlineAttachment(for: placement)
             }
         )
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -1243,6 +1278,166 @@ struct KnowledgeEditorView: View {
         }
     }
 
+    private func resolveCurrentPlacement(
+        matching placement: KnowledgeInlineEmbedPlacement,
+        in prose: String
+    ) -> KnowledgeInlineEmbedPlacement? {
+        let ns = prose as NSString
+        if placement.tokenRange.location >= 0,
+           placement.tokenRange.location + placement.tokenRange.length <= ns.length,
+           ns.substring(with: placement.tokenRange) == placement.target.raw {
+            return placement
+        }
+        let current = KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: prose, embeds: resolvedEmbeds)
+        return current.first(where: { $0.id == placement.id })
+            ?? current.first(where: { $0.target.raw == placement.target.raw })
+    }
+
+    @discardableResult
+    private func handleRemoveEmbed(placement: KnowledgeInlineEmbedPlacement, segmentIndex: Int) -> Bool {
+        guard let prose = document.proseText(at: segmentIndex),
+              let livePlacement = resolveCurrentPlacement(matching: placement, in: prose),
+              let edit = KnowledgeMarkdownSyntax.removingEmbed(livePlacement, in: prose) else {
+            return false
+        }
+        if !removedEmbedCache.contains(where: { $0.ref == livePlacement.embed.ref }) {
+            removedEmbedCache.append(livePlacement.embed)
+        }
+        let caret = NSRange(location: edit.caretUTF16, length: 0)
+        let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: segmentIndex, utf16Offset: edit.caretUTF16))
+        guard document.replaceProse(in: segmentIndex, range: edit.replacementRange, with: edit.replacement, newSelection: newSel) else {
+            return false
+        }
+        clearSelectedEmbed()
+        activeSelectionSegment = segmentIndex
+        activeSelectionRange = caret
+        selectionToken += 1
+        selectionRequest = KnowledgeTextSelectionRequest(token: selectionToken, segmentIndex: segmentIndex, range: caret)
+        embedLayoutVersion &+= 1
+        noteDocumentEdited()
+        return true
+    }
+
+    private func clearSelectedEmbed() {
+        selectedEmbedID = nil
+        selectedEmbedSegmentIndex = nil
+        let allEmbeds = resolvedEmbeds.filter { $0.available && ($0.url?.isEmpty == false) }
+        onSelectedEmbedChange?(nil, allEmbeds)
+    }
+
+    private func removeSelectedEmbed() -> Bool {
+        guard let id = selectedEmbedID,
+              let segIdx = selectedEmbedSegmentIndex,
+              let prose = document.proseText(at: segIdx) else {
+            return false
+        }
+        let placements = KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: prose, embeds: resolvedEmbeds)
+        guard let placement = placements.first(where: { $0.id == id }) else {
+            clearSelectedEmbed()
+            return false
+        }
+        return handleRemoveEmbed(placement: placement, segmentIndex: segIdx)
+    }
+
+    private func syncEmbedKeyMonitor(active: Bool) {
+        removeEmbedKeyMonitor()
+        guard active else { return }
+        embedKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard selectedEmbedID != nil,
+                  context.isAttached,
+                  let window = context.window()?.window,
+                  event.window === window,
+                  window.isKeyWindow,
+                  window.attachedSheet == nil,
+                  deletingAttachment == nil else {
+                return event
+            }
+            let disallowedModifiers: NSEvent.ModifierFlags = [.command, .control, .option, .shift]
+            guard event.modifierFlags.intersection(disallowedModifiers).isEmpty else {
+                return event
+            }
+            if let responder = window.firstResponder, responder is NSText {
+                return event
+            }
+            // Backspace (51) or Forward Delete (117) removes the selected inline embed from the note.
+            if event.keyCode == 51 || event.keyCode == 117 {
+                return removeSelectedEmbed() ? nil : event
+            }
+            // Escape (53) deselects the inline embed.
+            if event.keyCode == 53 {
+                clearSelectedEmbed()
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeEmbedKeyMonitor() {
+        if let embedKeyMonitor {
+            NSEvent.removeMonitor(embedKeyMonitor)
+            self.embedKeyMonitor = nil
+        }
+    }
+
+    private func requestDeleteInlineAttachment(for placement: KnowledgeInlineEmbedPlacement) {
+        guard let url = placement.embed.url, !url.isEmpty else { return }
+        let attachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
+        guard let match = attachments.first(where: { $0.isOwner && $0.url == url }) else { return }
+        deletingAttachment = match
+    }
+
+    private func deleteInlineAttachment(_ attachment: KnowledgeAttachment) async throws {
+        _ = try await context.store.mutate(
+            KnowledgeAPI.deleteAttachment(id: attachment.id),
+            invalidating: KnowledgeAPI.invalidation
+        )
+        let matchingResolved = resolvedEmbeds.filter { $0.url == attachment.url }
+        let targetEmbeds = matchingResolved.isEmpty ? [attachment.asKnowledgeEmbed()] : matchingResolved
+        var removedAny = false
+        for segIdx in document.segments.indices {
+            while let prose = document.proseText(at: segIdx),
+                  let placement = KnowledgeMarkdownSyntax
+                      .resolveInlineEmbedPlacements(in: prose, embeds: targetEmbeds)
+                      .first,
+                  let edit = KnowledgeMarkdownSyntax.removingEmbed(placement, in: prose) {
+                let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: segIdx, utf16Offset: edit.caretUTF16))
+                guard document.replaceProse(in: segIdx, range: edit.replacementRange, with: edit.replacement, newSelection: newSel) else {
+                    break
+                }
+                removedAny = true
+            }
+        }
+        resolvedEmbeds.removeAll { $0.url == attachment.url }
+        removedEmbedCache.removeAll { $0.url == attachment.url }
+        clearSelectedEmbed()
+        if removedAny {
+            embedLayoutVersion &+= 1
+            noteDocumentEdited()
+            await saveNow()
+        }
+        _ = await context.store.refetch(KnowledgeShellController.attachmentsRequest)
+        context.showToast(ToastItemModel(
+            id: "knowledge.att.delete.\(attachment.id)",
+            title: "Deleted \(attachment.filename)",
+            tone: .success
+        ))
+    }
+
+    private func restoreCachedEmbedsForCurrentDocument() {
+        let md = document.serialize()
+        let storeAttachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
+        let candidatePool = removedEmbedCache + storeAttachments.map { $0.asKnowledgeEmbed() }
+        let needed = KnowledgeMarkdownSyntax.resolveInlineEmbeds(in: md, embeds: candidatePool)
+        var added = false
+        for embed in needed where !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+            resolvedEmbeds.append(embed)
+            added = true
+        }
+        if added {
+            embedLayoutVersion &+= 1
+        }
+    }
+
     private func jumpToHeading(_ heading: KnowledgeOutlineHeading, scrollProxy: ScrollViewProxy) {
         withAnimation(.easeOut(duration: 0.18)) {
             scrollProxy.scrollTo("editor-segment-\(heading.segmentIndex)", anchor: .top)
@@ -1450,12 +1645,14 @@ struct KnowledgeEditorView: View {
 
     private func performUndo() {
         guard document.undo() else { return }
+        restoreCachedEmbedsForCurrentDocument()
         refreshFindAfterEdit()
         syncDirtyStateAfterHistoryChange()
     }
 
     private func performRedo() {
         guard document.redo() else { return }
+        restoreCachedEmbedsForCurrentDocument()
         refreshFindAfterEdit()
         syncDirtyStateAfterHistoryChange()
     }

@@ -41,6 +41,7 @@ struct KnowledgeTextView: NSViewRepresentable {
     var segmentIndex: Int = 0
     var minHeight: CGFloat = 28
     var selectedEmbedID: String? = nil
+    var deletableEmbedURLs: Set<String> = []
 
     let onTextChange: (String, NSRange) -> Void
     let onSelectionChange: (NSRange, Bool) -> Void
@@ -55,6 +56,8 @@ struct KnowledgeTextView: NSViewRepresentable {
     var onKnowledgeDragActiveChange: (KnowledgeDragItem?) -> Void = { _ in }
     var onResizeImage: (KnowledgeInlineEmbedPlacement, Int?) -> Void = { _, _ in }
     var onSelectEmbed: (KnowledgeInlineEmbedPlacement?) -> Void = { _ in }
+    var onRemoveEmbed: (KnowledgeInlineEmbedPlacement) -> Void = { _ in }
+    var onDeleteAttachment: (KnowledgeInlineEmbedPlacement) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -140,6 +143,12 @@ struct KnowledgeTextView: NSViewRepresentable {
         view.onSelectEmbed = { [weak coordinator] placement in
             coordinator?.parent.onSelectEmbed(placement)
         }
+        view.onRemoveEmbed = { [weak coordinator] placement in
+            coordinator?.parent.onRemoveEmbed(placement)
+        }
+        view.onDeleteAttachment = { [weak coordinator] placement in
+            coordinator?.parent.onDeleteAttachment(placement)
+        }
     }
 
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: LivePreviewNSTextView, context: Context) -> CGSize? {
@@ -171,6 +180,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             var embedSizes: [String: RoundedSize]
             var containerWidth: Int
             var selectedEmbedID: String?
+            var deletableEmbedURLs: Set<String>
         }
 
         private struct RoundedSize: Equatable {
@@ -292,7 +302,8 @@ struct KnowledgeTextView: NSViewRepresentable {
                 embeds: parent.embeds,
                 embedSizes: view.measuredEmbedSizes.mapValues(RoundedSize.init),
                 containerWidth: Int(ceil(containerWidth)),
-                selectedEmbedID: parent.selectedEmbedID
+                selectedEmbedID: parent.selectedEmbedID,
+                deletableEmbedURLs: parent.deletableEmbedURLs
             )
             guard key != lastRenderedKey else { return false }
             lastRenderedKey = key
@@ -331,7 +342,8 @@ struct KnowledgeTextView: NSViewRepresentable {
                     theme: parent.theme,
                     screenContext: parent.screenContext,
                     containerWidth: containerWidth,
-                    selectedEmbedID: parent.selectedEmbedID
+                    selectedEmbedID: parent.selectedEmbedID,
+                    deletableEmbedURLs: parent.deletableEmbedURLs
                 )
                 return view.updateEmbedLayout(groups: [], metricsByID: [:])
             }
@@ -353,7 +365,8 @@ struct KnowledgeTextView: NSViewRepresentable {
                 theme: parent.theme,
                 screenContext: parent.screenContext,
                 containerWidth: containerWidth,
-                selectedEmbedID: parent.selectedEmbedID
+                selectedEmbedID: parent.selectedEmbedID,
+                deletableEmbedURLs: parent.deletableEmbedURLs
             )
 
             storage.beginEditing()
@@ -580,6 +593,7 @@ final class LivePreviewNSTextView: NSTextView {
         var lastMaxWidth: CGFloat
         var lastThemeMode: ColorMode
         var lastSelectedEmbedID: String?
+        var lastDeletableEmbedURLs: Set<String>
 
         init(
             id: String,
@@ -588,7 +602,8 @@ final class LivePreviewNSTextView: NSTextView {
             lastPlacements: [KnowledgeInlineEmbedPlacement],
             lastMaxWidth: CGFloat,
             lastThemeMode: ColorMode,
-            lastSelectedEmbedID: String?
+            lastSelectedEmbedID: String?,
+            lastDeletableEmbedURLs: Set<String>
         ) {
             self.id = id
             self.hostView = hostView
@@ -597,6 +612,7 @@ final class LivePreviewNSTextView: NSTextView {
             self.lastMaxWidth = lastMaxWidth
             self.lastThemeMode = lastThemeMode
             self.lastSelectedEmbedID = lastSelectedEmbedID
+            self.lastDeletableEmbedURLs = lastDeletableEmbedURLs
         }
     }
 
@@ -613,6 +629,8 @@ final class LivePreviewNSTextView: NSTextView {
     var onKnowledgeDragActiveChange: ((KnowledgeDragItem?) -> Void)?
     var onResizeImage: ((KnowledgeInlineEmbedPlacement, Int?) -> Void)?
     var onSelectEmbed: ((KnowledgeInlineEmbedPlacement?) -> Void)?
+    var onRemoveEmbed: ((KnowledgeInlineEmbedPlacement) -> Void)?
+    var onDeleteAttachment: ((KnowledgeInlineEmbedPlacement) -> Void)?
     private(set) var isFocusedEditor = false
 
     private var embedHosts: [String: MountedEmbedHost] = [:]
@@ -881,7 +899,8 @@ final class LivePreviewNSTextView: NSTextView {
         theme: ThemeTokens,
         screenContext: NativeScreenContext,
         containerWidth: CGFloat,
-        selectedEmbedID: String?
+        selectedEmbedID: String?,
+        deletableEmbedURLs: Set<String>
     ) {
         let maxWidth = max(120, containerWidth)
         let activeIDs = Set(groups.map(\.id))
@@ -904,6 +923,16 @@ final class LivePreviewNSTextView: NSTextView {
                     onResizeImage: { [weak self] placement, width in
                         self?.onResizeImage?(placement, width)
                     },
+                    onRemoveEmbed: { [weak self] placement in
+                        self?.onRemoveEmbed?(placement)
+                    },
+                    canDeleteAttachment: { placement in
+                        guard let url = placement.embed.url, !url.isEmpty else { return false }
+                        return deletableEmbedURLs.contains(url)
+                    },
+                    onDeleteAttachment: { [weak self] placement in
+                        self?.onDeleteAttachment?(placement)
+                    },
                     onSizeChange: { [weak self] newSize in
                         self?.handleMeasuredSize(newSize, forGroupID: group.id)
                     }
@@ -917,12 +946,14 @@ final class LivePreviewNSTextView: NSTextView {
                     || abs(existing.lastMaxWidth - maxWidth) > 0.5
                     || existing.lastThemeMode != theme.mode
                     || existing.lastSelectedEmbedID != selectedEmbedID
+                    || existing.lastDeletableEmbedURLs != deletableEmbedURLs
                 if needsRootUpdate {
                     existing.hostView.rootView = rootView
                     existing.lastPlacements = group.placements
                     existing.lastMaxWidth = maxWidth
                     existing.lastThemeMode = theme.mode
                     existing.lastSelectedEmbedID = selectedEmbedID
+                    existing.lastDeletableEmbedURLs = deletableEmbedURLs
                     let fitted = existing.hostView.fittingSize
                     if fitted.width > 1, fitted.height > 1 {
                         existing.measuredSize = fitted
@@ -947,7 +978,8 @@ final class LivePreviewNSTextView: NSTextView {
                     lastPlacements: group.placements,
                     lastMaxWidth: maxWidth,
                     lastThemeMode: theme.mode,
-                    lastSelectedEmbedID: selectedEmbedID
+                    lastSelectedEmbedID: selectedEmbedID,
+                    lastDeletableEmbedURLs: deletableEmbedURLs
                 )
             }
         }
