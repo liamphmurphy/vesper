@@ -124,35 +124,3 @@ func listChatTickets(ctx context.Context, d Deps, c agents.Caller, in ListTicket
 	}
 	return res, nil
 }
-
-type ListProjectsIn struct {
-	IncludeArchived bool `json:"include_archived,omitempty" jsonschema:"Also list archived projects"`
-}
-
-type chatProject struct {
-	Key      string `json:"key"`
-	Name     string `json:"name"`
-	Repo     string `json:"repo,omitempty"`
-	Archived bool   `json:"archived,omitempty"`
-	Default  bool   `json:"default,omitempty"`
-}
-
-// listChatProjects names every project a chat can read, marking its default.
-func listChatProjects(ctx context.Context, d Deps, c agents.Caller, in ListProjectsIn) (any, error) {
-	s, err := requireChat(ctx, d, c)
-	if err != nil {
-		return nil, err
-	}
-	rows, err := d.Q.ListProjects(ctx, c.Agent.WorkspaceID)
-	if err != nil {
-		return nil, err
-	}
-	out := []chatProject{}
-	for _, p := range rows {
-		if p.Archived && !in.IncludeArchived {
-			continue
-		}
-		out = append(out, chatProject{Key: p.Key, Name: p.Name, Repo: strOr(p.RepoUrl), Archived: p.Archived, Default: p.Key == s.ProjectKey})
-	}
-	return map[string]any{"projects": out}, nil
-}

@@ -72,11 +72,6 @@ func TestChatRunToolAuthorization(t *testing.T) {
 	if _, err = wk.SaveAsUser(ctx, ws, me.ID, wiki.Save{Path: "Shared/Pay links " + word, ProjectKey: "PAY", Body: "public " + word + " cites [[Pay " + word + "]]"}); err != nil {
 		t.Fatal(err)
 	}
-	mt, err := tr.Create(ctx, ws, tracker.UserActor(me.ID), tracker.NewTicket{ProjectKey: "MOB", Title: "Mobile " + word})
-	if err != nil {
-		t.Fatal(err)
-	}
-	mobTicket := mt.Key
 
 	// Exercise capability denials with an explicitly restricted persona; the
 	// initial Assistant grants every capability on a fresh installation.
@@ -124,20 +119,15 @@ func TestChatRunToolAuthorization(t *testing.T) {
 	}
 	allowed := map[string]any{
 		"whoami": map[string]any{}, "search_knowledge": map[string]any{"q": word}, "read_page": map[string]any{"ref": *note.Note.Path},
-		"read_artifact": map[string]any{"artifact": payDoc.ID.String()}, "get_ticket": map[string]any{"ticket": "PAY-214"},
+		"read_artifact":         map[string]any{"artifact": payDoc.ID.String()},
 		"get_backlinks":         map[string]any{"ref": payDoc.ID.String()},
-		"create_ticket":         map[string]any{"title": "Chat-created ticket"},
-		"create_epic":           map[string]any{"name": "Chat-created epic"},
-		"list_epics":            map[string]any{},
-		"list_tickets":          map[string]any{},
-		"list_projects":         map[string]any{},
+		"list_spaces":           map[string]any{},
 		"list_scheduled_tasks":  map[string]any{},
 		"search_library":        map[string]any{},
 		"list_inbox":            map[string]any{},
 		"list_learning_modules": map[string]any{},
 		"list_connectors":       map[string]any{},
 		"list_secret_names":     map[string]any{},
-		"list_runs":             map[string]any{},
 		"search_repositories":   map[string]any{},
 		"list_saved_links":      map[string]any{},
 		"canvas_list":           map[string]any{},
@@ -148,7 +138,7 @@ func TestChatRunToolAuthorization(t *testing.T) {
 		"set_plan":              map[string]any{"steps": []any{}},
 	}
 	// Allowed too, but they need arguments; they're exercised below or in the memory tests.
-	needArgs := []string{"librarian_pass", "daily_note", "import_vault", "delete_page", "delete_folder", "list_page_versions", "restore_page_version", "file_capture", "attach_file", "list_page_reviews", "withdraw_suggestion", "set_page_controls", "attach_chat_to_page", "promote_canvas", "knowledge_graph", "confirm_import", "cancel_import", "undo_import", "list_pages", "page_outline", "patch_page", "set_properties", "move_page", "move_folder", "create_page", "capture_note", "suggest_links", "use_repository", "request_push", "update_ticket", "comment_ticket", "update_ticket_blockers", "get_epic", "update_epic", "submit_research_report", "get_run", "reply_to_run", "search_memory", "read_memory", "search_chats", "read_chat", "save_memory", "update_memory", "forget_memory", "set_chat_title", "generate_image", "start_video", "update_video", "finish_video", "fail_video", "start_audio", "update_audio", "finish_audio", "fail_audio", "generate_music", "save_file", "render_pdf", "get_video_transcript", "propose_persona", "propose_persona_character", "canvas_create", "canvas_patch", "canvas_read", "canvas_comment", "canvas_reply", "design_list", "design_outline", "design_read", "design_render", "design_patch", "design_import", "design_comments", "design_comment", "design_reply", "design_create", "write_note", "read_workflow", "propose_workflow_edit", "propose_connector", "propose_secret", "read_library_item", "save_link", "browser_snapshot", "create_space", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "create_learning_module", "get_learning_progress", "start_playground", "playground_status", "stop_playground", "set_playground_openapi", "design_flows", "design_components", "design_tokens", "design_inspect", "design_link_ticket", "get_custom_app", "create_custom_app", "update_custom_app", "delete_custom_app", "custom_app_sql", "http_get_workspace", "http_save_request", "http_run_request", "run_subagent", "run_subagents"}
+	needArgs := []string{"librarian_pass", "daily_note", "import_vault", "delete_page", "delete_folder", "list_page_versions", "restore_page_version", "file_capture", "attach_file", "list_page_reviews", "withdraw_suggestion", "set_page_controls", "attach_chat_to_page", "promote_canvas", "knowledge_graph", "confirm_import", "cancel_import", "undo_import", "list_pages", "page_outline", "patch_page", "set_properties", "move_page", "move_folder", "create_page", "capture_note", "suggest_links", "use_repository", "request_push", "submit_research_report", "search_memory", "read_memory", "search_chats", "read_chat", "save_memory", "update_memory", "forget_memory", "set_chat_title", "generate_image", "start_video", "update_video", "finish_video", "fail_video", "start_audio", "update_audio", "finish_audio", "fail_audio", "generate_music", "save_file", "render_pdf", "create_mockup", "get_video_transcript", "propose_persona", "propose_persona_character", "canvas_create", "canvas_patch", "canvas_read", "canvas_comment", "canvas_reply", "design_list", "design_outline", "design_read", "design_render", "design_patch", "design_import", "design_comments", "design_comment", "design_reply", "design_create", "write_note", "read_workflow", "propose_workflow_edit", "propose_connector", "propose_secret", "read_library_item", "save_link", "browser_snapshot", "create_space", "create_scheduled_task", "update_scheduled_task", "delete_scheduled_task", "create_learning_module", "get_learning_progress", "start_playground", "playground_status", "stop_playground", "set_playground_openapi", "design_flows", "design_components", "design_tokens", "design_inspect", "get_custom_app", "create_custom_app", "update_custom_app", "delete_custom_app", "custom_app_sql", "http_get_workspace", "http_save_request", "http_run_request", "run_subagent", "run_subagents"}
 	seen := 0
 	for _, tool := range listed.Tools {
 		args, ok := allowed[tool.Name]
@@ -195,76 +185,14 @@ func TestChatRunToolAuthorization(t *testing.T) {
 		t.Fatalf("write_note into another agent's memory = %d %v", code, out)
 	}
 
-	// Writes use the chat project, without needing an execution ticket.
-	code, created := call(token, "create_epic", map[string]any{"name": "Chat planning"})
-	if code != 200 {
-		t.Fatalf("create epic = %d %v", code, created)
-	}
-	epicID := created["epic_id"]
-	code, created = call(token, "create_ticket", map[string]any{"title": "Planned in chat", "epic_id": epicID})
-	if code != 200 {
-		t.Fatalf("create ticket = %d %v", code, created)
-	}
-	key := fmt.Sprint(created["ticket"])
-	if !strings.HasPrefix(key, "PAY-") {
-		t.Fatalf("wrong project: %v", created)
-	}
-	foreignEpic, err := q.CreateEpic(ctx, store.CreateEpicParams{WorkspaceID: ws, ProjectID: mt.ProjectID, Name: "Foreign epic", Health: "on_track"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if code, out := call(token, "create_ticket", map[string]any{"title": "Wrong project", "epic_id": foreignEpic.ID}); code != 422 {
-		t.Fatalf("foreign epic = %d %v", code, out)
-	}
-	// Naming a project or an agent overrides the default and assigns the ticket.
-	if code, out := call(token, "create_ticket", map[string]any{"title": "Mobile fix", "project": "mob", "agent": "@atlas"}); code != 200 || !strings.HasPrefix(fmt.Sprint(out["ticket"]), "MOB-") {
-		t.Fatalf("create_ticket in MOB = %d %v", code, out)
-	} else {
-		mobFix, err := tracker.Get(ctx, q, ws, fmt.Sprint(out["ticket"]))
-		if err != nil || mobFix.AssigneeAgentID == nil || *mobFix.AssigneeAgentID != atlas.ID {
-			t.Fatalf("assignee = %+v, %v", mobFix.AssigneeAgentID, err)
-		}
-	}
-	if code, out := call(token, "create_ticket", map[string]any{"title": "Self-assigned", "agent": assistant.Handle}); code != 422 || !strings.Contains(fmt.Sprint(out), "can't take tickets") {
-		t.Fatalf("assign to the assistant = %d %v", code, out)
-	}
-	if code, out := call(token, "create_ticket", map[string]any{"title": "Nowhere", "project": "NOPE"}); code != 422 {
-		t.Fatalf("unknown project = %d %v", code, out)
-	}
-	if code, out := call(token, "create_epic", map[string]any{"name": "Mobile epic", "project": "MOB"}); code != 200 || out["project"] != "MOB" {
-		t.Fatalf("create_epic in MOB = %d %v", code, out)
-	}
 	if code, out := call(token, "propose_workflow_edit", map[string]any{"summary": "Add a step", "name": "New", "ops": []any{}}); code != 409 || !strings.Contains(fmt.Sprint(out), "can't create workflows") {
 		t.Fatalf("propose_workflow_edit without the capability = %d %v", code, out)
 	}
 
-	// create_epic takes optional criteria, all or nothing; list_epics shows counts.
-	if code, out := call(token, "create_epic", map[string]any{"name": "Bad criteria", "criteria": []string{"ok", "  "}}); code != 422 || !strings.Contains(fmt.Sprint(out), "criteria") {
-		t.Fatalf("blank criterion = %d %v", code, out)
-	}
-	code, created = call(token, "create_epic", map[string]any{"name": "With criteria", "criteria": []string{"Board ships", "Docs updated"}})
-	if code != 200 || created["criteria"] != float64(2) {
-		t.Fatalf("create epic with criteria = %d %v", code, created)
-	}
-	_, listed2 := call(token, "list_epics", map[string]any{})
-	var withCriteria map[string]any
-	for _, e := range listed2["epics"].([]any) {
-		em := e.(map[string]any)
-		if em["Name"] == "Bad criteria" {
-			t.Fatalf("partial epic created: %v", em)
-		}
-		if em["Name"] == "With criteria" {
-			withCriteria = em
-		}
-	}
-	if withCriteria == nil || withCriteria["CriteriaTotal"] != float64(2) || withCriteria["CriteriaDone"] != float64(0) || withCriteria["Status"] != "open" || withCriteria["PointsTotal"] != float64(0) {
-		t.Fatalf("list_epics row = %v", withCriteria)
-	}
-
-	// whoami is chat-specific: no ticket queue, project and chat named.
+	// whoami is chat-specific: no ticket queue, chat named.
 	_, who := call(token, "whoami", map[string]any{})
 	ins := fmt.Sprint(who["instructions"])
-	if who["project"] != "PAY" || who["chat_id"] != chat.ID.String() || !strings.Contains(ins, "Never claim tickets") || !strings.Contains(ins, "[[") || len(who["queue"].([]any)) != 0 || len(who["live_runs"].([]any)) != 0 {
+	if who["chat_id"] != chat.ID.String() || !strings.Contains(ins, "[[") || len(who["queue"].([]any)) != 0 || len(who["live_runs"].([]any)) != 0 {
 		t.Fatalf("chat whoami = %v", who)
 	}
 
@@ -293,9 +221,6 @@ func TestChatRunToolAuthorization(t *testing.T) {
 	}
 
 	// Another project's content reads like the chat's own.
-	if code, out := call(token, "get_ticket", map[string]any{"ticket": mobTicket}); code != 200 || out["key"] != mobTicket {
-		t.Fatalf("other project's ticket = %d %v", code, out)
-	}
 	if code, out := call(token, "read_artifact", map[string]any{"artifact": mobDoc.ID.String()}); code != 200 {
 		t.Fatalf("other project's artifact = %d %v", code, out)
 	}
@@ -320,111 +245,16 @@ func TestChatRunToolAuthorization(t *testing.T) {
 		t.Fatalf("reads attributed to chat run = %d, %v", n, err)
 	}
 
-	// Runs: ticket runs of every project, or one; delegated runs show under their parent.
+	// The assistant's tokens work only inside chat runs.
 	payTicket, err := tracker.Get(ctx, q, ws, "PAY-214")
 	if err != nil {
 		t.Fatal(err)
 	}
-	mkRun := func(ticket *store.Ticket, parent *uuid.UUID, state, purpose string) store.Run {
-		t.Helper()
-		var tid *uuid.UUID
-		if ticket != nil {
-			tid = &ticket.ID
-		}
-		r, err := q.CreateRun(ctx, store.CreateRunParams{WorkspaceID: ws, TicketID: tid, AgentID: atlas.ID, Mode: "managed", State: state,
-			ResolvedSpec: json.RawMessage(`{}`), Harness: "codex", Model: "m", ParentRunID: parent, Purpose: purpose})
-		if err != nil {
-			t.Fatal(err)
-		}
-		return r
-	}
-	payRun := mkRun(&payTicket, nil, "running", "ticket")
-	child := mkRun(&payTicket, &payRun.ID, "completed", "ticket")
-	doneRun := mkRun(&payTicket, nil, "completed", "ticket")
-	mobRun := mkRun(&mt, nil, "running", "ticket")
-	planRun := mkRun(nil, nil, "running", "planning")
-	runIDs := func(args map[string]any) []string {
-		t.Helper()
-		code, out := call(token, "list_runs", args)
-		if code != 200 {
-			t.Fatalf("list_runs %v = %d %v", args, code, out)
-		}
-		var ids []string
-		for _, r := range out["runs"].([]any) {
-			ids = append(ids, r.(map[string]any)["id"].(string))
-		}
-		return ids
-	}
-	if ids := runIDs(map[string]any{}); !slices.Contains(ids, payRun.ID.String()) || slices.Contains(ids, doneRun.ID.String()) {
-		t.Fatalf("live runs = %v", ids)
-	}
-	if ids := runIDs(map[string]any{"state": "finished"}); !slices.Contains(ids, doneRun.ID.String()) || slices.Contains(ids, payRun.ID.String()) {
-		t.Fatalf("finished runs = %v", ids)
-	}
-	for _, ids := range [][]string{runIDs(map[string]any{"state": "all"}), runIDs(map[string]any{"state": "all", "agent": "atlas"})} {
-		if !slices.Contains(ids, mobRun.ID.String()) {
-			t.Fatalf("list_runs misses another project's run: %v", ids)
-		}
-		for _, hidden := range []uuid.UUID{child.ID, planRun.ID, runID} {
-			if slices.Contains(ids, hidden.String()) {
-				t.Fatalf("list_runs leaks %s: %v", hidden, ids)
-			}
-		}
-	}
-	if ids := runIDs(map[string]any{"state": "all", "ticket": "pay-214"}); !slices.Contains(ids, child.ID.String()) {
-		t.Fatalf("a ticket's runs include delegated ones: %v", ids)
-	}
-	if ids := runIDs(map[string]any{"state": "all", "project": "pay"}); !slices.Contains(ids, payRun.ID.String()) || slices.Contains(ids, mobRun.ID.String()) {
-		t.Fatalf("runs narrowed to PAY = %v", ids)
-	}
-	if ids := runIDs(map[string]any{"ticket": mobTicket}); !slices.Contains(ids, mobRun.ID.String()) {
-		t.Fatalf("other project's ticket runs = %v", ids)
-	}
-	// get_run reports the latest context size and what filled it, summed over turns.
-	if err := q.SetRunContextTokens(ctx, store.SetRunContextTokensParams{ID: payRun.ID, ContextTokens: 123456}); err != nil {
+	payRun, err := q.CreateRun(ctx, store.CreateRunParams{WorkspaceID: ws, TicketID: &payTicket.ID, AgentID: atlas.ID, Mode: "managed", State: "running",
+		ResolvedSpec: json.RawMessage(`{}`), Harness: "codex", Model: "m", Purpose: "ticket"})
+	if err != nil {
 		t.Fatal(err)
 	}
-	for _, u := range []string{`{"explore_output_bytes": 100, "shell_output_bytes": 7}`, `{"explore_output_bytes": 20, "other_output_bytes": 3}`} {
-		if _, err := pool.Exec(ctx, `INSERT INTO run_turns (run_id, seq, trigger, usage) VALUES ($1, coalesce((SELECT max(seq) FROM run_turns WHERE run_id = $1), 0) + 1, 'start', $2)`, payRun.ID, u); err != nil {
-			t.Fatal(err)
-		}
-	}
-	// Its efficiency summary comes from the main agent's events; a sub
-	// agent's tool calls don't count.
-	for _, e := range []struct{ typ, payload string }{
-		{"lifecycle", `{"state": "starting"}`},
-		{"lifecycle", `{"state": "workspace_ready"}`},
-		{"tool_call", `{"id": "a", "tool": "Read", "input": {}, "context_tokens": 50000}`},
-		{"tool_call", `{"id": "s", "tool": "Edit", "input": {}, "subagent": true}`},
-		{"tool_call", `{"id": "b", "tool": "Bash", "input": {"command": "go test ./..."}, "context_tokens": 110000}`},
-		{"tool_result", `{"id": "b", "tool": "Bash", "output": "ok"}`},
-		{"tool_call", `{"id": "c", "tool": "Edit", "input": {}, "context_tokens": 120000}`},
-	} {
-		if err := q.AddRunEvent(ctx, store.AddRunEventParams{RunID: payRun.ID, Type: e.typ, Payload: []byte(e.payload)}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	code, got2 := call(token, "get_run", map[string]any{"id": payRun.ID.String()})
-	if eff, _ := got2["efficiency"].(map[string]any); eff == nil || eff["setups"] != float64(1) || eff["tool_calls"] != float64(3) ||
-		eff["calls_before_first_edit"] != float64(2) || eff["test_runs"] != float64(1) || eff["peak_context_tokens"] != float64(120000) {
-		t.Fatalf("get_run efficiency = %v", got2["efficiency"])
-	}
-	if code != 200 || got2["run"].(map[string]any)["ticket"] != "PAY-214" || len(got2["delegated_runs"].([]any)) != 1 {
-		t.Fatalf("get_run = %d %v", code, got2)
-	}
-	if got2["context_tokens"] != float64(123456) || got2["explore_output_bytes"] != float64(120) || got2["shell_output_bytes"] != float64(7) || got2["other_output_bytes"] != float64(3) {
-		t.Fatalf("get_run context = %v", got2)
-	}
-	if code, out := call(token, "get_run", map[string]any{"id": mobRun.ID.String()}); code != 200 {
-		t.Fatalf("get_run other project = %d %v", code, out)
-	}
-	for _, hidden := range []uuid.UUID{planRun.ID, runID} {
-		if code, out := call(token, "get_run", map[string]any{"id": hidden.String()}); code != 422 {
-			t.Fatalf("get_run %s = %d %v", hidden, code, out)
-		}
-	}
-
-	// The assistant's tokens work only inside chat runs.
 	payRunID := payRun.ID
 	for _, rid := range []*uuid.UUID{nil, &payRunID} {
 		kind := "run"

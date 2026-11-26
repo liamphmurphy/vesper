@@ -857,11 +857,6 @@ func agentsSection(ctx context.Context, q *store.Queries, c runCtx, paths []stri
 		}
 		spec.Instructions += repoNote
 		spec.Instructions += workflows
-		projects, err := soleProjectNote(ctx, q, chat, c.project.Key)
-		if err != nil {
-			return nil, nil, "Could not load projects.", fmt.Errorf("chat projects: %w", err)
-		}
-		spec.Instructions += projects
 		tutor, err := runs.LearningTutorNote(ctx, q, chat)
 		if err != nil {
 			return nil, nil, "Could not load the course.", fmt.Errorf("course note: %w", err)

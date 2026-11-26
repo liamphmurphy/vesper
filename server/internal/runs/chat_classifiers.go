@@ -24,9 +24,7 @@ const (
 	substantialReply = 1500
 	// confirmationWords is the longest message treated as a bare go-ahead.
 	confirmationWords = 8
-	// ticketSizedWords keeps a one-line "refactor this" from suggesting a ticket.
-	ticketSizedWords = 25
-	mentionStreak    = 2
+	mentionStreak     = 2
 )
 
 var autoLevels = []string{"low", "medium", "high", "xhigh"}
@@ -39,7 +37,6 @@ var (
 	repoAskRe      = regexp.MustCompile(`\b(repo|repository|codebase|branch|pull request|merged|latest changes|the code)\b`)
 	imageAskRe     = regexp.MustCompile(`\b(draw|generate|make|create|paint)\b.{0,30}\b(image|picture|photo|illustration|portrait)\b`)
 	codeAskRe      = regexp.MustCompile(`\b(fix|implement|refactor|commit|push|open a (pr|pull request))\b`)
-	bigWorkRe      = regexp.MustCompile(`\b(epic|multi[- ]?(day|week|sprint)|across the (whole |entire )?(codebase|repo|system))\b`)
 	memoryAskRe    = regexp.MustCompile(`\b(remember (that|this|to)|i told you|like i said|as i (said|mentioned)|i (always|never) (want|prefer|like))\b`)
 	memoryNotRe    = regexp.MustCompile(`\b(don'?t|do not|do you|can'?t|cannot) remember\b`)
 	linkRe         = regexp.MustCompile(`https?://\S+`)
@@ -160,9 +157,6 @@ func classifyTurn(s turnSignals) turnDecision {
 		d.fire("capability_mismatch", "This message seems to ask for a generated image, which you aren't allowed to make. Say so, and that image generation can be enabled in the persona's settings, instead of attempting it.")
 	} else if !s.Caps.Coding() && codeAskRe.MatchString(t) && code {
 		d.fire("capability_mismatch", "This message seems to ask for changes to code, which you can't make in this chat. Say so, and that it needs a persona allowed to write code, instead of attempting it.")
-	}
-	if !strings.Contains(t, "ticket") && (bigWorkRe.MatchString(t) || (level == "xhigh" && words >= ticketSizedWords)) {
-		d.fire("ticket_sized", "This looks bigger than one chat. Offer in one sentence to create a ticket or epic for it; don't create one unless the person asks.")
 	}
 	for _, w := range s.Workflows {
 		if namesWorkflow(t, w.Name) {

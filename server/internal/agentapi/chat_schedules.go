@@ -242,7 +242,7 @@ type UpdateScheduledTaskIn struct {
 	Revision     int32     `json:"revision" jsonschema:"The revision from your latest list_scheduled_tasks. A stale one is refused: list again and redo your change"`
 	Name         *string   `json:"name,omitempty" jsonschema:"A new name, 1–120 characters"`
 	Instructions *string   `json:"instructions,omitempty" jsonschema:"New instructions, for a prompt task: what to do each time, written as the message you'll get"`
-	Space        *string   `json:"space,omitempty" jsonschema:"Space name or project key (e.g. Vesper or LAZYAGENTS), or empty string to clear"`
+	Space        *string   `json:"space,omitempty" jsonschema:"Space name (from list_spaces), or empty string to clear"`
 	Enabled      *bool     `json:"enabled,omitempty" jsonschema:"false pauses the task, true resumes it"`
 	Frequency    *string   `json:"frequency,omitempty" jsonschema:"daily, weekly, monthly or cron"`
 	AtTime       *string   `json:"at_time,omitempty" jsonschema:"Local time as HH:MM, 24-hour; not for cron"`

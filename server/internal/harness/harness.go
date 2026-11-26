@@ -215,7 +215,7 @@ func SubagentAgentsMD(existing string, spec agentdef.Resolved, contextFiles []st
 const chatMemoryGuide = "## Memory\n\n" +
 	"You keep a private memory of this person, separate from Knowledge and the shared wiki. Its index (titles and summaries of the most recent entries) is below; use search_memory and read_memory to find and open entries rather than guessing.\n" +
 	"- Save durable facts and preferences about the person with save_memory when they'll help later. It updates a near-duplicate instead of adding one.\n" +
-	"- Keep Memory for the person, not project logs: don't save PR/branch status, code-change recaps, or technical/architecture decisions here — put durable technical decisions and runbooks in Knowledge, and leave work-in-progress state in git and tickets.\n" +
+	"- Keep Memory for the person, not project logs: don't save PR/branch status, code-change recaps, or technical/architecture decisions here — put durable technical decisions and runbooks in Knowledge, and leave work-in-progress state in git and PRs.\n" +
 	"- Whenever you save or update a memory, tell the person in your reply what you remembered (and what it replaced, if anything).\n" +
 	"- Never store secrets: credentials, passwords, API keys or tokens. save_memory refuses them.\n" +
 	"- When the person says 'forget that', forget_memory the entry they mean and confirm. When they say 'don't remember this', save nothing from it (and forget anything you already saved from it).\n" +
@@ -345,16 +345,11 @@ func ChatAgentsMDWithGroup(spec agentdef.Resolved, contextFiles []string, projec
 // which goes below the persona so it only adds context. A temporary chat gets
 // the temporary-chat note in place of the memory guide and index, and its
 // persona's own memory read-only.
-func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, project, memoryIndex string, persona *Persona, group, space string, temporary bool) []byte {
+func ChatAgentsMDInSpace(spec agentdef.Resolved, contextFiles []string, _ string, memoryIndex string, persona *Persona, group, space string, temporary bool) []byte {
 	var b strings.Builder
-	if project == "" {
-		b.WriteString(sectionStart + "\n# Vesper chat\n\nThis chat has no default project. To create a ticket or epic, pass its project key, and ask the person which project if it isn't clear.\n\n")
-	} else {
-		b.WriteString(sectionStart + "\n# Vesper chat: default project " + project + "\n\nNew tickets and epics go to " + project + " unless you pass another project key.\n\n")
-	}
+	b.WriteString(sectionStart + "\n# Vesper chat\n\n")
 	b.WriteString("This is a conversation with a person. Answer directly; ending your reply ends this turn.\n")
-	b.WriteString("Use list_tickets, list_projects, list_runs, get_run, get_ticket, list_epics, get_epic, search_knowledge, read_page, read_artifact and get_backlinks to look things up in any project; list_tickets, list_runs, list_epics and search_knowledge take a project key to narrow. Cite sources with [[…]].\n")
-	b.WriteString("Use create_ticket and create_epic when the person asks. Return identifiers for created items. Use update_ticket, update_ticket_blockers, update_epic and comment_ticket to change existing tickets and epics when the person asks, or to keep a ticket you work on in this chat current. Do not call claim_ticket, complete_run or propose_tickets. ")
+	b.WriteString("Use search_knowledge, read_page, read_artifact and get_backlinks to look things up. Cite sources with [[…]].\n")
 	switch {
 	case allowed(spec, "repo:write"):
 		// A persona that can code (runs.ChatSpec): the instructions below say where.

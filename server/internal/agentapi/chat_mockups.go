@@ -30,19 +30,22 @@ func mockupCardFence(card MockupCard) (string, error) {
 	return "```mockup\n" + string(raw) + "\n```", nil
 }
 
-// createChatMockup is create_mockup in a chat: the mockup lands in a project
-// (the chat's default unless the persona names one, or the ticket's), and the
-// reply carries it as a card instead of the run waiting for a review.
+// createChatMockup is create_mockup in a chat: the mockup lands in the chat's
+// project if it has one (or standalone when it doesn't), and the reply carries
+// it as a card instead of the run waiting for a review.
 func createChatMockup(ctx context.Context, d Deps, c agents.Caller, scope *chatScope, in MockupIn, id *uuid.UUID) (any, error) {
 	project := strings.TrimSpace(in.Project)
 	if id == nil && strings.TrimSpace(in.Ticket) == "" {
-		// Resolved here for the chat's default and its "pass one of …" hint;
-		// a ticket's or a revised mockup's project is resolved with it.
-		p, err := scope.targetProject(ctx, d, c.Agent.WorkspaceID, project)
-		if err != nil {
-			return nil, err
+		if project == "" {
+			project = scope.ProjectKey
 		}
-		project = p.Key
+		if project != "" {
+			p, err := scope.targetProject(ctx, d, c.Agent.WorkspaceID, project)
+			if err != nil {
+				return nil, err
+			}
+			project = p.Key
+		}
 	}
 	out, err := d.Runs.CreateChatMockup(ctx, c, runs.ChatMockup{
 		ChatID: scope.ChatID, ProjectKey: project, TicketKey: strings.TrimSpace(in.Ticket),

@@ -4,9 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http/httptest"
-	"strings"
 	"testing"
 
 	"github.com/liamphmurphy/vesper/server/internal/agents"
@@ -19,8 +17,8 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/wiki"
 )
 
-// A chat with no default project still reads every project, and creates
-// tickets and epics wherever the persona names.
+// A chat with no default project reads workspace content, lists spaces, and
+// refuses removed Work-mode tools.
 func TestChatWithoutProjectReadsEveryProject(t *testing.T) {
 	pool := testdb.New(t)
 	ctx := context.Background()
@@ -69,31 +67,16 @@ func TestChatWithoutProjectReadsEveryProject(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if code, out := call(token, "get_ticket", map[string]any{"ticket": "PAY-214"}); code != 200 || out["key"] != "PAY-214" {
-		t.Fatalf("get_ticket = %d %v", code, out)
+	if code, out := call(token, "list_spaces", map[string]any{}); code != 200 || out["spaces"] == nil {
+		t.Fatalf("list_spaces = %d %v", code, out)
 	}
-	// With no default project, creating needs a project key; the error lists them.
-	if code, out := call(token, "create_ticket", map[string]any{"title": "Nowhere"}); code != 422 || !strings.Contains(fmt.Sprint(out), "pass one of") || !strings.Contains(fmt.Sprint(out), "PAY") {
-		t.Fatalf("create_ticket without a project = %d %v", code, out)
-	}
-	if code, out := call(token, "create_epic", map[string]any{"name": "Nowhere"}); code != 422 || !strings.Contains(fmt.Sprint(out), "pass one of") {
-		t.Fatalf("create_epic without a project = %d %v", code, out)
-	}
-	if code, out := call(token, "create_ticket", map[string]any{"title": "Somewhere", "project": "PAY"}); code != 200 || !strings.HasPrefix(fmt.Sprint(out["ticket"]), "PAY-") {
-		t.Fatalf("create_ticket in PAY = %d %v", code, out)
-	}
-	code, out := call(token, "list_epics", map[string]any{})
-	if epics, _ := out["epics"].([]any); code != 200 || !strings.Contains(jsonString(epics), `"Project":"PAY"`) {
-		t.Fatalf("list_epics = %d %v", code, out)
-	}
-	if code, out := call(token, "list_epics", map[string]any{"project": "nope"}); code != 422 {
-		t.Fatalf("list_epics unknown project = %d %v", code, out)
-	}
-	if code, out := call(token, "list_runs", map[string]any{"state": "all"}); code != 200 {
-		t.Fatalf("list_runs = %d %v", code, out)
+	for _, removed := range []string{"list_projects", "get_ticket", "create_ticket", "create_epic", "list_epics", "list_runs"} {
+		if code, out := call(token, removed, map[string]any{}); code != 409 && code != 404 {
+			t.Fatalf("%s = %d %v, want refused or unknown", removed, code, out)
+		}
 	}
 
-	// Attaching ends the segment so the next message gets the project's instructions.
+	// Attaching ends the segment so the next message starts fresh.
 	pay := "PAY"
 	attached, err := rs.UpdateChat(ctx, ws, me.ID, chat.ID, runs.ChatPatchInput{Revision: chat.Revision, Project: &pay})
 	if err != nil {

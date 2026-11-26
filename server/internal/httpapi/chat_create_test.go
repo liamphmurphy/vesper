@@ -76,6 +76,53 @@ func TestChatCreatesSpacesTasksAndModules(t *testing.T) {
 	if err != nil || len(spaces) != 1 || spaces[0].Name != "Health" || spaces[0].Color != "teal" || spaces[0].PersonaID == nil || *spaces[0].PersonaID != coach.ID {
 		t.Fatalf("spaces = %+v, %v", spaces, err)
 	}
+	code, listed := call(token, "list_spaces", map[string]any{})
+	if code != 200 {
+		t.Fatalf("list_spaces = %d %v", code, listed)
+	}
+	var foundHealth bool
+	for _, raw := range listed["spaces"].([]any) {
+		row := raw.(map[string]any)
+		if row["name"] == "Health" {
+			foundHealth = true
+			if row["color"] != "teal" || row["href"] != "/spaces/"+spaces[0].ID.String() || row["current"] == true {
+				t.Fatalf("health row = %v", row)
+			}
+		}
+	}
+	if !foundHealth {
+		t.Fatalf("list_spaces missing Health: %v", listed)
+	}
+	// A chat inside that space sees it marked current.
+	inSpace, err := rs.StartChat(ctx, ws, me.ID, runs.ChatInput{Title: "Inside Health", SpaceID: &spaces[0].ID, PersonaID: &coach.ID, Message: &runs.ChatMessageInput{Body: "hi"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inSpace, err = q.GetChatSession(ctx, store.GetChatSessionParams{ID: inSpace.ID, WorkspaceID: ws})
+	if err != nil || inSpace.CurrentRunID == nil {
+		t.Fatalf("inSpace run: %v", err)
+	}
+	if _, err = q.SetRunState(ctx, store.SetRunStateParams{ID: *inSpace.CurrentRunID, State: "running"}); err != nil {
+		t.Fatal(err)
+	}
+	inSpaceTok, _, err := agents.IssueToken(ctx, q, inSpace.AgentID, "run", "chat", inSpace.CurrentRunID, nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	code, listed = call(inSpaceTok, "list_spaces", map[string]any{})
+	if code != 200 {
+		t.Fatalf("in-space list_spaces = %d %v", code, listed)
+	}
+	var markedCurrent bool
+	for _, raw := range listed["spaces"].([]any) {
+		row := raw.(map[string]any)
+		if row["id"] == spaces[0].ID.String() && row["current"] == true {
+			markedCurrent = true
+		}
+	}
+	if !markedCurrent {
+		t.Fatalf("list_spaces did not mark current space: %v", listed)
+	}
 	if code, out := call(token, "create_space", map[string]any{"name": "Bad", "color": "plaid"}); code != 422 {
 		t.Fatalf("bad colour = %d %v", code, out)
 	}

@@ -66,21 +66,21 @@ type AsideInput struct {
 
 const asideFooter = `---
 (Vesper: this is an aside. While you keep working on the reply above in the main conversation, the person asked the question below. You are a separate instance answering only this question: the main reply carries on without seeing it, and nothing you write here reaches it.
-Answer briefly and concretely from the snapshot above and the conversation; use the read tools if you need more. Don't create, change or delete anything (tickets, epics, memory, canvases, chats, code). If the question asks to change what the main reply is doing, say so, and that the person can queue it as a follow-up or send it to interrupt.)
+Answer briefly and concretely from the snapshot above and the conversation; use the read tools if you need more. Don't create, change or delete anything (memory, canvases, Knowledge pages, chats, code). If the question asks to change what the main reply is doing, say so, and that the person can queue it as a follow-up or send it to interrupt.)
 
 The person's question:
 `
 
 const threadFooter = `---
 (Vesper: this is a thread about the message above, which the person picked in the main conversation. You are a separate instance answering in this side conversation: the main conversation doesn't see it, and nothing you write here reaches it.
-Answer about that message, concretely; use the read tools if you need more. Don't create, change or delete anything (tickets, epics, memory, canvases, chats, code). If the person asks for a change, say so, and that they can ask for it in the main conversation.)
+Answer about that message, concretely; use the read tools if you need more. Don't create, change or delete anything (memory, canvases, Knowledge pages, chats, code). If the person asks for a change, say so, and that they can ask for it in the main conversation.)
 
 The person's question:
 `
 
 const secondOpinionFooter = `---
 (Vesper: this is a read-only second-opinion aside. The main conversation stays on its active harness session so its prompt cache remains warm, and nothing you write here modifies the main chat or workspace.
-Give a direct, high-signal critique: highlight blind spots, subtle bugs, race conditions, edge cases, architectural tradeoffs, or confirm clearly if the approach looks solid. Don't create, change or delete anything (tickets, epics, memory, canvases, chats, code); use read tools only if you need more context.)
+Give a direct, high-signal critique: highlight blind spots, subtle bugs, race conditions, edge cases, architectural tradeoffs, or confirm clearly if the approach looks solid. Don't create, change or delete anything (memory, canvases, Knowledge pages, chats, code); use read tools only if you need more context.)
 
 The person's request:
 `
