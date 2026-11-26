@@ -140,6 +140,7 @@ final class ShellState {
             ShellArea(id: .spaces, label: "Spaces", icon: "spaces", href: "/spaces"),
             ShellArea(id: .knowledge, label: "Knowledge", icon: "wiki", href: "/knowledge"),
             ShellArea(id: .library, label: "Library", icon: "library", href: "/library"),
+            ShellArea(id: .browser, label: "Browser", icon: "compass", href: "/browser"),
         ],
         apps: [], currentArea: nil)
 }

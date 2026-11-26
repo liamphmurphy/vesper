@@ -174,7 +174,7 @@ public struct NavModel: Codable, Sendable, Hashable, Identifiable {
 }
 
 public enum AreaId: String, Codable, Sendable, Hashable {
-    case chat, spaces, knowledge, library, apps
+    case chat, spaces, knowledge, library, browser, apps
 }
 
 public struct AreaBadge: Codable, Sendable, Hashable {

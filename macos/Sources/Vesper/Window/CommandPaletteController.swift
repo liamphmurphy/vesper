@@ -144,6 +144,32 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
     private func wireModel() {
         model.storeProvider = { [weak self] in self?.aux?.store }
         model.clientProvider = { [weak self] in self?.aux?.client() }
+        model.browserTabsProvider = { [weak self] in
+            self?.aux?.app?.browser.orderedTabs.map(\.record) ?? []
+        }
+        model.onSelectBrowserTab = { [weak self] tabId in
+            guard let self, let app = self.aux?.app else { return }
+            app.browser.selectTab(tabId)
+            if let target = self.targetController {
+                if !target.isBrowserActive {
+                    target.content.navigate(path: "/browser")
+                }
+                target.window?.makeKeyAndOrderFront(nil)
+            } else {
+                app.openVesperTab(path: "/browser", nextTo: nil)
+            }
+        }
+        model.onOpenInBrowser = { [weak self] raw in
+            guard let self, let app = self.aux?.app,
+                  let url = BrowserURLResolver.resolve(raw, searchEngine: app.browser.searchEngine)
+            else { return }
+            if let target = self.targetController {
+                target.openInBrowser(url)
+            } else {
+                app.browser.openURL(url, inNewTab: true)
+                app.openVesperTab(path: "/browser", nextTo: nil)
+            }
+        }
         model.onClose = { [weak self] restoreFocus in
             self?.close(restoreFocus: restoreFocus)
         }

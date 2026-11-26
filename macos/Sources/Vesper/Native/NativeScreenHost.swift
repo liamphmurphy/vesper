@@ -96,9 +96,15 @@ final class NativeScreenContext {
     /// The window's undo manager, so ⌘Z (Edit ▸ Undo) undoes a screen's action.
     var undoManager: UndoManager? { window()?.window?.undoManager }
 
-    /// Opens an http(s) link in the default browser (pull requests, results on GitHub).
+    /// Opens an http(s) link in Vesper's internal Browser when enabled (hold ⌥ to open in Safari instead).
     func openExternal(_ href: String) {
-        if let url = URL(string: href), url.scheme == "https" || url.scheme == "http" { NSWorkspace.shared.open(url) }
+        guard let url = URL(string: href), url.scheme == "https" || url.scheme == "http" else { return }
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        if !optionHeld, let win = window(), win.app.browser.openExternalLinksInBrowser {
+            win.openInBrowser(url)
+            return
+        }
+        NSWorkspace.shared.open(url)
     }
 
     /// Resolves an API or media path relative to the active server `baseURL`, or returns an http(s) URL as-is.
@@ -178,6 +184,7 @@ struct NativeScreenRoot: View {
         case .debugPlaceholder: DebugPlaceholderScreen()
         case .inbox: InboxScreen()
         case .library: LibraryScreen()
+        case .browser: BrowserScreen()
         case .pdf: PDFScreen()
         case .markdownDebug: MarkdownDebugScreen()
         case .scenesDebug: ScenesDebugScreen()

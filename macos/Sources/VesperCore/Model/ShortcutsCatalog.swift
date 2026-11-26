@@ -101,6 +101,16 @@ public enum KeyboardShortcutsCatalog: Sendable {
             ("Close active tab", ["⌥", "W"]),
             ("Close all tabs", ["⌥", "⇧", "W"]),
         ]),
+        ShortcutSection(title: "Browser", items: [
+            ("Focus address bar", ["⌘", "L"]),
+            ("Switch to web tab 1–8 / last", ["⌘", "⌃", "1–9"]),
+            ("Next / previous web tab", ["⌘", "⌃", "]", "⌘⌃["]),
+            ("New / close / reopen web tab", ["⌘", "T", "⌘W", "⇧⌘T"]),
+            ("New private web tab", ["⌘", "⇧", "P"]),
+            ("Toggle Reader Mode", ["⌘", "⌥", "R"]),
+            ("Bookmark current page", ["⌘", "⇧", "B"]),
+            ("Open current page in Safari", ["⌘", "⌥", "O"]),
+        ]),
     ]
 
     public static func filter(_ sections: [ShortcutSection] = allSections, query: String) -> [ShortcutSection] {

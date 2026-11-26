@@ -147,6 +147,7 @@ final class SystemServices {
         guard let connection else {
             client = nil
             store.setClient(nil)
+            SafariExtensionLink.reset()
             power.update()
             refreshTray()
             return

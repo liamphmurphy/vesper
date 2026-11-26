@@ -561,7 +561,63 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         window?.title = tab.displayTitle
     }
 
-    var webView: WKWebView? { content.webView }
+    var webView: WKWebView? { content.webView ?? activeBrowserWebView }
+
+    var isBrowserActive: Bool {
+        kind == .vesper && state.currentArea == .browser
+    }
+
+    var activeBrowserWebView: WKWebView? {
+        isBrowserActive ? app.browser.activeTab?.webView : nil
+    }
+
+    var companionChatId: String? {
+        inspectorController?.companionStore.currentChatId
+    }
+
+    /// Selects `chatId` (when given) in the window's Companion Chat inspector and reveals the
+    /// inspector if collapsed, so the persona sits right beside the active screen.
+    func openCompanionChat(_ chatId: String?) {
+        guard hasInspector, kind == .vesper else { return }
+        if let chatId, !chatId.isEmpty {
+            inspectorController?.companionStore.currentChatId = chatId
+            app.system.store.load(API.getChat(id: chatId))
+            let store = app.system.store
+            Task { @MainActor in
+                _ = try? await store.mutate(DockChatsAPI.add(scope: CompanionChatStore.scope, chatId: chatId))
+                _ = await store.refetch(DockChatsAPI.list(scope: CompanionChatStore.scope))
+            }
+        }
+        if inspectorController?.isPoppedOut == true {
+            inspectorController?.bringPopoutToFront()
+            return
+        }
+        if isInspectorCollapsed {
+            toggleInspector(nil)
+        }
+    }
+
+    /// Opens an http(s) URL in Vesper's internal Browser, switching to an existing Browser tab in
+    /// this window if one is already open, or opening `/browser` otherwise.
+    func openInBrowser(_ url: URL) {
+        guard BrowserURLResolver.isWebURL(url) else { return }
+        app.browser.openURL(url, inNewTab: true, reuseExisting: true)
+        if isBrowserActive {
+            window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        if compact, let existing = tabs.list.items.first(where: { $0.kind == .vesper && $0.state.currentArea == .browser }) {
+            selectTab(existing)
+            window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        if compact {
+            app.openVesperTab(path: "/browser", nextTo: window)
+        } else {
+            content.navigate(path: "/browser")
+            window?.makeKeyAndOrderFront(nil)
+        }
+    }
 
     // MARK: Bounds (session.json stores top-left-origin screen coordinates, as Electron did)
 
