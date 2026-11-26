@@ -77,7 +77,7 @@ struct KnowledgeTextViewTests {
         #expect(len == expected.length, "Length mismatch at \(context)")
         let keys: [NSAttributedString.Key] = [
             .font, .foregroundColor, .backgroundColor,
-            .strikethroughStyle, .underlineStyle, .underlineColor, .paragraphStyle,
+            .strikethroughStyle, .underlineStyle, .underlineColor, .paragraphStyle, .toolTip,
         ]
         for i in 0..<len {
             let a = actual.attributes(at: i, effectiveRange: nil)
@@ -240,5 +240,57 @@ struct KnowledgeTextViewTests {
         let hAfterEdit = view.fittingHeight(width: 320)
         #expect(hAfterEdit > hNarrow)
         #expect(view.layoutMeasurementCount == 3)
+    }
+
+    @Test("wikilinks hide folder path prefix with full-path tooltip and reveal on caret or active find")
+    func wikiLinkHidesFolderPathAndRevealsOnEditOrFind() throws {
+        let text = "See [[Campaign/Sessions/Session 27]] and [[Campaign/Sessions/Session 27#Summary|Recap]] tonight."
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 700, height: 400),
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        let (coordinator, view) = makeEditor(text: text)
+        window.contentView?.addSubview(view)
+
+        let ns = text as NSString
+        let prefixRange = ns.range(of: "[[Campaign/Sessions/")
+        let titleRange = ns.range(of: "Session 27")
+        let storage = try #require(view.textStorage)
+
+        // 1. Unfocused: folder prefix is hidden (0.01pt clear), display title is styled with full-path tooltip.
+        let hiddenFont = storage.attribute(.font, at: prefixRange.location + 2, effectiveRange: nil) as? NSFont
+        #expect((hiddenFont?.pointSize ?? 99) < 0.1)
+        let titleFont = storage.attribute(.font, at: titleRange.location, effectiveRange: nil) as? NSFont
+        #expect((titleFont?.pointSize ?? 0) >= 12)
+        let tip = storage.attribute(.toolTip, at: titleRange.location, effectiveRange: nil) as? String
+        #expect(tip == "Campaign/Sessions/Session 27")
+
+        // 2. Active Cmd+F match inside hidden folder prefix reveals the path even while unfocused.
+        let campaignRange = ns.range(of: "Campaign")
+        coordinator.parent.findMatches = [campaignRange]
+        coordinator.parent.activeFindMatchRange = campaignRange
+        _ = coordinator.applyStyling(to: view)
+        let findFont = storage.attribute(.font, at: campaignRange.location, effectiveRange: nil) as? NSFont
+        #expect((findFont?.pointSize ?? 0) >= 12)
+
+        coordinator.parent.findMatches = []
+        coordinator.parent.activeFindMatchRange = nil
+        _ = coordinator.applyStyling(to: view)
+        let rehiddenFont = storage.attribute(.font, at: campaignRange.location, effectiveRange: nil) as? NSFont
+        #expect((rehiddenFont?.pointSize ?? 99) < 0.1)
+
+        // 3. Focusing and moving caret into the link reveals the full source path, moving away hides it again.
+        _ = window.makeFirstResponder(view)
+        view.setSelectedRange(NSRange(location: titleRange.location + 2, length: 0))
+        _ = coordinator.applyStyling(to: view)
+        let revealedFont = storage.attribute(.font, at: prefixRange.location + 2, effectiveRange: nil) as? NSFont
+        #expect((revealedFont?.pointSize ?? 0) >= 12)
+
+        view.setSelectedRange(NSRange(location: 0, length: 0))
+        _ = coordinator.applyStyling(to: view)
+        let hiddenAgainFont = storage.attribute(.font, at: prefixRange.location + 2, effectiveRange: nil) as? NSFont
+        #expect((hiddenAgainFont?.pointSize ?? 99) < 0.1)
     }
 }

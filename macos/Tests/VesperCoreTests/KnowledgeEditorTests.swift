@@ -30,6 +30,159 @@ final class KnowledgeEditorTests: XCTestCase {
         XCTAssertEqual(target?.alias, "ADR 1")
     }
 
+    private func visibleMarkdown(_ md: String, state: KnowledgeLivePreviewState) -> String {
+        let ns = md as NSString
+        var hidden = Array(repeating: false, count: ns.length)
+        for range in state.hiddenRanges {
+            let start = max(0, range.location)
+            let end = min(ns.length, range.location + range.length)
+            if start < end {
+                for i in start..<end { hidden[i] = true }
+            }
+        }
+        var out = ""
+        var i = 0
+        while i < ns.length {
+            if hidden[i] {
+                i += 1
+                continue
+            }
+            var j = i + 1
+            while j < ns.length && !hidden[j] { j += 1 }
+            out += ns.substring(with: NSRange(location: i, length: j - i))
+            i = j
+        }
+        return out
+    }
+
+    func testWikiLinksHideFolderPathsToShowDisplayTitleAndRevealOnEdit() throws {
+        let md = "Before [[Campaign/Sessions/Session 27]] and [[Campaign/Sessions/Session 27#Summary|Recap]]. After."
+        let tokens = KnowledgeMarkdownSyntax.scan(md)
+        let wikiTokens = tokens.filter { if case .wikiLink = $0.kind { return true }; return false }
+        XCTAssertEqual(wikiTokens.count, 2)
+
+        let ns = md as NSString
+        let pathLink = wikiTokens[0]
+        XCTAssertEqual(ns.substring(with: pathLink.contentRange), "Session 27")
+        XCTAssertEqual(pathLink.syntaxRanges.map { ns.substring(with: $0) }, ["[[Campaign/Sessions/", "]]"])
+
+        let aliasedLink = wikiTokens[1]
+        XCTAssertEqual(ns.substring(with: aliasedLink.contentRange), "Recap")
+
+        // Unfocused and caret-outside both show only display titles, never full paths.
+        let unfocused = KnowledgeMarkdownSyntax.livePreview(in: md, selection: nil, isFocused: false)
+        XCTAssertEqual(visibleMarkdown(md, state: unfocused), "Before Session 27 and Recap. After.")
+
+        let away = KnowledgeMarkdownSyntax.livePreview(in: md, selection: NSRange(location: 0, length: 0), isFocused: true)
+        XCTAssertEqual(visibleMarkdown(md, state: away), "Before Session 27 and Recap. After.")
+
+        // Clicking inside the visible title reveals the full source path for editing.
+        let inside = KnowledgeMarkdownSyntax.livePreview(
+            in: md,
+            selection: NSRange(location: pathLink.contentRange.location + 2, length: 0),
+            isFocused: true
+        )
+        XCTAssertEqual(
+            visibleMarkdown(md, state: inside),
+            "Before [[Campaign/Sessions/Session 27]] and Recap. After."
+        )
+
+        // Active Cmd+F match inside the hidden folder prefix reveals the token even while Find bar holds focus.
+        let campaignRange = ns.range(of: "Campaign")
+        let findRevealed = KnowledgeMarkdownSyntax.livePreview(
+            in: md,
+            selection: NSRange(location: 0, length: 0),
+            isFocused: false,
+            activeFindMatch: campaignRange
+        )
+        XCTAssertEqual(
+            visibleMarkdown(md, state: findRevealed),
+            "Before [[Campaign/Sessions/Session 27]] and Recap. After."
+        )
+
+        // Cmd-click on the visible display title still resolves the full path target.
+        let hit = try XCTUnwrap(KnowledgeMarkdownSyntax.hitTestLink(at: pathLink.contentRange.location + 3, in: md))
+        XCTAssertEqual(hit.target, "Campaign/Sessions/Session 27")
+        XCTAssertEqual(hit.ref, "Campaign/Sessions/Session 27")
+
+        // Underlying markdown stays byte-for-byte untouched.
+        XCTAssertEqual(KnowledgeEditorDocument(markdown: md).serialize(), md)
+    }
+
+    func testWikiLinkDisplayTitleEdgeCases() {
+        let cases: [(markdown: String, expectedVisible: String)] = [
+            ("See [[Campaign/Sessions/Session 27#Summary]].", "See Session 27#Summary."),
+            ("See [[Campaign/Sessions/Session 27#Q1/Q2 Review]].", "See Session 27#Q1/Q2 Review."),
+            ("Ref [[Campaign/Sessions/Session 27#^intro-1]] and [[Campaign/Sessions/Session 27^intro-2]].", "Ref Session 27#^intro-1 and Session 27^intro-2."),
+            ("[[Top Level Note]]", "Top Level Note"),
+            ("[[#Section/Part 2]]", "#Section/Part 2"),
+            ("[[Campaign/Sessions/]]", "Campaign/Sessions/"),
+            ("[[Campaign/Sessions/Session 27|]]", "Session 27"),
+            ("[[Campaign/Sessions/Session 27|Foo | Bar]]", "Foo | Bar"),
+            ("[[Campaign/Sessions/Session 27\\|Recap]]", "Recap"),
+            ("[[🎲 Campaign/🗺️ Sessions/Café Session 27]]", "Café Session 27"),
+            ("![[Campaign/Maps/tavern.png|400]]", "tavern.png"),
+            ("![[Campaign/Maps/tavern.png|Tavern Map|400]]", "Tavern Map"),
+        ]
+
+        for sample in cases {
+            let state = KnowledgeMarkdownSyntax.livePreview(in: sample.markdown, selection: nil, isFocused: false)
+            XCTAssertEqual(
+                visibleMarkdown(sample.markdown, state: state),
+                sample.expectedVisible,
+                "Unexpected visible text for \(sample.markdown)"
+            )
+        }
+    }
+
+    @MainActor
+    func testTextKit2HiddenWikiLinkFolderPrefixTakesNegligibleWidth() throws {
+        func measureLineWidth(_ text: String, hideSyntax: Bool) -> (lines: Int, width: CGFloat) {
+            let contentStorage = NSTextContentStorage()
+            let layoutManager = NSTextLayoutManager()
+            let container = NSTextContainer(size: CGSize(width: 600, height: CGFloat.greatestFiniteMagnitude))
+            container.lineFragmentPadding = 0
+            layoutManager.textContainer = container
+            contentStorage.addTextLayoutManager(layoutManager)
+
+            let attr = NSMutableAttributedString(string: text, attributes: [
+                .font: NSFont.systemFont(ofSize: 14),
+            ])
+            if hideSyntax {
+                let preview = KnowledgeMarkdownSyntax.livePreview(in: text, selection: nil, isFocused: false)
+                let hiddenAttrs: [NSAttributedString.Key: Any] = [
+                    .font: NSFont.systemFont(ofSize: 0.01),
+                    .foregroundColor: NSColor.clear,
+                    .backgroundColor: NSColor.clear,
+                ]
+                for range in preview.hiddenRanges {
+                    attr.addAttributes(hiddenAttrs, range: range)
+                }
+            }
+            contentStorage.attributedString = attr
+            layoutManager.ensureLayout(for: layoutManager.documentRange)
+
+            var lineCount = 0
+            var maxWidth: CGFloat = 0
+            layoutManager.enumerateTextLayoutFragments(from: layoutManager.documentRange.location, options: [.ensuresLayout]) { frag in
+                for line in frag.textLineFragments {
+                    lineCount += 1
+                    maxWidth = max(maxWidth, line.typographicBounds.width)
+                }
+                return true
+            }
+            return (lineCount, maxWidth)
+        }
+
+        let linked = measureLineWidth(
+            "See [[My Long Campaign Folder/Arc Two/Session Notes/Session 27]] tonight.",
+            hideSyntax: true
+        )
+        let plain = measureLineWidth("See Session 27 tonight.", hideSyntax: false)
+        XCTAssertEqual(linked.lines, 1)
+        XCTAssertEqual(linked.width, plain.width, accuracy: 2.0)
+    }
+
     func testResolveInlineEmbedsMatchesServerRawRefsAndDeduplicates() {
         let assetRef = "![[attachment:88888888-8888-4888-8888-888888888888/map.png]]"
         let libraryRef = "![[library:99999999-9999-4999-8999-999999999999]]"

@@ -713,26 +713,13 @@ public enum KnowledgeMarkdownSyntax: Sendable {
                 let raw = lineNS.substring(with: m.range)
                 guard let target = parseWikiTarget(raw: raw) else { continue }
                 let full = NSRange(location: base + m.range.location, length: m.range.length)
-                let openLen = target.isEmbed ? 3 : 2
-                let closeLen = 2
-                let openRange: NSRange
-                let contentRange: NSRange
-                let closeRange = NSRange(location: full.location + full.length - closeLen, length: closeLen)
-
-                if let alias = target.alias, !alias.isEmpty, let barRange = (raw as NSString).range(of: "|", options: .backwards).optionalValid {
-                    let prefixLen = barRange.location + barRange.length
-                    openRange = NSRange(location: full.location, length: prefixLen)
-                    contentRange = NSRange(location: full.location + prefixLen, length: max(0, full.length - prefixLen - closeLen))
-                } else {
-                    openRange = NSRange(location: full.location, length: openLen)
-                    contentRange = NSRange(location: full.location + openLen, length: max(0, full.length - openLen - closeLen))
-                }
+                let (contentRange, syntaxRanges) = wikiLinkDisplayRanges(raw: raw, full: full, target: target)
 
                 tokens.append(KnowledgeSyntaxToken(
                     kind: target.isEmbed ? .embed(target) : .wikiLink(target),
                     range: full,
                     contentRange: contentRange,
-                    syntaxRanges: [openRange, closeRange]
+                    syntaxRanges: syntaxRanges
                 ))
                 excluded.append(m.range)
             }
@@ -820,6 +807,101 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         }
     }
 
+    private static func wikiLinkDisplayRanges(
+        raw: String,
+        full: NSRange,
+        target: KnowledgeWikiTarget
+    ) -> (contentRange: NSRange, syntaxRanges: [NSRange]) {
+        let rawNS = raw as NSString
+        let openLen = target.isEmbed ? 3 : 2
+        let closeLen = 2
+        let innerStart = openLen
+        let innerEnd = max(innerStart, full.length - closeLen)
+        let innerRange = NSRange(location: innerStart, length: innerEnd - innerStart)
+
+        let firstBar = rawNS.range(of: "|", range: innerRange)
+        let pipeTokenStart: Int? = {
+            guard firstBar.location != NSNotFound else { return nil }
+            if firstBar.location > innerStart && rawNS.character(at: firstBar.location - 1) == 0x5C {
+                return firstBar.location - 1
+            }
+            return firstBar.location
+        }()
+
+        func makeRanges(contentStart rawStart: Int, contentEnd rawEnd: Int) -> (NSRange, [NSRange]) {
+            var start = max(innerStart, min(rawStart, innerEnd))
+            var end = max(start, min(rawEnd, innerEnd))
+            while start < end && isHorizontalWhitespace(rawNS.character(at: start)) { start += 1 }
+            while end > start && isHorizontalWhitespace(rawNS.character(at: end - 1)) { end -= 1 }
+            let openRange = NSRange(location: full.location, length: start)
+            let contentRange = NSRange(location: full.location + start, length: end - start)
+            let closeRange = NSRange(location: full.location + end, length: full.length - end)
+            return (contentRange, [openRange, closeRange])
+        }
+
+        // 1. Explicit display alias (ignoring pure Obsidian embed dimension suffixes like `|400`).
+        if let alias = target.alias, !alias.isEmpty, firstBar.location != NSNotFound {
+            let aliasStart = firstBar.location + firstBar.length
+            if target.isEmbed {
+                let lastBar = rawNS.range(of: "|", options: .backwards, range: innerRange)
+                if lastBar.location == firstBar.location {
+                    if KnowledgeEmbedDimensions.parse(alias) == nil {
+                        return makeRanges(contentStart: aliasStart, contentEnd: innerEnd)
+                    }
+                } else {
+                    let trailingStart = lastBar.location + lastBar.length
+                    let trailing = rawNS.substring(with: NSRange(location: trailingStart, length: innerEnd - trailingStart))
+                    if KnowledgeEmbedDimensions.parse(trailing) != nil {
+                        let captionEnd = (lastBar.location > aliasStart && rawNS.character(at: lastBar.location - 1) == 0x5C)
+                            ? lastBar.location - 1
+                            : lastBar.location
+                        let caption = rawNS.substring(with: NSRange(location: aliasStart, length: max(0, captionEnd - aliasStart)))
+                            .trimmingCharacters(in: .whitespacesAndNewlines)
+                        if !caption.isEmpty {
+                            return makeRanges(contentStart: aliasStart, contentEnd: captionEnd)
+                        }
+                    } else {
+                        return makeRanges(contentStart: aliasStart, contentEnd: innerEnd)
+                    }
+                }
+            } else {
+                return makeRanges(contentStart: aliasStart, contentEnd: innerEnd)
+            }
+        }
+
+        // 2. No display alias: hide folder segments before the last `/` in the target portion
+        //    (before `#`, `^`, or `|`) so `[[Folder/Subfolder/Note]]` displays as `Note`.
+        let targetAndAnchorEnd = pipeTokenStart ?? innerEnd
+        let targetAndAnchorRange = NSRange(location: innerStart, length: max(0, targetAndAnchorEnd - innerStart))
+
+        var targetEnd = targetAndAnchorEnd
+        let hashRange = rawNS.range(of: "#", range: targetAndAnchorRange)
+        if hashRange.location != NSNotFound {
+            targetEnd = min(targetEnd, hashRange.location)
+        }
+        let caretRange = rawNS.range(of: "^", range: targetAndAnchorRange)
+        if caretRange.location != NSNotFound {
+            targetEnd = min(targetEnd, caretRange.location)
+        }
+
+        let targetRange = NSRange(location: innerStart, length: max(0, targetEnd - innerStart))
+        let lastSlash = rawNS.range(of: "/", options: .backwards, range: targetRange)
+        if lastSlash.location != NSNotFound {
+            let leafStart = lastSlash.location + lastSlash.length
+            let leaf = rawNS.substring(with: NSRange(location: leafStart, length: max(0, targetEnd - leafStart)))
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !leaf.isEmpty {
+                return makeRanges(contentStart: leafStart, contentEnd: targetAndAnchorEnd)
+            }
+        }
+
+        return makeRanges(contentStart: innerStart, contentEnd: targetAndAnchorEnd)
+    }
+
+    private static func isHorizontalWhitespace(_ unit: unichar) -> Bool {
+        unit == 0x20 || unit == 0x09
+    }
+
     private static func checkboxState(_ lineNS: NSString, range: NSRange) -> Bool? {
         guard range.location != NSNotFound, range.length == 1 else { return nil }
         let ch = lineNS.substring(with: range)
@@ -841,38 +923,19 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return selStart <= tokEnd && selEnd >= tokStart
     }
 
-    /// Computes which syntax delimiter ranges should be hidden vs. revealed for `selection`.
+    /// Computes which syntax delimiter ranges should be hidden vs. revealed for `selection`
+    /// (and any active `⌘F` match, so matches inside hidden link paths remain visible).
     public static func livePreview(
         in markdown: String,
         selection: NSRange?,
-        isFocused: Bool = true
+        isFocused: Bool = true,
+        activeFindMatch: NSRange? = nil
     ) -> KnowledgeLivePreviewState {
-        let tokens = scan(markdown)
-        var revealedIndices = Set<Int>()
-        var hidden: [NSRange] = []
-        var revealed: [NSRange] = []
-
-        for (index, token) in tokens.enumerated() {
-            let shouldReveal: Bool
-            if isFocused, let selection {
-                shouldReveal = intersects(tokenRange: token.range, selection: selection)
-            } else {
-                shouldReveal = false
-            }
-
-            if shouldReveal {
-                revealedIndices.insert(index)
-                revealed.append(contentsOf: token.syntaxRanges)
-            } else {
-                hidden.append(contentsOf: token.syntaxRanges)
-            }
-        }
-
-        return KnowledgeLivePreviewState(
-            tokens: tokens,
-            revealedTokenIndices: revealedIndices,
-            hiddenRanges: hidden,
-            revealedRanges: revealed
+        livePreview(
+            tokens: scan(markdown),
+            selection: selection,
+            isFocused: isFocused,
+            activeFindMatch: activeFindMatch
         )
     }
 
@@ -1282,18 +1345,19 @@ public enum KnowledgeMarkdownSyntax: Sendable {
     public static func livePreview(
         tokens: [KnowledgeSyntaxToken],
         selection: NSRange?,
-        isFocused: Bool = true
+        isFocused: Bool = true,
+        activeFindMatch: NSRange? = nil
     ) -> KnowledgeLivePreviewState {
         var revealedIndices = Set<Int>()
         var hidden: [NSRange] = []
         var revealed: [NSRange] = []
 
         for (index, token) in tokens.enumerated() {
-            let shouldReveal: Bool
-            if isFocused, let selection {
-                shouldReveal = intersects(tokenRange: token.range, selection: selection)
-            } else {
-                shouldReveal = false
+            var shouldReveal = false
+            if isFocused, let selection, intersects(tokenRange: token.range, selection: selection) {
+                shouldReveal = true
+            } else if let activeFindMatch, intersects(tokenRange: token.range, selection: activeFindMatch) {
+                shouldReveal = true
             }
 
             if shouldReveal {
@@ -1502,11 +1566,5 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         }
 
         return false
-    }
-}
-
-private extension NSRange {
-    var optionalValid: NSRange? {
-        location == NSNotFound ? nil : self
     }
 }
