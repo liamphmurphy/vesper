@@ -101,6 +101,57 @@ final class KnowledgePanelsAndGraphTests: XCTestCase {
         XCTAssertNil(KnowledgeGraphLogic.hitTest(worldPoint: (99999, 99999), nodes: globalSnap.nodes, minHitRadius: 10))
     }
 
+    func testNodeSizingLabelOpacityAndDragRelaxation() {
+        // Compact, monotonic, capped node sizing.
+        let orphanR = KnowledgeGraphLogic.nodeRadius(degree: 0, unit: 1.0)
+        let leafR = KnowledgeGraphLogic.nodeRadius(degree: 1, unit: 1.0)
+        let hubR = KnowledgeGraphLogic.nodeRadius(degree: 16, unit: 1.0)
+        let megaHubR = KnowledgeGraphLogic.nodeRadius(degree: 200, unit: 1.0)
+        XCTAssertLessThan(orphanR, leafR)
+        XCTAssertLessThan(leafR, hubR)
+        XCTAssertLessThanOrEqual(megaHubR, 7.0)
+
+        // Large graphs hide unfocused labels when zoomed out, fade hubs in first, and always show focused/search hits.
+        XCTAssertEqual(
+            KnowledgeGraphLogic.labelOpacity(scale: 1.0, nodeCount: 120, degree: 10, isFocused: false, matchesSearch: false, hasSearch: false),
+            0.0
+        )
+        XCTAssertGreaterThan(
+            KnowledgeGraphLogic.labelOpacity(scale: 1.4, nodeCount: 120, degree: 10, isFocused: false, matchesSearch: false, hasSearch: false),
+            0.0
+        )
+        XCTAssertEqual(
+            KnowledgeGraphLogic.labelOpacity(scale: 1.0, nodeCount: 120, degree: 1, isFocused: true, matchesSearch: false, hasSearch: false),
+            1.0
+        )
+        XCTAssertEqual(
+            KnowledgeGraphLogic.labelOpacity(scale: 1.0, nodeCount: 120, degree: 0, isFocused: false, matchesSearch: true, hasSearch: true),
+            1.0
+        )
+
+        // Drag relaxation keeps the pinned node fixed and pulls its connected neighbor toward it.
+        var nodes = [
+            KnowledgeGraphRenderNode(
+                id: "a", title: "A", path: "Docs/A", group: "Docs", audience: .private,
+                isUnresolved: false, x: 200, y: 0, degree: 1, radius: 3, colorHex: "#9B8CFF",
+                isDimmed: false, isHighlighted: true, showLabel: true
+            ),
+            KnowledgeGraphRenderNode(
+                id: "b", title: "B", path: "Docs/B", group: "Docs", audience: .private,
+                isUnresolved: false, x: 0, y: 0, degree: 1, radius: 3, colorHex: "#9B8CFF",
+                isDimmed: false, isHighlighted: false, showLabel: false
+            ),
+        ]
+        let edges = [
+            KnowledgeGraphRenderEdge(source: "a", target: "b", isUnresolved: false, isHighlighted: true, isDimmed: false),
+        ]
+        let disp = KnowledgeGraphLogic.relaxStep(nodes: &nodes, edges: edges, pinnedNodeId: "a", alpha: 0.45)
+        XCTAssertGreaterThan(disp, 0)
+        XCTAssertEqual(nodes[0].x, 200, accuracy: 1e-9)
+        XCTAssertEqual(nodes[0].y, 0, accuracy: 1e-9)
+        XCTAssertGreaterThan(nodes[1].x, 0, "Connected neighbor should be pulled toward the dragged node")
+    }
+
     // MARK: - Backlinks & Unlinked Mentions
 
     func testBacklinksOutgoingAndUnlinkedMentions() {
