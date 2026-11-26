@@ -18,6 +18,8 @@ import (
 	"golang.org/x/sys/unix"
 )
 
+const openNoFollowFlag = syscall.O_NOFOLLOW
+
 func bootstrapPID1() error { return nil }
 
 func startOrphanReaper(context.Context, *execTracker) {}

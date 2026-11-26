@@ -20,7 +20,10 @@ import (
 	"golang.org/x/sys/unix"
 )
 
-const overlayfsSuperMagic = 0x794c7630
+const (
+	overlayfsSuperMagic = 0x794c7630
+	openNoFollowFlag    = syscall.O_NOFOLLOW
+)
 
 // bootstrapPID1 prepares mounts, overlayfs pivot_root onto EROFS, cgroup v2,
 // and attached virtio-blk / virtiofs disks before serving RPCs.

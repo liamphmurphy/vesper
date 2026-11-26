@@ -10,7 +10,24 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
+
+const openNoFollowFlag = 0
+
+func openFileNoFollowUnderRoot(rootDir, rel string, mode os.FileMode, uid, gid int) (*os.File, error) {
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if dir := filepath.Dir(rel); dir != "." && dir != "" {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	return root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+}
 
 func bootstrapPID1() error { return nil }
 

@@ -244,3 +244,80 @@ func TestAgentWithoutTraceLogsNoExecLifecycle(t *testing.T) {
 		}
 	}
 }
+
+func TestGuestFileOpsRefuseSymlinkEscapes(t *testing.T) {
+	ctx := context.Background()
+	c, _ := newTestAgentClient(t)
+
+	guestRoot := t.TempDir()
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "passwd")
+	if err := os.WriteFile(outsideFile, []byte("root:x:0:0\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	origRoots := guestWritableRoots
+	guestWritableRoots = []string{guestRoot}
+	t.Cleanup(func() { guestWritableRoots = origRoots })
+
+	// 1. Leaf symlink pointing outside guestRoot must be refused on WriteFiles and ReadFile.
+	leafLink := filepath.Join(guestRoot, "creds.json")
+	if err := os.Symlink(outsideFile, leafLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteFiles(ctx, []guestproto.FileWrite{{Path: leafLink, Data: []byte("pwned"), Mode: 0o600}}); err == nil {
+		t.Fatal("WriteFiles followed leaf symlink outside guest root")
+	}
+	if got, _ := os.ReadFile(outsideFile); string(got) != "root:x:0:0\n" {
+		t.Fatalf("outside target modified via leaf symlink: %q", got)
+	}
+	if _, err := c.ReadFile(ctx, leafLink, 1024); err == nil {
+		t.Fatal("ReadFile followed leaf symlink outside guest root")
+	}
+
+	// 2. Intermediate directory symlink pointing outside guestRoot must be refused on WriteFiles, ReadFile, and UnlinkPaths.
+	dirLink := filepath.Join(guestRoot, ".claude")
+	if err := os.Symlink(outsideDir, dirLink); err != nil {
+		t.Fatal(err)
+	}
+	escapedTarget := filepath.Join(dirLink, "passwd")
+	if err := c.WriteFiles(ctx, []guestproto.FileWrite{{Path: escapedTarget, Data: []byte("pwned"), Mode: 0o600}}); err == nil {
+		t.Fatal("WriteFiles followed intermediate directory symlink outside guest root")
+	}
+	if _, err := c.ReadFile(ctx, escapedTarget, 1024); err == nil {
+		t.Fatal("ReadFile followed intermediate directory symlink outside guest root")
+	}
+	if err := c.UnlinkPaths(ctx, []string{escapedTarget}, false); err == nil {
+		t.Fatal("UnlinkPaths followed intermediate directory symlink outside guest root")
+	}
+	if got, err := os.ReadFile(outsideFile); err != nil || string(got) != "root:x:0:0\n" {
+		t.Fatalf("outside file altered or deleted: err=%v got=%q", err, got)
+	}
+
+	// 3. Recursive unlink on the symlink itself removes the symlink without deleting outsideDir.
+	if err := c.UnlinkPaths(ctx, []string{dirLink}, true); err != nil {
+		t.Fatalf("UnlinkPaths on symlink itself failed: %v", err)
+	}
+	if _, err := os.Lstat(dirLink); !os.IsNotExist(err) {
+		t.Fatalf("expected symlink removed, lstat err=%v", err)
+	}
+	if _, err := os.Stat(outsideFile); err != nil {
+		t.Fatalf("outside target was deleted by recursive unlink of symlink: %v", err)
+	}
+
+	// 4. Relative symlink even inside guestRoot must be refused on WriteFiles (O_NOFOLLOW).
+	realInside := filepath.Join(guestRoot, "real.txt")
+	if err := os.WriteFile(realInside, []byte("orig"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	relLink := filepath.Join(guestRoot, "rel.txt")
+	if err := os.Symlink("real.txt", relLink); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.WriteFiles(ctx, []guestproto.FileWrite{{Path: relLink, Data: []byte("overwrite"), Mode: 0o644}}); err == nil {
+		t.Fatal("WriteFiles followed relative symlink inside guest root")
+	}
+	if got, _ := os.ReadFile(realInside); string(got) != "orig" {
+		t.Fatalf("real.txt modified via relative symlink: %q", got)
+	}
+}

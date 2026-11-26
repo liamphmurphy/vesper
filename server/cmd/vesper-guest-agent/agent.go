@@ -324,6 +324,30 @@ func writeRPCError(w io.Writer, id uint32, msg string) error {
 	return guestproto.WriteFrame(w, guestproto.Frame{Type: guestproto.FrameResp, ID: id, Data: b})
 }
 
+// guestWritableRoots are directory trees that untrusted turns (uid 1000) can
+// write to. Root-privileged file ops targeting paths inside these trees are
+// confined with os.Root + O_NOFOLLOW so guest-planted symlinks cannot redirect
+// writes, chowns, reads, or unlinks onto system files (e.g. /etc).
+var guestWritableRoots = []string{"/workspace", "/home/node", "/tmp"}
+
+func confinedRootFor(absPath string) (rootDir, rel string, ok bool) {
+	clean := filepath.Clean(absPath)
+	for _, r := range guestWritableRoots {
+		rc := filepath.Clean(r)
+		if clean == rc {
+			return rc, ".", true
+		}
+		prefix := rc + string(filepath.Separator)
+		if rc == string(filepath.Separator) {
+			prefix = rc
+		}
+		if strings.HasPrefix(clean, prefix) {
+			return rc, strings.TrimPrefix(clean, prefix), true
+		}
+	}
+	return "", "", false
+}
+
 func mkdirAllChown(dir string, mode os.FileMode, uid, gid int) error {
 	clean := filepath.Clean(dir)
 	var missing []string
@@ -344,10 +368,37 @@ func mkdirAllChown(dir string, mode os.FileMode, uid, gid int) error {
 			return err
 		}
 		if uid > 0 || gid > 0 {
-			_ = os.Chown(missing[i], uid, gid)
+			_ = os.Lchown(missing[i], uid, gid)
 		}
 	}
 	return nil
+}
+
+func writeGuestFileConfined(rootDir, rel string, fw guestproto.FileWrite, mode os.FileMode) error {
+	f, err := openFileNoFollowUnderRoot(rootDir, rel, mode, fw.UID, fw.GID)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		return err
+	}
+	if !fi.Mode().IsRegular() {
+		return fmt.Errorf("refusing to write non-regular file %q", fw.Path)
+	}
+	if _, err := f.Write(fw.Data); err != nil {
+		return err
+	}
+	if err := f.Chmod(mode); err != nil {
+		return err
+	}
+	if fw.UID > 0 || fw.GID > 0 {
+		if err := f.Chown(fw.UID, fw.GID); err != nil {
+			return err
+		}
+	}
+	return f.Close()
 }
 
 func writeGuestFiles(files []guestproto.FileWrite) error {
@@ -355,18 +406,33 @@ func writeGuestFiles(files []guestproto.FileWrite) error {
 		if fw.Path == "" || !filepath.IsAbs(fw.Path) {
 			return fmt.Errorf("invalid guest file path %q", fw.Path)
 		}
-		if err := mkdirAllChown(filepath.Dir(fw.Path), 0o755, fw.UID, fw.GID); err != nil {
-			return err
-		}
 		mode := os.FileMode(fw.Mode)
 		if mode == 0 {
 			mode = 0o644
 		}
-		if err := os.WriteFile(fw.Path, fw.Data, mode); err != nil {
+		if rootDir, rel, ok := confinedRootFor(fw.Path); ok {
+			if err := writeGuestFileConfined(rootDir, rel, fw, mode); err != nil {
+				return err
+			}
+			continue
+		}
+		if err := mkdirAllChown(filepath.Dir(fw.Path), 0o755, fw.UID, fw.GID); err != nil {
 			return err
 		}
+		f, err := os.OpenFile(fw.Path, os.O_WRONLY|os.O_CREATE|os.O_TRUNC|openNoFollowFlag, mode)
+		if err != nil {
+			return err
+		}
+		if _, err := f.Write(fw.Data); err != nil {
+			_ = f.Close()
+			return err
+		}
+		_ = f.Chmod(mode)
 		if fw.UID > 0 || fw.GID > 0 {
-			_ = os.Chown(fw.Path, fw.UID, fw.GID)
+			_ = f.Chown(fw.UID, fw.GID)
+		}
+		if err := f.Close(); err != nil {
+			return err
 		}
 	}
 	return nil
@@ -387,8 +453,56 @@ func statGuestFile(p string) guestproto.StatResp {
 	}
 }
 
+func openGuestFileForRead(p string) (*os.File, error) {
+	clean := filepath.Clean(p)
+	// ~/.nix-profile is legitimately a symlink chain into /nix/store.
+	if clean == "/home/node/.nix-profile/manifest.json" {
+		real, err := filepath.EvalSymlinks(clean)
+		if err != nil {
+			return nil, err
+		}
+		for _, allowedRoot := range []string{"/home/node", "/nix/store"} {
+			prefix := allowedRoot + string(filepath.Separator)
+			if strings.HasPrefix(real, prefix) {
+				root, err := os.OpenRoot(allowedRoot)
+				if err != nil {
+					return nil, err
+				}
+				defer root.Close()
+				return root.Open(strings.TrimPrefix(real, prefix))
+			}
+		}
+		return nil, fmt.Errorf("refusing symlink target outside /home/node or /nix/store: %q", clean)
+	}
+	if rootDir, rel, ok := confinedRootFor(clean); ok {
+		if rel == "." || rel == "" {
+			return nil, fmt.Errorf("cannot read directory root %q", rootDir)
+		}
+		root, err := os.OpenRoot(rootDir)
+		if err != nil {
+			return nil, err
+		}
+		defer root.Close()
+		f, err := root.Open(rel)
+		if err != nil {
+			return nil, err
+		}
+		fi, err := f.Stat()
+		if err != nil {
+			_ = f.Close()
+			return nil, err
+		}
+		if !fi.Mode().IsRegular() {
+			_ = f.Close()
+			return nil, fmt.Errorf("refusing to read non-regular file %q", clean)
+		}
+		return f, nil
+	}
+	return os.Open(clean)
+}
+
 func (s *agentServer) handleReadFile(conn net.Conn, id uint32, in guestproto.ReadFileReq) {
-	f, err := os.Open(in.Path)
+	f, err := openGuestFileForRead(in.Path)
 	if err != nil {
 		_ = writeRPCError(conn, id, err.Error())
 		return
@@ -486,12 +600,34 @@ func unlinkGuestPaths(paths []string, recursive bool) error {
 			continue
 		}
 		var err error
-		if recursive {
-			err = os.RemoveAll(p)
+		if rootDir, rel, ok := confinedRootFor(p); ok {
+			if rel == "." || rel == "" {
+				continue
+			}
+			root, oerr := os.OpenRoot(rootDir)
+			if oerr != nil {
+				if !errors.Is(oerr, os.ErrNotExist) && firstErr == nil {
+					firstErr = oerr
+				}
+				continue
+			}
+			if recursive {
+				err = root.RemoveAll(rel)
+			} else {
+				err = root.Remove(rel)
+				if errors.Is(err, os.ErrNotExist) {
+					err = nil
+				}
+			}
+			_ = root.Close()
 		} else {
-			err = os.Remove(p)
-			if errors.Is(err, os.ErrNotExist) {
-				err = nil
+			if recursive {
+				err = os.RemoveAll(p)
+			} else {
+				err = os.Remove(p)
+				if errors.Is(err, os.ErrNotExist) {
+					err = nil
+				}
 			}
 		}
 		if err != nil && firstErr == nil {
