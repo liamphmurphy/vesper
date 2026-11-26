@@ -425,3 +425,140 @@ func TestEgressAllowPublicGate(t *testing.T) {
 		t.Fatalf("expected public HTTP after revocation to fail, got %q", got)
 	}
 }
+
+func TestEgressRestrictsPublicPortsAndValidatesHTTPHost(t *testing.T) {
+	var upstreamHits int
+	up := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamHits++
+		_, _ = io.WriteString(w, "ok:"+r.Host)
+	}))
+	defer up.Close()
+
+	eg := NewEgress(EgressConfig{
+		TestUpstreams: map[string]string{
+			"allowed.example": strings.TrimPrefix(up.URL, "http://"),
+		},
+	})
+	defer eg.Close()
+
+	resp, err := eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, "allowed.example", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, ips := parseDNSResponse(t, resp)
+	synthIP := net.IPv4(ips[0][0], ips[0][1], ips[0][2], ips[0][3])
+
+	// 1. Disallowed public ports (e.g., 22, 8443) are closed immediately before dialing upstream.
+	for _, port := range []uint16{22, 25, 8443} {
+		c, s := net.Pipe()
+		go eg.ServeTCPConn(s)
+		_ = guestproto.WriteEgressTCPHeader(c, synthIP, port)
+		_ = c.SetReadDeadline(time.Now().Add(500 * time.Millisecond))
+		buf := make([]byte, 16)
+		n, rerr := c.Read(buf)
+		c.Close()
+		if rerr == nil || n != 0 {
+			t.Fatalf("port %d should be refused, got n=%d err=%v", port, n, rerr)
+		}
+	}
+
+	sendPort80 := func(payload string) string {
+		c, s := net.Pipe()
+		go eg.ServeTCPConn(s)
+		defer c.Close()
+		if err := guestproto.WriteEgressTCPHeader(c, synthIP, 80); err != nil {
+			return ""
+		}
+		if _, err := io.WriteString(c, payload); err != nil {
+			return ""
+		}
+		_ = c.SetReadDeadline(time.Now().Add(200 * time.Millisecond))
+		b, _ := io.ReadAll(c)
+		return string(b)
+	}
+
+	// 2. Port 80 with mismatched Host, duplicate Host, wrong port, or raw non-HTTP is rejected.
+	for name, payload := range map[string]string{
+		"mismatched host": "GET / HTTP/1.1\r\nHost: evil.example\r\nConnection: close\r\n\r\n",
+		"duplicate host":  "GET / HTTP/1.1\r\nHost: allowed.example\r\nHost: evil.example\r\nConnection: close\r\n\r\n",
+		"wrong host port": "GET / HTTP/1.1\r\nHost: allowed.example:8080\r\nConnection: close\r\n\r\n",
+		"raw tunnel":      "SSH-2.0-OpenSSH_9.0\r\n\r\n",
+	} {
+		out := sendPort80(payload)
+		if strings.Contains(out, "ok:") {
+			t.Errorf("%s reached upstream: %q", name, out)
+		}
+	}
+	if upstreamHits != 0 {
+		t.Fatalf("blocked port/Host probes reached upstream %d times", upstreamHits)
+	}
+
+	// 3. Port 80 with matching Host (bare or :80) succeeds.
+	out := sendPort80("GET / HTTP/1.1\r\nHost: allowed.example:80\r\nConnection: close\r\n\r\n")
+	if !strings.Contains(out, "ok:allowed.example:80") {
+		t.Fatalf("valid port-80 request failed: out=%q", out)
+	}
+}
+
+func TestEgressDNSRateLimitAndSyntheticTableNoUnexpiredEviction(t *testing.T) {
+	now := time.Date(2026, 11, 26, 12, 0, 0, 0, time.UTC)
+	eg := NewEgress(EgressConfig{
+		DNSRatePerSec: 1,
+		DNSBurst:      2,
+		Resolver: func(_ context.Context, host string) ([]net.IP, error) {
+			return []net.IP{net.IPv4(1, 1, 1, 1)}, nil
+		},
+	})
+	defer eg.Close()
+	eg.table.now = func() time.Time { return now }
+
+	// First two distinct hostnames succeed within burst=2.
+	for _, host := range []string{"a.example", "b.example"} {
+		resp, err := eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, host, dnsmessage.TypeA))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if hdr, ips := parseDNSResponse(t, resp); hdr.RCode != dnsmessage.RCodeSuccess || len(ips) != 1 {
+			t.Fatalf("%s: got rcode=%v ips=%v, want success", host, hdr.RCode, ips)
+		}
+	}
+	// Cached lookup still succeeds even with 0 tokens left.
+	resp, err := eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, "a.example", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr, ips := parseDNSResponse(t, resp); hdr.RCode != dnsmessage.RCodeSuccess || len(ips) != 1 {
+		t.Fatalf("cached lookup should bypass rate limiter, got rcode=%v ips=%v", hdr.RCode, ips)
+	}
+	// Third distinct hostname in same instant is rate-limited (REFUSED).
+	resp, err = eg.HandleDNSPacket(context.Background(), makeDNSQuery(t, "c.example", dnsmessage.TypeA))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hdr, ips := parseDNSResponse(t, resp); hdr.RCode != dnsmessage.RCodeRefused || len(ips) != 0 {
+		t.Fatalf("expected REFUSED when DNS rate limit exhausted, got rcode=%v ips=%v", hdr.RCode, ips)
+	}
+
+	// SyntheticTable must refuse to evict unexpired entries when full, and reuse once expired.
+	tbl := NewSyntheticTable()
+	tbl.now = func() time.Time { return now }
+	tbl.maxOffset = defaultMinSynthOffset + 1 // 2 slots total: .16 and .17
+	ip1, ok := tbl.Allocate("one.example", []net.IP{net.IPv4(1, 1, 1, 1)})
+	if !ok {
+		t.Fatal("first allocate failed")
+	}
+	if _, ok := tbl.Allocate("two.example", []net.IP{net.IPv4(1, 1, 1, 2)}); !ok {
+		t.Fatal("second allocate failed")
+	}
+	if _, ok := tbl.Allocate("three.example", []net.IP{net.IPv4(1, 1, 1, 3)}); ok {
+		t.Fatal("expected Allocate to fail rather than evict unexpired entry")
+	}
+	if ent, ok := tbl.LookupIP(ip1); !ok || ent.Hostname != "one.example" {
+		t.Fatalf("unexpired slot was clobbered: ok=%v ent=%+v", ok, ent)
+	}
+	// Advance past TTL: slot becomes reusable.
+	now = now.Add(tbl.ttl + time.Second)
+	if _, ok := tbl.Allocate("three.example", []net.IP{net.IPv4(1, 1, 1, 3)}); !ok {
+		t.Fatal("expected expired slot to be reclaimed")
+	}
+}
