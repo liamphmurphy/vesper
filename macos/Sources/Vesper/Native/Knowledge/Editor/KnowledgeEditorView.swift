@@ -115,6 +115,7 @@ struct KnowledgeEditorView: View {
         let p = theme.palette
         VStack(spacing: 0) {
             editorToolbar
+                .zIndex(20)
             Divider().overlay(p.border)
             if showFindBar {
                 KnowledgeEditorFindBar(
@@ -219,35 +220,35 @@ struct KnowledgeEditorView: View {
 
     private var editorToolbar: some View {
         let p = theme.palette
-        return HStack(spacing: 6) {
+        return HStack(spacing: 4) {
             Group {
-                Button { performUndo() } label: { Image(systemName: "arrow.uturn.backward").font(.system(size: 12)).frame(width: 22, height: 22) }
+                Button { performUndo() } label: { Image(systemName: "arrow.uturn.backward").font(.system(size: 12)).frame(width: 24, height: 24) }
                     .buttonStyle(.borderless)
                     .disabled(!document.canUndo)
                     .keyboardShortcut("z", modifiers: .command)
-                    .help("Undo (\u{2318}Z)")
+                    .knowledgeToolbarTooltip("Undo", hint: "\u{2318}Z", alignment: .bottomLeading)
 
-                Button { performRedo() } label: { Image(systemName: "arrow.uturn.forward").font(.system(size: 12)).frame(width: 22, height: 22) }
+                Button { performRedo() } label: { Image(systemName: "arrow.uturn.forward").font(.system(size: 12)).frame(width: 24, height: 24) }
                     .buttonStyle(.borderless)
                     .disabled(!document.canRedo)
                     .keyboardShortcut("z", modifiers: [.command, .shift])
-                    .help("Redo (\u{21E7}\u{2318}Z)")
+                    .knowledgeToolbarTooltip("Redo", hint: "\u{21E7}\u{2318}Z", alignment: .bottomLeading)
 
-                Divider().frame(height: 14).overlay(p.border)
+                Divider().frame(height: 14).overlay(p.border).padding(.horizontal, 2)
 
-                fmtTextBtn("H1", help: "Title") { toggleLinePrefix("# ") }
-                fmtTextBtn("H2", help: "Heading") { toggleLinePrefix("## ") }
-                fmtTextBtn("H3", help: "Subheading") { toggleLinePrefix("### ") }
+                fmtTextBtn("H1", title: "Heading 1", hint: "#") { toggleLinePrefix("# ") }
+                fmtTextBtn("H2", title: "Heading 2", hint: "##") { toggleLinePrefix("## ") }
+                fmtTextBtn("H3", title: "Heading 3", hint: "###") { toggleLinePrefix("### ") }
 
-                Divider().frame(height: 14).overlay(p.border)
+                Divider().frame(height: 14).overlay(p.border).padding(.horizontal, 2)
 
-                fmtTextBtn("B", bold: true, help: "Bold (\u{2318}B)") { wrapSelection("**", "**") }
+                fmtTextBtn("B", bold: true, title: "Bold", hint: "\u{2318}B") { wrapSelection("**", "**") }
                     .keyboardShortcut("b", modifiers: .command)
-                fmtTextBtn("I", italic: true, help: "Italic (\u{2318}I)") { wrapSelection("*", "*") }
+                fmtTextBtn("I", italic: true, title: "Italic", hint: "\u{2318}I") { wrapSelection("*", "*") }
                     .keyboardShortcut("i", modifiers: .command)
-                fmtTextBtn("S", strike: true, help: "Strikethrough (\u{21E7}\u{2318}X)") { wrapSelection("~~", "~~") }
+                fmtTextBtn("S", strike: true, title: "Strikethrough", hint: "\u{21E7}\u{2318}X") { wrapSelection("~~", "~~") }
                     .keyboardShortcut("x", modifiers: [.command, .shift])
-                fmtIconBtn("chevron.left.forwardslash.chevron.right", help: "Inline code (\u{2318}E)") { wrapSelection("`", "`") }
+                fmtIconBtn("chevron.left.forwardslash.chevron.right", title: "Inline code", hint: "\u{2318}E") { wrapSelection("`", "`") }
                     .keyboardShortcut("e", modifiers: .command)
                 Button {
                     linkURLDraft = "https://"
@@ -255,11 +256,11 @@ struct KnowledgeEditorView: View {
                 } label: {
                     Image(systemName: "link")
                         .font(.system(size: 12))
-                        .frame(width: 22, height: 22)
+                        .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.borderless)
                 .keyboardShortcut("k", modifiers: .command)
-                .help("Insert link (\u{2318}K)")
+                .knowledgeToolbarTooltip("Insert link", hint: "\u{2318}K")
                 .popover(isPresented: $showLinkPopover) {
                     HStack(spacing: 6) {
                         TextField("https://\u{2026}", text: $linkURLDraft)
@@ -272,17 +273,17 @@ struct KnowledgeEditorView: View {
                     .padding(10)
                 }
 
-                Divider().frame(height: 14).overlay(p.border)
+                Divider().frame(height: 14).overlay(p.border).padding(.horizontal, 2)
 
-                fmtIconBtn("list.bullet", help: "Bulleted list") { toggleLinePrefix("- ") }
-                fmtIconBtn("list.number", help: "Numbered list") { toggleLinePrefix("1. ") }
-                fmtIconBtn("checklist", help: "Checklist") { toggleLinePrefix("- [ ] ") }
-                fmtIconBtn("text.quote", help: "Quote") { toggleLinePrefix("> ") }
-                fmtIconBtn("curlybraces", help: "Code block") { insertBlock("\n```\n\n```\n") }
-                fmtIconBtn("tablecells", help: "Insert table") {
+                fmtIconBtn("list.bullet", title: "Bulleted list", hint: "-") { toggleLinePrefix("- ") }
+                fmtIconBtn("list.number", title: "Numbered list", hint: "1.") { toggleLinePrefix("1. ") }
+                fmtIconBtn("checklist", title: "Checklist", hint: "- [ ]") { toggleLinePrefix("- [ ] ") }
+                fmtIconBtn("text.quote", title: "Quote", hint: ">") { toggleLinePrefix("> ") }
+                fmtIconBtn("curlybraces", title: "Code block", hint: "```") { insertBlock("\n```\n\n```\n") }
+                fmtIconBtn("tablecells", title: "Insert table") {
                     insertBlock("\n| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |\n")
                 }
-                fmtIconBtn("minus", help: "Divider") { insertBlock("\n---\n") }
+                fmtIconBtn("minus", title: "Divider", hint: "---") { insertBlock("\n---\n") }
             }
 
             Spacer(minLength: 8)
@@ -297,7 +298,7 @@ struct KnowledgeEditorView: View {
                 }
                 .buttonStyle(.vesper(.outline))
                 .controlSize(.small)
-                .help("Move this persona-created page into your personal Knowledge")
+                .knowledgeToolbarTooltip("Move to Personal", hint: "Yours", alignment: .bottomTrailing, highlightHover: false)
             }
 
             Menu {
@@ -310,12 +311,12 @@ struct KnowledgeEditorView: View {
             } label: {
                 Image(systemName: "square.and.arrow.up")
                     .font(.system(size: 12))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 24, height: 24)
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
             .fixedSize()
-            .help("Export or copy")
+            .knowledgeToolbarTooltip("Export or copy", alignment: .bottomTrailing)
 
             Button {
                 showFindBar.toggle()
@@ -323,30 +324,31 @@ struct KnowledgeEditorView: View {
             } label: {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 12))
-                    .frame(width: 22, height: 22)
+                    .frame(width: 24, height: 24)
             }
             .buttonStyle(.borderless)
             .keyboardShortcut("f", modifiers: .command)
-            .help("Find in Page (\u{2318}F)")
+            .knowledgeToolbarTooltip("Find in Page", hint: "\u{2318}F", alignment: .bottomTrailing)
 
             Button("Save") { Task { await saveNow() } }
                 .buttonStyle(.vesper(hasUnsavedChanges ? .primary : .outline))
                 .disabled(!hasUnsavedChanges || saveStatus == .saving)
                 .keyboardShortcut("s", modifiers: .command)
+                .knowledgeToolbarTooltip("Save changes", hint: "\u{2318}S", alignment: .bottomTrailing, highlightHover: false)
         }
         .padding(.horizontal, 12)
         .frame(height: 36)
         .background(p.surface)
     }
 
-    private func fmtIconBtn(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+    private func fmtIconBtn(_ symbol: String, title: String, hint: String? = nil, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
                 .font(.system(size: 12))
-                .frame(width: 22, height: 22)
+                .frame(width: 24, height: 24)
         }
         .buttonStyle(.borderless)
-        .help(help)
+        .knowledgeToolbarTooltip(title, hint: hint)
     }
 
     private func fmtTextBtn(
@@ -354,7 +356,8 @@ struct KnowledgeEditorView: View {
         bold: Bool = false,
         italic: Bool = false,
         strike: Bool = false,
-        help: String,
+        title: String,
+        hint: String? = nil,
         action: @escaping () -> Void
     ) -> some View {
         Button(action: action) {
@@ -362,10 +365,10 @@ struct KnowledgeEditorView: View {
                 .font(.system(size: 11, weight: bold ? .bold : .semibold))
                 .italic(italic)
                 .strikethrough(strike)
-                .frame(minWidth: 22, minHeight: 22)
+                .frame(minWidth: 24, minHeight: 24)
         }
         .buttonStyle(.borderless)
-        .help(help)
+        .knowledgeToolbarTooltip(title, hint: hint)
     }
 
     @ViewBuilder
@@ -932,5 +935,108 @@ struct KnowledgeEditorView: View {
                 ))
             }
         }
+    }
+}
+
+// MARK: - Toolbar Hover Tooltip
+
+private struct KnowledgeToolbarTooltipModifier: ViewModifier {
+    @Environment(\.vesperTheme) private var theme
+
+    let title: String
+    let hint: String?
+    let alignment: Alignment
+    let highlightHover: Bool
+
+    @State private var isHovered = false
+    @State private var showTooltip = false
+    @State private var hoverTask: Task<Void, Never>?
+
+    private var accessibilityHelpText: String {
+        if let hint, !hint.isEmpty {
+            return "\(title) (\(hint))"
+        }
+        return title
+    }
+
+    func body(content: Content) -> some View {
+        let p = theme.palette
+        content
+            .background(
+                RoundedRectangle(cornerRadius: 5)
+                    .fill(highlightHover && isHovered ? theme.swiftUIColor("surface-sunken", fallback: p.selected) : .clear)
+            )
+            .contentShape(Rectangle())
+            .help(accessibilityHelpText)
+            .accessibilityLabel(title)
+            .onHover { hovering in
+                isHovered = hovering
+                hoverTask?.cancel()
+                if hovering {
+                    hoverTask = Task { @MainActor in
+                        try? await Task.sleep(for: .milliseconds(220))
+                        guard !Task.isCancelled else { return }
+                        showTooltip = true
+                    }
+                } else {
+                    showTooltip = false
+                }
+            }
+            .onDisappear {
+                hoverTask?.cancel()
+                showTooltip = false
+            }
+            .overlay(alignment: alignment) {
+                if showTooltip {
+                    HStack(spacing: 6) {
+                        Text(title)
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(p.text)
+                        if let hint, !hint.isEmpty {
+                            Text(hint)
+                                .font(.system(size: 10, weight: .medium, design: .monospaced))
+                                .foregroundStyle(p.secondaryText)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 1)
+                                .background(
+                                    theme.swiftUIColor("surface-sunken", fallback: p.surface),
+                                    in: RoundedRectangle(cornerRadius: 4)
+                                )
+                        }
+                    }
+                    .fixedSize()
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(
+                        theme.swiftUIColor("surface-elevated", fallback: p.surface),
+                        in: RoundedRectangle(cornerRadius: 6)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 6)
+                            .stroke(p.border, lineWidth: 1)
+                    )
+                    .shadow(color: .black.opacity(0.18), radius: 6, y: 3)
+                    .offset(y: 30)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+                }
+            }
+            .zIndex(showTooltip ? 100 : 0)
+    }
+}
+
+private extension View {
+    func knowledgeToolbarTooltip(
+        _ title: String,
+        hint: String? = nil,
+        alignment: Alignment = .bottom,
+        highlightHover: Bool = true
+    ) -> some View {
+        modifier(KnowledgeToolbarTooltipModifier(
+            title: title,
+            hint: hint,
+            alignment: alignment,
+            highlightHover: highlightHover
+        ))
     }
 }
