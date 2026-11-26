@@ -212,6 +212,10 @@ struct KnowledgeMediaActionButtons: View {
     let contentType: String?
     var embedRef: String? = nil
     var extraPDFViewerAction: (() -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
+
+    @State private var isHoveringRemove = false
 
     var body: some View {
         let p = theme.palette
@@ -265,6 +269,24 @@ struct KnowledgeMediaActionButtons: View {
             .help("Open in Another App")
             .accessibilityLabel("Open in Another App")
 
+            if let onRemove {
+                Button(action: onRemove) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 11))
+                        .foregroundStyle(
+                            isHoveringRemove
+                                ? theme.swiftUIColor("pill-blocked-fg", fallback: .red)
+                                : p.secondaryText
+                        )
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.borderless)
+                .onHover { isHoveringRemove = $0 }
+                .help("Remove from Note")
+                .accessibilityLabel("Remove from Note")
+            }
+
             Menu {
                 Button("Open Fullscreen (Quick Look)") {
                     KnowledgeAttachmentActions.openFullscreen(
@@ -305,6 +327,19 @@ struct KnowledgeMediaActionButtons: View {
                         context: context
                     )
                 }
+                if onRemove != nil || onDeleteAttachment != nil {
+                    Divider()
+                    if let onRemove {
+                        Button("Remove from Note", role: .destructive) {
+                            onRemove()
+                        }
+                    }
+                    if let onDeleteAttachment {
+                        Button("Delete File Permanently\u{2026}", role: .destructive) {
+                            onDeleteAttachment()
+                        }
+                    }
+                }
             } label: {
                 Image(systemName: "ellipsis")
                     .font(.system(size: 11))
@@ -316,6 +351,52 @@ struct KnowledgeMediaActionButtons: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .help("More options")
+        }
+    }
+}
+
+private struct KnowledgeMediaContextMenuItems: View {
+    @Environment(NativeScreenContext.self) private var context
+
+    let url: String
+    let label: String
+    let contentType: String?
+    var resetImageSizeAction: (() -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
+
+    var body: some View {
+        Button("Open Fullscreen (Quick Look)") {
+            KnowledgeAttachmentActions.openFullscreen(url: url, title: label, contentType: contentType, context: context)
+        }
+        Button("Open in Another App") {
+            KnowledgeAttachmentActions.openInExternalApp(url: url, filename: label, contentType: contentType, context: context)
+        }
+        Button("Copy File") {
+            KnowledgeAttachmentActions.copyFile(url: url, filename: label, contentType: contentType, context: context)
+        }
+        if let resetImageSizeAction {
+            Divider()
+            Button("Reset Image Size") {
+                resetImageSizeAction()
+            }
+        }
+        Divider()
+        Button("Download\u{2026}") {
+            KnowledgeAttachmentActions.saveCopy(url: url, filename: label, contentType: contentType, context: context)
+        }
+        if onRemove != nil || onDeleteAttachment != nil {
+            Divider()
+            if let onRemove {
+                Button("Remove from Note", role: .destructive) {
+                    onRemove()
+                }
+            }
+            if let onDeleteAttachment {
+                Button("Delete File Permanently\u{2026}", role: .destructive) {
+                    onDeleteAttachment()
+                }
+            }
         }
     }
 }
@@ -337,6 +418,8 @@ struct KnowledgeInlineImageCard: View {
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
     var onResizeWidth: ((Int?) -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
 
     @State private var isHovered = false
     @State private var dragStartWidth: CGFloat?
@@ -444,7 +527,9 @@ struct KnowledgeInlineImageCard: View {
                     url: url,
                     filename: label,
                     contentType: contentType,
-                    embedRef: embedRef
+                    embedRef: embedRef,
+                    onRemove: onRemove,
+                    onDeleteAttachment: onDeleteAttachment
                 )
             }
             .frame(maxWidth: captionMaxWidth, alignment: .leading)
@@ -453,25 +538,14 @@ struct KnowledgeInlineImageCard: View {
             isHovered = hovering
         }
         .contextMenu {
-            Button("Open Fullscreen (Quick Look)") {
-                KnowledgeAttachmentActions.openFullscreen(url: url, title: label, contentType: contentType, context: context)
-            }
-            Button("Open in Another App") {
-                KnowledgeAttachmentActions.openInExternalApp(url: url, filename: label, contentType: contentType, context: context)
-            }
-            Button("Copy File") {
-                KnowledgeAttachmentActions.copyFile(url: url, filename: label, contentType: contentType, context: context)
-            }
-            if explicitDimensions != nil, let onResizeWidth {
-                Divider()
-                Button("Reset Image Size") {
-                    onResizeWidth(nil)
-                }
-            }
-            Divider()
-            Button("Download\u{2026}") {
-                KnowledgeAttachmentActions.saveCopy(url: url, filename: label, contentType: contentType, context: context)
-            }
+            KnowledgeMediaContextMenuItems(
+                url: url,
+                label: label,
+                contentType: contentType,
+                resetImageSizeAction: (explicitDimensions != nil && onResizeWidth != nil) ? { onResizeWidth?(nil) } : nil,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
+            )
         }
     }
 
@@ -520,6 +594,8 @@ struct KnowledgeInlineVideoCard: View {
     var playerHeight: CGFloat = 300
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
 
     @State private var loader = KnowledgeMediaFileLoader()
     @State private var player: AVPlayer?
@@ -565,7 +641,9 @@ struct KnowledgeInlineVideoCard: View {
                     url: url,
                     filename: label,
                     contentType: contentType,
-                    embedRef: embedRef
+                    embedRef: embedRef,
+                    onRemove: onRemove,
+                    onDeleteAttachment: onDeleteAttachment
                 )
             }
             .padding(.horizontal, 10)
@@ -577,6 +655,15 @@ struct KnowledgeInlineVideoCard: View {
                     NSApp.keyWindow?.makeFirstResponder(nil)
                     onSelect()
                 }
+            }
+            .contextMenu {
+                KnowledgeMediaContextMenuItems(
+                    url: url,
+                    label: label,
+                    contentType: contentType,
+                    onRemove: onRemove,
+                    onDeleteAttachment: onDeleteAttachment
+                )
             }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
@@ -605,6 +692,8 @@ struct KnowledgeInlineAudioCard: View {
     let embedRef: String?
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
 
     @State private var loader = KnowledgeMediaFileLoader()
     @State private var player: AVPlayer?
@@ -632,7 +721,9 @@ struct KnowledgeInlineAudioCard: View {
                     url: url,
                     filename: label,
                     contentType: contentType,
-                    embedRef: embedRef
+                    embedRef: embedRef,
+                    onRemove: onRemove,
+                    onDeleteAttachment: onDeleteAttachment
                 )
             }
 
@@ -695,6 +786,15 @@ struct KnowledgeInlineAudioCard: View {
                 onSelect()
             }
         }
+        .contextMenu {
+            KnowledgeMediaContextMenuItems(
+                url: url,
+                label: label,
+                contentType: contentType,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
+            )
+        }
         .task(id: url) {
             await loader.load(url: url, filename: label, contentType: contentType, client: context.store.client)
             guard let local = loader.localURL, player == nil else { return }
@@ -756,6 +856,8 @@ struct KnowledgeInlinePDFCard: View {
     var viewerHeight: CGFloat = 420
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
 
     @State private var model = PDFViewerModel()
 
@@ -815,7 +917,9 @@ struct KnowledgeInlinePDFCard: View {
                             URLQueryItem(name: "title", value: label),
                         ])
                         context.navigate("/pdf?\(encoded)")
-                    }
+                    },
+                    onRemove: onRemove,
+                    onDeleteAttachment: onDeleteAttachment
                 )
             }
             .padding(.horizontal, 10)
@@ -827,6 +931,15 @@ struct KnowledgeInlinePDFCard: View {
                     NSApp.keyWindow?.makeFirstResponder(nil)
                     onSelect()
                 }
+            }
+            .contextMenu {
+                KnowledgeMediaContextMenuItems(
+                    url: url,
+                    label: label,
+                    contentType: contentType,
+                    onRemove: onRemove,
+                    onDeleteAttachment: onDeleteAttachment
+                )
             }
 
             Divider().overlay(p.border)
@@ -876,6 +989,8 @@ struct KnowledgeInlineFileCard: View {
     let embedRef: String?
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
 
     var body: some View {
         let p = theme.palette
@@ -899,7 +1014,9 @@ struct KnowledgeInlineFileCard: View {
                 url: url,
                 filename: label,
                 contentType: contentType,
-                embedRef: embedRef
+                embedRef: embedRef,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
             )
         }
         .padding(10)
@@ -914,6 +1031,15 @@ struct KnowledgeInlineFileCard: View {
                 NSApp.keyWindow?.makeFirstResponder(nil)
                 onSelect()
             }
+        }
+        .contextMenu {
+            KnowledgeMediaContextMenuItems(
+                url: url,
+                label: label,
+                contentType: contentType,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
+            )
         }
     }
 }

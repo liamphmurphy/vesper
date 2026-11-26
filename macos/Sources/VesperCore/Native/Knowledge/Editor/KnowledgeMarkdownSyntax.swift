@@ -912,6 +912,125 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return false
     }
 
+    /// Surgical UTF-16 edit removing a single inline embed placement from markdown prose.
+    public struct EmbedRemovalEdit: Sendable, Equatable {
+        public let replacementRange: NSRange
+        public let replacement: String
+        public let caretUTF16: Int
+        public let resultingText: String
+
+        public init(
+            replacementRange: NSRange,
+            replacement: String,
+            caretUTF16: Int,
+            resultingText: String
+        ) {
+            self.replacementRange = replacementRange
+            self.replacement = replacement
+            self.caretUTF16 = caretUTF16
+            self.resultingText = resultingText
+        }
+    }
+
+    /// Computes a surgical edit that removes `placement` from `markdown`.
+    /// - When `placement` is the sole content on its line, removes the entire line (collapsing one
+    ///   redundant blank line when sandwiched between blank lines, or consuming a preceding newline
+    ///   when removing a trailing line that has no line terminator).
+    /// - When prose or another embed shares the line, removes only `placement.tokenRange` and tidies
+    ///   up a single adjacent horizontal space so no double or dangling spaces remain.
+    public static func removingEmbed(
+        _ placement: KnowledgeInlineEmbedPlacement,
+        in markdown: String
+    ) -> EmbedRemovalEdit? {
+        let ns = markdown as NSString
+        let len = ns.length
+        let tokenRange = placement.tokenRange
+        let lineContentRange = placement.lineContentRange
+        let lineRange = placement.lineRange
+
+        let tokenEnd = tokenRange.location + tokenRange.length
+        let lineContentEnd = lineContentRange.location + lineContentRange.length
+        let lineEnd = lineRange.location + lineRange.length
+
+        guard tokenRange.location >= 0, tokenRange.length > 0, tokenEnd <= len,
+              lineContentRange.location >= 0, lineContentEnd <= len,
+              lineRange.location >= 0, lineEnd <= len,
+              tokenRange.location >= lineContentRange.location,
+              tokenEnd <= lineContentEnd else {
+            return nil
+        }
+
+        let prefix = ns.substring(with: NSRange(
+            location: lineContentRange.location,
+            length: tokenRange.location - lineContentRange.location
+        ))
+        let suffix = ns.substring(with: NSRange(
+            location: tokenEnd,
+            length: lineContentEnd - tokenEnd
+        ))
+        let prefixBlank = prefix.trimmingCharacters(in: .whitespaces).isEmpty
+        let suffixBlank = suffix.trimmingCharacters(in: .whitespaces).isEmpty
+
+        let removeStart: Int
+        let removeEnd: Int
+
+        if prefixBlank && suffixBlank {
+            var start = lineRange.location
+            var end = lineEnd
+            let lineHasNewline = end > lineContentEnd
+
+            if lineHasNewline {
+                let precededByBlankLine: Bool = {
+                    guard start >= 2, ns.character(at: start - 1) == 0x0A else { return false }
+                    if ns.character(at: start - 2) == 0x0A { return true }
+                    return start >= 3 && ns.character(at: start - 2) == 0x0D && ns.character(at: start - 3) == 0x0A
+                }()
+                let trailingBlankNewlineLen: Int = {
+                    if end < len && ns.character(at: end) == 0x0A { return 1 }
+                    if end + 1 < len && ns.character(at: end) == 0x0D && ns.character(at: end + 1) == 0x0A { return 2 }
+                    return 0
+                }()
+                if precededByBlankLine && trailingBlankNewlineLen > 0 {
+                    end += trailingBlankNewlineLen
+                }
+            } else if start > 0 && ns.character(at: start - 1) == 0x0A {
+                start -= 1
+                if start > 0 && ns.character(at: start - 1) == 0x0D {
+                    start -= 1
+                }
+            }
+
+            removeStart = start
+            removeEnd = end
+        } else {
+            var start = tokenRange.location
+            var end = tokenEnd
+            let isSpace: (unichar) -> Bool = { $0 == 0x20 || $0 == 0x09 }
+            let spaceBefore = start > lineContentRange.location && isSpace(ns.character(at: start - 1))
+            let spaceAfter = end < lineContentEnd && isSpace(ns.character(at: end))
+
+            if spaceBefore && spaceAfter {
+                end += 1
+            } else if spaceAfter && prefixBlank {
+                end += 1
+            } else if spaceBefore && suffixBlank {
+                start -= 1
+            }
+
+            removeStart = start
+            removeEnd = end
+        }
+
+        let range = NSRange(location: removeStart, length: removeEnd - removeStart)
+        let resulting = ns.replacingCharacters(in: range, with: "")
+        return EmbedRemovalEdit(
+            replacementRange: range,
+            replacement: "",
+            caretUTF16: removeStart,
+            resultingText: resulting
+        )
+    }
+
     /// Computes the aspect-fitted display size for an inline image.
     /// When `explicitDimensions` is `nil`, scales down to `maxWidth × maxHeight` without upscaling past `naturalSize`.
     /// When `explicitDimensions` is provided (from `![[img.png|400]]` or `![[img.png|400x300]]`), honors the requested

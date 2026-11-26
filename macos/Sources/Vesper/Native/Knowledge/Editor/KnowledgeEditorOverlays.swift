@@ -16,6 +16,10 @@ struct KnowledgeEmbedPreviewCard: View {
     var isSelected: Bool = false
     var onSelect: (() -> Void)? = nil
     var onResizeWidth: ((Int?) -> Void)? = nil
+    var onRemove: (() -> Void)? = nil
+    var onDeleteAttachment: (() -> Void)? = nil
+
+    @State private var isHoveringNoteRemove = false
 
     var body: some View {
         let p = theme.palette
@@ -35,7 +39,9 @@ struct KnowledgeEmbedPreviewCard: View {
                 explicitDimensions: target?.embedDimensions,
                 isSelected: isSelected,
                 onSelect: onSelect,
-                onResizeWidth: onResizeWidth
+                onResizeWidth: onResizeWidth,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
             )
         } else if embed.isVideoEmbed, let rawURL = embed.url, !rawURL.isEmpty {
             KnowledgeInlineVideoCard(
@@ -44,7 +50,9 @@ struct KnowledgeEmbedPreviewCard: View {
                 contentType: embed.contentType,
                 embedRef: target?.raw ?? embed.ref,
                 isSelected: isSelected,
-                onSelect: onSelect
+                onSelect: onSelect,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
             )
         } else if embed.isAudioEmbed, let rawURL = embed.url, !rawURL.isEmpty {
             KnowledgeInlineAudioCard(
@@ -53,7 +61,9 @@ struct KnowledgeEmbedPreviewCard: View {
                 contentType: embed.contentType,
                 embedRef: target?.raw ?? embed.ref,
                 isSelected: isSelected,
-                onSelect: onSelect
+                onSelect: onSelect,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
             )
         } else if embed.isPDFEmbed, let rawURL = embed.url, !rawURL.isEmpty {
             KnowledgeInlinePDFCard(
@@ -62,7 +72,9 @@ struct KnowledgeEmbedPreviewCard: View {
                 contentType: embed.contentType,
                 embedRef: target?.raw ?? embed.ref,
                 isSelected: isSelected,
-                onSelect: onSelect
+                onSelect: onSelect,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
             )
         } else if embed.isFileEmbed, let rawURL = embed.url, !rawURL.isEmpty {
             KnowledgeInlineFileCard(
@@ -71,13 +83,36 @@ struct KnowledgeEmbedPreviewCard: View {
                 contentType: embed.contentType,
                 embedRef: target?.raw ?? embed.ref,
                 isSelected: isSelected,
-                onSelect: onSelect
+                onSelect: onSelect,
+                onRemove: onRemove,
+                onDeleteAttachment: onDeleteAttachment
             )
         } else if let md = embed.markdown, !md.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
-                Text(label)
-                    .font(.system(size: theme.pointSize(.small), weight: .semibold))
-                    .foregroundStyle(p.text)
+                HStack(spacing: 6) {
+                    Text(label)
+                        .font(.system(size: theme.pointSize(.small), weight: .semibold))
+                        .foregroundStyle(p.text)
+                        .lineLimit(1)
+                    Spacer(minLength: 4)
+                    if let onRemove {
+                        Button(action: onRemove) {
+                            Image(systemName: "trash")
+                                .font(.system(size: 11))
+                                .foregroundStyle(
+                                    isHoveringNoteRemove
+                                        ? theme.swiftUIColor("pill-blocked-fg", fallback: .red)
+                                        : p.secondaryText
+                                )
+                                .frame(width: 22, height: 22)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.borderless)
+                        .onHover { isHoveringNoteRemove = $0 }
+                        .help("Remove from Note")
+                        .accessibilityLabel("Remove from Note")
+                    }
+                }
                 Text(md)
                     .vesperText(.small, theme)
                     .foregroundStyle(p.secondaryText)
@@ -86,7 +121,21 @@ struct KnowledgeEmbedPreviewCard: View {
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border, lineWidth: isSelected ? 2 : 1))
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let onSelect {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    onSelect()
+                }
+            }
+            .contextMenu {
+                if let onRemove {
+                    Button("Remove from Note", role: .destructive) {
+                        onRemove()
+                    }
+                }
+            }
         }
     }
 }
@@ -100,11 +149,15 @@ struct KnowledgeInlineEmbedGroupView: View {
     var selectedEmbedID: String? = nil
     var onSelectEmbed: ((KnowledgeInlineEmbedPlacement) -> Void)? = nil
     var onResizeImage: ((KnowledgeInlineEmbedPlacement, Int?) -> Void)? = nil
+    var onRemoveEmbed: ((KnowledgeInlineEmbedPlacement) -> Void)? = nil
+    var canDeleteAttachment: ((KnowledgeInlineEmbedPlacement) -> Bool)? = nil
+    var onDeleteAttachment: ((KnowledgeInlineEmbedPlacement) -> Void)? = nil
     let onSizeChange: (CGSize) -> Void
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
             ForEach(placements) { placement in
+                let allowDeleteFile = canDeleteAttachment?(placement) ?? false
                 KnowledgeEmbedPreviewCard(
                     embed: placement.embed,
                     target: placement.target,
@@ -112,7 +165,9 @@ struct KnowledgeInlineEmbedGroupView: View {
                     containerMaxWidth: maxWidth,
                     isSelected: selectedEmbedID == placement.id,
                     onSelect: onSelectEmbed.map { cb in { cb(placement) } },
-                    onResizeWidth: onResizeImage.map { cb in { width in cb(placement, width) } }
+                    onResizeWidth: onResizeImage.map { cb in { width in cb(placement, width) } },
+                    onRemove: onRemoveEmbed.map { cb in { cb(placement) } },
+                    onDeleteAttachment: allowDeleteFile ? onDeleteAttachment.map { cb in { cb(placement) } } : nil
                 )
             }
         }
