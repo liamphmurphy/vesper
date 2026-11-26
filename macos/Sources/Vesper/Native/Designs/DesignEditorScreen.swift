@@ -1607,6 +1607,8 @@ struct DesignPresentScreen: View {
         }
         .onAppear {
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
+                // The monitor is app-wide; if it outlives this screen, stop swallowing keys.
+                guard context.isAttached else { return ev }
                 if ev.keyCode == 53 { // Escape
                     if showHelp { showHelp = false } else { context.navigate("/apps/designs/\(canvasId)") }
                     return nil

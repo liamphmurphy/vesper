@@ -1506,7 +1506,9 @@ struct SlidesPresentScreen: View {
         .onAppear {
             if let m = keyMonitor { NSEvent.removeMonitor(m) }
             keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { ev in
-                handleKey(ev, deck: deck, shown: shown, clamped: clamped)
+                // The monitor is app-wide; if it outlives this screen, stop swallowing keys.
+                guard context.isAttached else { return ev }
+                return handleKey(ev, deck: deck, shown: shown, clamped: clamped)
             }
         }
         .onDisappear {
