@@ -20,8 +20,16 @@ func acceptVSock(fd int) (int, unix.Sockaddr, error) {
 	return unix.Accept4(fd, unix.SOCK_CLOEXEC|unix.SOCK_NONBLOCK)
 }
 
+// listenVSock serves only the host: turns run in this guest as uid 1000 and
+// must not reach the root-run agent (RPC, Docker, playground) through vsock
+// loopback or the guest's own CID.
 func listenVSock(port uint32) (net.Listener, error) {
-	return bindVSock(port)
+	ln, err := bindVSock(port)
+	if err != nil {
+		return nil, err
+	}
+	ln.hostOnly = true
+	return ln, nil
 }
 
 func notifyHostReady(log *slog.Logger) {
