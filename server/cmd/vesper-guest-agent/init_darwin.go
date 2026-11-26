@@ -44,7 +44,7 @@ func addPidToCgroup(string, int) error { return nil }
 
 func killAndCheckOOM(string) bool { return false }
 
-func setupChildSysProcAttr(cmd *exec.Cmd, uid, gid int, useTTY bool) {
+func setupChildSysProcAttr(cmd *exec.Cmd, uid, gid int, useTTY bool, _ string) (func(), bool) {
 	attr := &syscall.SysProcAttr{
 		Setsid:  useTTY,
 		Setpgid: !useTTY,
@@ -53,6 +53,7 @@ func setupChildSysProcAttr(cmd *exec.Cmd, uid, gid int, useTTY bool) {
 		attr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
 	}
 	cmd.SysProcAttr = attr
+	return func() {}, false
 }
 
 func signalProcessGroup(cmd *exec.Cmd, sig uint32) error {

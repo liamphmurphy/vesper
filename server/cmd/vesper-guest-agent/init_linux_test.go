@@ -9,7 +9,7 @@ import (
 )
 
 func TestDiskMountFlagsBlockSetuidOnTurnWritableDisks(t *testing.T) {
-	for _, target := range []string{"/workspace", "/home/node"} {
+	for _, target := range []string{"/workspace", "/home/node", "/nix"} {
 		if got := diskMountFlags(target); got&(unix.MS_NOSUID|unix.MS_NODEV) != unix.MS_NOSUID|unix.MS_NODEV {
 			t.Errorf("diskMountFlags(%q) = %#x; want nosuid and nodev", target, got)
 		}

@@ -677,15 +677,18 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 	var ptyMaster *os.File
 	var stdinW io.WriteCloser
 	var stdoutR, stderrR io.ReadCloser
+	var cgroupAttached bool
 
 	if in.TTY {
-		setupChildSysProcAttr(cmd, in.UID, in.GID, true)
+		cgCleanup, attached := setupChildSysProcAttr(cmd, in.UID, in.GID, true, cgPath)
+		cgroupAttached = attached
 		s.execs.mu.Lock()
 		ptyMaster, err = startPTY(cmd, in.Rows, in.Cols)
 		if err == nil && cmd.Process != nil {
 			s.execs.tracked[cmd.Process.Pid] = struct{}{}
 		}
 		s.execs.mu.Unlock()
+		cgCleanup()
 		if err != nil {
 			_ = writeRPCError(conn, id, err.Error())
 			_ = killAndCheckOOM(cgPath)
@@ -694,16 +697,20 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 		stdinW = ptyMaster
 		stdoutR = ptyMaster
 	} else {
-		setupChildSysProcAttr(cmd, in.UID, in.GID, false)
+		cgCleanup, attached := setupChildSysProcAttr(cmd, in.UID, in.GID, false, cgPath)
+		cgroupAttached = attached
 		if stdinW, err = cmd.StdinPipe(); err != nil {
+			cgCleanup()
 			_ = writeRPCError(conn, id, err.Error())
 			return
 		}
 		if stdoutR, err = cmd.StdoutPipe(); err != nil {
+			cgCleanup()
 			_ = writeRPCError(conn, id, err.Error())
 			return
 		}
 		if stderrR, err = cmd.StderrPipe(); err != nil {
+			cgCleanup()
 			_ = writeRPCError(conn, id, err.Error())
 			return
 		}
@@ -714,6 +721,7 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 			s.execs.tracked[cmd.Process.Pid] = struct{}{}
 		}
 		s.execs.mu.Unlock()
+		cgCleanup()
 		if err != nil {
 			_ = writeRPCError(conn, id, err.Error())
 			_ = killAndCheckOOM(cgPath)
@@ -721,7 +729,7 @@ func (s *agentServer) handleExec(ctx context.Context, conn net.Conn, id uint32, 
 		}
 	}
 
-	if cmd.Process != nil && cgPath != "" {
+	if cmd.Process != nil && cgPath != "" && !cgroupAttached {
 		if err := addPidToCgroup(cgPath, cmd.Process.Pid); err != nil {
 			s.log.Warn("attach pid to cgroup", "pid", cmd.Process.Pid, "err", err)
 		}

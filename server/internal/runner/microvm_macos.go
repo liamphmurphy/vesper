@@ -540,7 +540,7 @@ func cloneOnce(src, dst string) error {
 // looks that user's ids up in the guest. It runs as root: the only root
 // command, with fixed arguments.
 func (g *MacOSGuests) prepareWorkspace(ctx context.Context, vm microvm.VM) (int, int, error) {
-	script := `set -e; mkdir -p "$1"; chown "$2" "$1"; id -u "$2"; id -g "$2"`
+	script := `set -e; if [ -L "$1" ]; then echo "workspace path is a symlink" >&2; exit 1; fi; mkdir -p "$1"; chown -h "$2" "$1"; id -u "$2"; id -g "$2"`
 	out, errOut, code, err := runGuest(ctx, vm, guestproto.ExecReq{
 		Argv: []string{"/bin/sh", "-c", script, "sh", g.guestWorkspace(), g.user()},
 		Env:  map[string]string{"PATH": macGuestPath},

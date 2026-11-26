@@ -53,7 +53,9 @@ func addPidToCgroup(string, int) error { return nil }
 
 func killAndCheckOOM(string) bool { return false }
 
-func setupChildSysProcAttr(*exec.Cmd, int, int, bool) {}
+func setupChildSysProcAttr(*exec.Cmd, int, int, bool, string) (func(), bool) {
+	return func() {}, false
+}
 
 func startPTY(*exec.Cmd, uint16, uint16) (*os.File, error) {
 	return nil, errors.New("PTY is only implemented on Linux guest agent")

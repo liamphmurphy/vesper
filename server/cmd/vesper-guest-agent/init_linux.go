@@ -204,12 +204,12 @@ func enableControllers(cgDir string) {
 const workspaceMountFlags = unix.MS_NOSUID | unix.MS_NODEV
 
 // diskMountFlags returns the mount flags for an attached ext4 disk. /home/node
-// outlives every turn of the run, so a setuid binary or device node one turn
-// gets onto it (for instance through guest root) must not work in the next.
+// and /nix outlive turns, so a setuid binary or device node placed onto them
+// must not elevate privileges in later turns.
 func diskMountFlags(target string) uintptr {
 	flags := uintptr(unix.MS_NOATIME)
 	switch target {
-	case "/workspace", "/home/node":
+	case "/workspace", "/home/node", "/nix":
 		flags |= workspaceMountFlags
 	}
 	return flags
@@ -319,7 +319,7 @@ func mountPersistentNix(dev string) error {
 	if err := os.MkdirAll(mnt, 0o755); err != nil {
 		return err
 	}
-	if err := unix.Mount(dev, mnt, "ext4", unix.MS_NOATIME, ""); err != nil {
+	if err := unix.Mount(dev, mnt, "ext4", diskMountFlags("/nix"), ""); err != nil {
 		return fmt.Errorf("mount %s (%s) on %s: %w", dev, nixDiskLabel, mnt, err)
 	}
 	store := filepath.Join(mnt, "nix")
@@ -358,7 +358,7 @@ func mountROCacheWithOverlay(dev, target, label string) {
 	if err := unix.Mount(dev, lower, "erofs", unix.MS_RDONLY, ""); err != nil {
 		return
 	}
-	_ = unix.Mount("overlay", target, "overlay", 0, fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lower, upper, work))
+	_ = unix.Mount("overlay", target, "overlay", workspaceMountFlags, fmt.Sprintf("lowerdir=%s,upperdir=%s,workdir=%s", lower, upper, work))
 }
 
 func detectBlockVolume(dev string) (fsType, label string) {
@@ -477,7 +477,7 @@ func killAndCheckOOM(dir string) bool {
 	return oom
 }
 
-func setupChildSysProcAttr(cmd *exec.Cmd, uid, gid int, useTTY bool) {
+func setupChildSysProcAttr(cmd *exec.Cmd, uid, gid int, useTTY bool, cgPath string) (cleanup func(), attachedViaFD bool) {
 	attr := &syscall.SysProcAttr{
 		Setsid:  useTTY,
 		Setpgid: !useTTY,
@@ -485,7 +485,17 @@ func setupChildSysProcAttr(cmd *exec.Cmd, uid, gid int, useTTY bool) {
 	if uid > 0 || gid > 0 {
 		attr.Credential = &syscall.Credential{Uid: uint32(uid), Gid: uint32(gid)}
 	}
+	cleanup = func() {}
+	if cgPath != "" {
+		if cgDir, err := os.Open(cgPath); err == nil {
+			attr.UseCgroupFD = true
+			attr.CgroupFD = int(cgDir.Fd())
+			attachedViaFD = true
+			cleanup = func() { _ = cgDir.Close() }
+		}
+	}
 	cmd.SysProcAttr = attr
+	return cleanup, attachedViaFD
 }
 
 func signalProcessGroup(cmd *exec.Cmd, sig uint32) error {
