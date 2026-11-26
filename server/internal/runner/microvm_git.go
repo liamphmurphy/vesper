@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -51,7 +52,14 @@ func newGitUploadProxy(githubBaseURL, token string) http.Handler {
 		Rewrite: func(pr *httputil.ProxyRequest) {
 			pr.SetURL(target)
 			pr.Out.Host = target.Host
-			pr.Out.URL.Path = strings.TrimPrefix(pr.In.URL.Path, "/github")
+			cleanPath := strings.TrimPrefix(path.Clean(pr.In.URL.Path), "/github")
+			pr.Out.URL.Path = cleanPath
+			pr.Out.URL.RawPath = ""
+			if strings.HasSuffix(cleanPath, "/info/refs") {
+				pr.Out.URL.RawQuery = "service=git-upload-pack"
+			} else {
+				pr.Out.URL.RawQuery = ""
+			}
 			if token != "" {
 				pr.Out.Header.Set("Authorization", authHeader)
 			}
@@ -59,16 +67,25 @@ func newGitUploadProxy(githubBaseURL, token string) http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		p := r.URL.Path
-		if !strings.HasPrefix(p, "/github/") || strings.Contains(p, "..") {
+		rawLower := strings.ToLower(r.URL.RawPath)
+		if !strings.HasPrefix(p, "/github/") || strings.Contains(p, "..") || path.Clean(p) != p || strings.Contains(rawLower, "%2e") || strings.Contains(rawLower, "%2f") {
 			http.Error(w, "vesper git proxy: forbidden path", http.StatusForbidden)
 			return
 		}
-		if strings.HasSuffix(p, "/git-receive-pack") || r.URL.Query().Get("service") == "git-receive-pack" {
+		q := r.URL.Query()
+		services := q["service"]
+		for _, svc := range services {
+			if svc == "git-receive-pack" {
+				http.Error(w, "vesper git proxy: push disabled from microVM (host-side push only)", http.StatusForbidden)
+				return
+			}
+		}
+		if strings.HasSuffix(p, "/git-receive-pack") {
 			http.Error(w, "vesper git proxy: push disabled from microVM (host-side push only)", http.StatusForbidden)
 			return
 		}
 		if strings.HasSuffix(p, "/info/refs") {
-			if r.Method != http.MethodGet || r.URL.Query().Get("service") != "git-upload-pack" {
+			if r.Method != http.MethodGet || len(services) != 1 || services[0] != "git-upload-pack" {
 				http.Error(w, "vesper git proxy: only git-upload-pack allowed", http.StatusForbidden)
 				return
 			}
@@ -76,6 +93,10 @@ func newGitUploadProxy(githubBaseURL, token string) http.Handler {
 			return
 		}
 		if strings.HasSuffix(p, "/git-upload-pack") && r.Method == http.MethodPost {
+			if len(services) != 0 {
+				http.Error(w, "vesper git proxy: unexpected service query parameter", http.StatusForbidden)
+				return
+			}
 			rp.ServeHTTP(w, r)
 			return
 		}
