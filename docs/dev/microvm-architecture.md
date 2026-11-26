@@ -292,7 +292,9 @@ At boot (~50–100 ms in Go PID 1), the agent:
    `iptables` rules, starts the non-loopback DNS stub and vsock TCP forwarder,
    and launches `dockerd` backed by its own scratch disk (`/var/lib/docker`).
 3. Listens on `AF_VSOCK` (`VMADDR_CID_ANY`) for host RPCs and reaps orphaned
-   child processes as PID 1.
+   child processes as PID 1. Every listener drops connections from any CID
+   but the host's (2), and the kernel has no vsock loopback
+   (`CONFIG_VSOCKETS_LOOPBACK=n`), so a turn can't reach the root-run agent.
 
 Vsock RPC surface covers:
 - **Process execution (`Start`):** command argv, env, relative working dir,
@@ -395,8 +397,12 @@ are part of the v1 design:
    the guest agent binds its DNS resolver on **`10.255.255.1:53`**, sets both
    `/etc/resolv.conf` and `/etc/docker/daemon.json` (`"dns": ["10.255.255.1"]`),
    and redirects any stray `:53` UDP/TCP packets in `OUTPUT` + `PREROUTING` to
-   `10.255.255.1:53`. Guest IPv6 is disabled (`ipv6.disable=1`) and `AAAA`
-   queries return `NODATA` in v1 so all `SO_ORIGINAL_DST` lookups are IPv4.
+   `10.255.255.1:53`. `AAAA` queries return `NODATA` in v1 so all
+   `SO_ORIGINAL_DST` lookups are IPv4. Guest IPv6 stays on so `::1` keeps
+   working for tools that bind `localhost`, but it fails closed: interfaces
+   carry only link-local addresses and there is no IPv6 route out, so a v6
+   connect gets `ENETUNREACH`; v4-mapped addresses (`::ffff:a.b.c.d`) are IPv4
+   on the wire and take the same redirect to host `Egress`.
 3. **Synthetic DNS (`198.18.0.0/15`) + TLS SNI verification:** If the guest
    received real CDN IPs, `SO_ORIGINAL_DST` could not tell an allowed domain
    from another domain behind the same Cloudflare/Fastly/CloudFront IP. Instead,
