@@ -373,7 +373,7 @@ struct KnowledgeQuickSwitcherView: View {
     private func installKeyMonitor() {
         removeKeyMonitor()
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.window === context.window()?.window else { return event }
+            guard context.isActiveTab, event.window === context.window()?.window else { return event }
             let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
             let chars = event.charactersIgnoringModifiers?.lowercased() ?? ""
 

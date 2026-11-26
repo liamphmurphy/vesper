@@ -40,21 +40,21 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             self?.navItem?.subitems.first?.isEnabled = back
             self?.navItem?.subitems.last?.isEnabled = forward
         }
-        track({ [weak owner] in owner?.state.toolbarItems ?? [] }) { [weak self] items in
-            guard let self, items != self.shownItems else { return }
+        track({ [weak owner] () -> ([ToolbarItem], [MenuItem]?) in
+            let items = owner?.state.toolbarItems ?? []
+            let rawMenu = owner?.state.titleMenu
+            let menu = (rawMenu?.isEmpty ?? true) ? nil : rawMenu
+            return (items, menu)
+        }) { [weak self] items, menu in
+            guard let self, items != self.shownItems || menu != self.shownTitleMenu else { return }
             self.shownItems = items
+            self.shownTitleMenu = menu
             self.rebuildPageItems()
         }
         track({ [weak owner] in (owner?.content.displayTitle ?? "", owner?.state.subtitle ?? "") }) { [weak self] title, subtitle in
             self?.titleField?.stringValue = title
             self?.subtitleField?.stringValue = subtitle
             self?.subtitleField?.isHidden = subtitle.isEmpty
-        }
-        track({ [weak owner] in owner?.state.titleMenu }) { [weak self] menu in
-            let menu = (menu?.isEmpty ?? true) ? nil : menu
-            guard let self, menu != self.shownTitleMenu else { return }
-            self.shownTitleMenu = menu
-            self.rebuildPageItems()
         }
         track({ [weak owner] in owner?.kind == .vesper }) { [weak self] isVesper in
             // A playground page has no bridge: the companion and search have nobody to talk to.

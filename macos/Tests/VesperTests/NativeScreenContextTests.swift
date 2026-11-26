@@ -59,11 +59,29 @@ struct NativeScreenContextTests {
         let context = makeContext(spy)
         context.detach()
         #expect(!context.isAttached)
+        #expect(!context.isActiveTab)
         exercise(context)
         #expect(spy.opened.isEmpty)
         #expect(spy.replaced.isEmpty)
         #expect(spy.chromeChanges == 0)
         #expect(spy.sidebarChanges == 0)
         #expect(spy.inspectorChanges == 0)
+    }
+
+    @Test("isActiveTab reflects host visibility and turns false on detach")
+    func activeTabCheckTracksHost() {
+        let spy = TabSpy()
+        let context = makeContext(spy)
+        #expect(context.isActiveTab)
+
+        var active = false
+        context.isActiveTabCheck = { active }
+        #expect(!context.isActiveTab)
+
+        active = true
+        #expect(context.isActiveTab)
+
+        context.detach()
+        #expect(!context.isActiveTab)
     }
 }

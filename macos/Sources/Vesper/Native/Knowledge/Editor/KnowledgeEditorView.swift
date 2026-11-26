@@ -1384,7 +1384,7 @@ struct KnowledgeEditorView: View {
         guard active else { return }
         embedKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             guard selectedEmbedID != nil,
-                  context.isAttached,
+                  context.isActiveTab,
                   let window = context.window()?.window,
                   event.window === window,
                   window.isKeyWindow,
