@@ -200,6 +200,18 @@ func enableControllers(cgDir string) {
 // workspaceMountFlags: see the /tmp mount in mountCoreFS.
 const workspaceMountFlags = unix.MS_NOSUID | unix.MS_NODEV
 
+// diskMountFlags returns the mount flags for an attached ext4 disk. /home/node
+// outlives every turn of the run, so a setuid binary or device node one turn
+// gets onto it (for instance through guest root) must not work in the next.
+func diskMountFlags(target string) uintptr {
+	flags := uintptr(unix.MS_NOATIME)
+	switch target {
+	case "/workspace", "/home/node":
+		flags |= workspaceMountFlags
+	}
+	return flags
+}
+
 func mountAttachedDisks() error {
 	// Optional HostFolders shared workspace over virtiofs (tag "workspace").
 	_ = os.MkdirAll("/workspace", 0o777)
@@ -247,11 +259,7 @@ func mountAttachedDisks() error {
 				continue
 			}
 			_ = os.MkdirAll(target, 0o755)
-			flags := uintptr(unix.MS_NOATIME)
-			if target == "/workspace" {
-				flags |= workspaceMountFlags
-			}
-			if err := unix.Mount(dev, target, "ext4", flags, ""); err != nil {
+			if err := unix.Mount(dev, target, "ext4", diskMountFlags(target), ""); err != nil {
 				return fmt.Errorf("mount %s (%s) on %s: %w", dev, label, target, err)
 			}
 			if chownNode {
