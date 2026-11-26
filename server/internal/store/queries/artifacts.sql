@@ -178,6 +178,6 @@ UPDATE artifacts SET chat_session_id = sqlc.arg(chat_id) WHERE id = sqlc.arg(id)
 -- Person-only service; the lock above serializes edits with audience changes.
 UPDATE artifacts SET audience=sqlc.arg(audience), owner_user_id=sqlc.narg(owner_user_id)
 WHERE id=sqlc.arg(id) AND workspace_id=sqlc.arg(workspace_id)
- AND sqlc.narg(viewer)::uuid IS NOT NULL AND audience <> 'agent'
+ AND sqlc.narg(viewer)::uuid IS NOT NULL
  AND artifact_visible(audience, owner_user_id, sqlc.narg(viewer)::uuid)
 RETURNING *;

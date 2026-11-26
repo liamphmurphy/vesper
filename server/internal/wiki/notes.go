@@ -145,7 +145,11 @@ func (s *Service) write(ctx context.Context, q *store.Queries, ws uuid.UUID, by 
 	}
 	// Creating a private page may shadow a shared path without editing it.
 	if err == nil && mode == ModeCreate {
-		desired, _ := artifacts.NoteAudience(ctx, path, in.Audience)
+		desiredAudience := in.Audience
+		if desiredAudience == "" && by.Type == "agent" {
+			desiredAudience = "agent"
+		}
+		desired, _ := artifacts.NoteAudience(ctx, path, desiredAudience)
 		if (a.Audience == "private") != (desired == "private") {
 			err = pgx.ErrNoRows
 		}
@@ -177,7 +181,11 @@ func (s *Service) write(ctx context.Context, q *store.Queries, ws uuid.UUID, by 
 		if in.Title != nil {
 			title = *in.Title
 		}
-		a, err := s.Artifacts.CreateNoteTx(ctx, q, ws, by, path, in.ProjectKey, in.Body, state, artifacts.NoteMetadata{Title: title, Properties: raw, Audience: in.Audience})
+		audience := in.Audience
+		if audience == "" && by.Type == "agent" {
+			audience = "agent"
+		}
+		a, err := s.Artifacts.CreateNoteTx(ctx, q, ws, by, path, in.ProjectKey, in.Body, state, artifacts.NoteMetadata{Title: title, Properties: raw, Audience: audience})
 		if err != nil {
 			return Result{}, err
 		}
@@ -203,9 +211,6 @@ func (s *Service) write(ctx context.Context, q *store.Queries, ws uuid.UUID, by 
 		return Result{}, err
 	}
 	if in.Audience != "" {
-		if a.Audience == "agent" {
-			return Result{}, apperr.Invalid("audience", "agent knowledge follows its path")
-		}
 		var owner *uuid.UUID
 		if in.Audience == "private" {
 			owner = pageview.From(ctx).UserID
@@ -298,8 +303,8 @@ func latestVersion(ctx context.Context, q *store.Queries, a store.Artifact) (sto
 // no "New version" ceremony).
 func (s *Service) SaveAsUser(ctx context.Context, ws, userID uuid.UUID, in Save) (Result, error) {
 	ctx = pageview.Person(ctx, userID)
-	if in.Audience != "" && in.Audience != "private" && in.Audience != "shared" {
-		return Result{}, apperr.Invalid("audience", "must be private or shared")
+	if in.Audience != "" && in.Audience != "private" && in.Audience != "shared" && in.Audience != "agent" {
+		return Result{}, apperr.Invalid("audience", "must be private, shared or agent")
 	}
 	var res Result
 	err := s.tx(ctx, ws, func(q *store.Queries) error {
@@ -558,11 +563,7 @@ func renameNote(ctx context.Context, q *store.Queries, ws, id uuid.UUID, newPath
 	if err := q.LockNotePaths(ctx, ws); err != nil {
 		return a, err
 	}
-	audience := cur.Audience
-	if audience == "agent" {
-		audience = "shared"
-	}
-	audience, _ = artifacts.NoteAudience(ctx, p, audience)
+	audience, _ := artifacts.NoteAudience(ctx, p, cur.Audience)
 	taken, err := q.NotePathTaken(ctx, store.NotePathTakenParams{WorkspaceID: ws, Path: p, Audience: audience, Viewer: pageview.From(ctx).UserID, ExcludeID: &cur.ID})
 	if err != nil {
 		return a, err
@@ -603,8 +604,8 @@ func renameNote(ctx context.Context, q *store.Queries, ws, id uuid.UUID, newPath
 // restoring a stale body, and a failed validation rolls the whole edit back.
 func (s *Service) UpdateAsUser(ctx context.Context, ws, userID, id uuid.UUID, in Save, newPath, body *string) (Result, error) {
 	ctx = pageview.Person(ctx, userID)
-	if in.Audience != "" && in.Audience != "private" && in.Audience != "shared" {
-		return Result{}, apperr.Invalid("audience", "must be private or shared")
+	if in.Audience != "" && in.Audience != "private" && in.Audience != "shared" && in.Audience != "agent" {
+		return Result{}, apperr.Invalid("audience", "must be private, shared or agent")
 	}
 	var res Result
 	err := s.tx(ctx, ws, func(q *store.Queries) error {

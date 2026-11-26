@@ -595,7 +595,7 @@ final class KnowledgeShellController {
     }
 
     func setPageAudience(_ row: KnowledgePageRow, audience: KnowledgeAudience, in context: NativeScreenContext) {
-        guard audience == .private || audience == .shared, row.audience != audience, row.audience != .agent else { return }
+        guard row.audience != audience else { return }
         Task {
             do {
                 _ = try await context.store.mutate(
@@ -609,14 +609,20 @@ final class KnowledgeShellController {
     }
 
     func setPageAudience(page: KnowledgePage, audience: KnowledgeAudience, in context: NativeScreenContext) {
-        guard audience == .private || audience == .shared, page.audience != audience, page.audience != .agent else { return }
+        guard page.audience != audience else { return }
         Task {
             do {
                 let updated = try await context.store.mutate(
                     KnowledgeAPI.savePage(id: page.id, body: KnowledgePageInput(audience: audience.rawValue)),
                     invalidating: KnowledgeAPI.invalidation
                 )
+                if audience == .private && viewMode == .agent {
+                    viewMode = .yours
+                }
                 publishChrome(for: context, loadedPage: updated)
+                if audience == .private {
+                    context.showToast(ToastItemModel(id: "knowledge.move.personal", title: "Moved to Personal", tone: .success))
+                }
             } catch {
                 showErrorToast(id: "knowledge.audience", title: "Couldn\u{2019}t update audience", error: error, in: context)
             }
@@ -1272,7 +1278,10 @@ private struct KnowledgePageView: View {
                     },
                     onRegisterSave: { save in
                         controller.registerEditorSave(pageId: page.id, save: save)
-                    }
+                    },
+                    onMoveToPersonal: page.audience == .agent ? {
+                        controller.setPageAudience(page: page, audience: .private, in: context)
+                    } : nil
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = entry.error {

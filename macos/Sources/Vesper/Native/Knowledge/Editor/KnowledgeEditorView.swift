@@ -1,4 +1,6 @@
+import AppKit
 import SwiftUI
+import UniformTypeIdentifiers
 import VesperCore
 
 // MARK: - Find Bridge
@@ -52,6 +54,7 @@ struct KnowledgeEditorView: View {
     var headingJumpRequest: KnowledgeHeadingJumpRequest?
     var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
     var onRegisterSave: RegisterSave?
+    var onMoveToPersonal: (() -> Void)?
 
     @State private var document: KnowledgeEditorDocument
     @State private var lastSavedMarkdown: String
@@ -66,6 +69,10 @@ struct KnowledgeEditorView: View {
     @State private var remoteCandidates: [KnowledgeCompletionCandidate] = []
     @State private var selectionRequest: KnowledgeTextSelectionRequest?
     @State private var selectionToken = 0
+    @State private var activeSelectionSegment = 0
+    @State private var activeSelectionRange = NSRange(location: 0, length: 0)
+    @State private var showLinkPopover = false
+    @State private var linkURLDraft = "https://"
     @State private var requestedTableFocus: (segmentIndex: Int, coord: TableCellCoordinate)?
 
     @State private var showFindBar = false
@@ -80,12 +87,14 @@ struct KnowledgeEditorView: View {
         page: KnowledgePage,
         headingJumpRequest: KnowledgeHeadingJumpRequest? = nil,
         onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)? = nil,
-        onRegisterSave: RegisterSave? = nil
+        onRegisterSave: RegisterSave? = nil,
+        onMoveToPersonal: (() -> Void)? = nil
     ) {
         self.page = page
         self.headingJumpRequest = headingJumpRequest
         self.onHeadingsChange = onHeadingsChange
         self.onRegisterSave = onRegisterSave
+        self.onMoveToPersonal = onMoveToPersonal
         let initial = page.bodyMd ?? ""
         _document = State(initialValue: KnowledgeEditorDocument(markdown: initial))
         _lastSavedMarkdown = State(initialValue: initial)
@@ -210,34 +219,111 @@ struct KnowledgeEditorView: View {
 
     private var editorToolbar: some View {
         let p = theme.palette
-        return HStack(spacing: 8) {
+        return HStack(spacing: 6) {
+            Group {
+                Button { performUndo() } label: { Image(systemName: "arrow.uturn.backward").font(.system(size: 12)).frame(width: 22, height: 22) }
+                    .buttonStyle(.borderless)
+                    .disabled(!document.canUndo)
+                    .keyboardShortcut("z", modifiers: .command)
+                    .help("Undo (\u{2318}Z)")
+
+                Button { performRedo() } label: { Image(systemName: "arrow.uturn.forward").font(.system(size: 12)).frame(width: 22, height: 22) }
+                    .buttonStyle(.borderless)
+                    .disabled(!document.canRedo)
+                    .keyboardShortcut("z", modifiers: [.command, .shift])
+                    .help("Redo (\u{21E7}\u{2318}Z)")
+
+                Divider().frame(height: 14).overlay(p.border)
+
+                fmtTextBtn("H1", help: "Title") { toggleLinePrefix("# ") }
+                fmtTextBtn("H2", help: "Heading") { toggleLinePrefix("## ") }
+                fmtTextBtn("H3", help: "Subheading") { toggleLinePrefix("### ") }
+
+                Divider().frame(height: 14).overlay(p.border)
+
+                fmtTextBtn("B", bold: true, help: "Bold (\u{2318}B)") { wrapSelection("**", "**") }
+                    .keyboardShortcut("b", modifiers: .command)
+                fmtTextBtn("I", italic: true, help: "Italic (\u{2318}I)") { wrapSelection("*", "*") }
+                    .keyboardShortcut("i", modifiers: .command)
+                fmtTextBtn("S", strike: true, help: "Strikethrough (\u{21E7}\u{2318}X)") { wrapSelection("~~", "~~") }
+                    .keyboardShortcut("x", modifiers: [.command, .shift])
+                fmtIconBtn("chevron.left.forwardslash.chevron.right", help: "Inline code (\u{2318}E)") { wrapSelection("`", "`") }
+                    .keyboardShortcut("e", modifiers: .command)
+                Button {
+                    linkURLDraft = "https://"
+                    showLinkPopover = true
+                } label: {
+                    Image(systemName: "link")
+                        .font(.system(size: 12))
+                        .frame(width: 22, height: 22)
+                }
+                .buttonStyle(.borderless)
+                .keyboardShortcut("k", modifiers: .command)
+                .help("Insert link (\u{2318}K)")
+                .popover(isPresented: $showLinkPopover) {
+                    HStack(spacing: 6) {
+                        TextField("https://\u{2026}", text: $linkURLDraft)
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 220)
+                            .onSubmit { applyLink() }
+                        Button("Apply") { applyLink() }
+                            .buttonStyle(.vesper(.primary))
+                    }
+                    .padding(10)
+                }
+
+                Divider().frame(height: 14).overlay(p.border)
+
+                fmtIconBtn("list.bullet", help: "Bulleted list") { toggleLinePrefix("- ") }
+                fmtIconBtn("list.number", help: "Numbered list") { toggleLinePrefix("1. ") }
+                fmtIconBtn("checklist", help: "Checklist") { toggleLinePrefix("- [ ] ") }
+                fmtIconBtn("text.quote", help: "Quote") { toggleLinePrefix("> ") }
+                fmtIconBtn("curlybraces", help: "Code block") { insertBlock("\n```\n\n```\n") }
+                fmtIconBtn("tablecells", help: "Insert table") {
+                    insertBlock("\n| Column 1 | Column 2 | Column 3 |\n| --- | --- | --- |\n|  |  |  |\n")
+                }
+                fmtIconBtn("minus", help: "Divider") { insertBlock("\n---\n") }
+            }
+
+            Spacer(minLength: 8)
+
             saveIndicator
-            Spacer()
 
-            Button { performUndo() } label: { Image(systemName: "arrow.uturn.backward") }
-                .buttonStyle(.borderless)
-                .disabled(!document.canUndo)
-                .keyboardShortcut("z", modifiers: .command)
-                .help("Undo")
+            if page.audience == .agent, let onMoveToPersonal {
+                Button {
+                    onMoveToPersonal()
+                } label: {
+                    Label("Move to Personal", systemImage: "arrow.up.right.square")
+                }
+                .buttonStyle(.vesper(.outline))
+                .controlSize(.small)
+                .help("Move this persona-created page into your personal Knowledge")
+            }
 
-            Button { performRedo() } label: { Image(systemName: "arrow.uturn.forward") }
-                .buttonStyle(.borderless)
-                .disabled(!document.canRedo)
-                .keyboardShortcut("z", modifiers: [.command, .shift])
-                .help("Redo")
-
-            Divider().frame(height: 14).overlay(p.border)
-
-            Button { copySelectionAsMarkdown() } label: { Image(systemName: "doc.on.doc") }
-                .buttonStyle(.borderless)
-                .disabled(document.selection?.isCollapsed ?? true)
-                .help("Copy Selection as Markdown")
+            Menu {
+                Button("Export Markdown (.md)") { exportMarkdown() }
+                Button("Export Word (.docx)") { exportDocx() }
+                Button("Copy Rich Text") { copyRichText() }
+                Divider()
+                Button("Copy Selection as Markdown") { copySelectionAsMarkdown() }
+                    .disabled(document.selection?.isCollapsed ?? true)
+            } label: {
+                Image(systemName: "square.and.arrow.up")
+                    .font(.system(size: 12))
+                    .frame(width: 22, height: 22)
+            }
+            .menuStyle(.borderlessButton)
+            .menuIndicator(.hidden)
+            .fixedSize()
+            .help("Export or copy")
 
             Button {
                 showFindBar.toggle()
                 if showFindBar { findFieldFocused = true } else { clearFind() }
             } label: {
                 Image(systemName: "magnifyingglass")
+                    .font(.system(size: 12))
+                    .frame(width: 22, height: 22)
             }
             .buttonStyle(.borderless)
             .keyboardShortcut("f", modifiers: .command)
@@ -248,9 +334,38 @@ struct KnowledgeEditorView: View {
                 .disabled(!hasUnsavedChanges || saveStatus == .saving)
                 .keyboardShortcut("s", modifiers: .command)
         }
-        .padding(.horizontal, 14)
+        .padding(.horizontal, 12)
         .frame(height: 36)
         .background(p.surface)
+    }
+
+    private func fmtIconBtn(_ symbol: String, help: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Image(systemName: symbol)
+                .font(.system(size: 12))
+                .frame(width: 22, height: 22)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
+    }
+
+    private func fmtTextBtn(
+        _ label: String,
+        bold: Bool = false,
+        italic: Bool = false,
+        strike: Bool = false,
+        help: String,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Text(label)
+                .font(.system(size: 11, weight: bold ? .bold : .semibold))
+                .italic(italic)
+                .strikethrough(strike)
+                .frame(minWidth: 22, minHeight: 22)
+        }
+        .buttonStyle(.borderless)
+        .help(help)
     }
 
     @ViewBuilder
@@ -446,17 +561,104 @@ struct KnowledgeEditorView: View {
     // MARK: - Editing, Completion, Undo/Redo, Find, Save & Links
 
     private func handleProseEdit(_ newText: String, selection: NSRange, at segmentIndex: Int) {
+        activeSelectionSegment = segmentIndex
+        activeSelectionRange = selection
         let docSel = documentSelection(for: selection, in: segmentIndex)
         if document.setProse(newText, in: segmentIndex, newSelection: docSel) { noteDocumentEdited() }
         updateCompletion(text: newText, selection: selection, segmentIndex: segmentIndex)
     }
 
     private func handleProseSelection(_ selection: NSRange, isFocused: Bool, at segmentIndex: Int) {
+        activeSelectionSegment = segmentIndex
+        activeSelectionRange = selection
         document.selection = documentSelection(for: selection, in: segmentIndex)
         if isFocused, let prose = document.proseText(at: segmentIndex) {
             updateCompletion(text: prose, selection: selection, segmentIndex: segmentIndex)
         } else if completionSegmentIndex == segmentIndex {
             completionSession.close()
+        }
+    }
+
+    // MARK: - Formatting & Export Actions
+
+    private func applyProseTransform(_ transform: (String, NSRange) -> KnowledgeMarkdownFormatting.EditResult) {
+        let idx = min(activeSelectionSegment, max(0, document.segments.count - 1))
+        guard let text = document.proseText(at: idx) else { return }
+        let res = transform(text, activeSelectionRange)
+        let docSel = documentSelection(for: res.selection, in: idx)
+        if document.setProse(res.text, in: idx, newSelection: docSel) {
+            noteDocumentEdited()
+        }
+        activeSelectionSegment = idx
+        activeSelectionRange = res.selection
+        selectionToken += 1
+        selectionRequest = KnowledgeTextSelectionRequest(token: selectionToken, segmentIndex: idx, range: res.selection)
+    }
+
+    private func wrapSelection(_ prefix: String, _ suffix: String) {
+        applyProseTransform { text, range in
+            KnowledgeMarkdownFormatting.wrapOrToggle(text: text, selection: range, prefix: prefix, suffix: suffix)
+        }
+    }
+
+    private func toggleLinePrefix(_ prefix: String) {
+        applyProseTransform { text, range in
+            KnowledgeMarkdownFormatting.toggleLinePrefix(text: text, selection: range, prefix: prefix)
+        }
+    }
+
+    private func insertBlock(_ block: String) {
+        let idx = min(activeSelectionSegment, max(0, document.segments.count - 1))
+        guard document.proseText(at: idx) != nil else {
+            document = KnowledgeEditorDocument(markdown: document.serialize() + block)
+            noteDocumentEdited()
+            return
+        }
+        applyProseTransform { text, range in
+            KnowledgeMarkdownFormatting.insertBlock(text: text, selection: range, block: block)
+        }
+    }
+
+    private func applyLink() {
+        let href = linkURLDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        showLinkPopover = false
+        guard !href.isEmpty else { return }
+        applyProseTransform { text, range in
+            KnowledgeMarkdownFormatting.applyLink(text: text, selection: range, url: href)
+        }
+    }
+
+    private func exportMarkdown() {
+        let data = Data(document.serialize().utf8)
+        saveExportPanel(data: data, defaultName: DocEditorLogic.sanitizedFileName(page.title, ext: "md"), contentType: UTType(filenameExtension: "md") ?? .plainText)
+    }
+
+    private func exportDocx() {
+        let data = DocEditorLogic.exportDocx(markdown: document.serialize(), title: page.title)
+        saveExportPanel(data: data, defaultName: DocEditorLogic.sanitizedFileName(page.title, ext: "docx"), contentType: UTType(filenameExtension: "docx") ?? .data)
+    }
+
+    private func copyRichText() {
+        let html = DocEditorLogic.renderHTML(markdown: document.serialize(), title: page.title)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(html, forType: .html)
+        pb.setString(document.serialize(), forType: .string)
+        context.showToast(ToastItemModel(id: "knowledge.copy.rich", title: "Copied rich text", tone: .success))
+    }
+
+    private func saveExportPanel(data: Data, defaultName: String, contentType: UTType) {
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = defaultName
+        panel.allowedContentTypes = [contentType]
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            do {
+                try data.write(to: url)
+                context.showToast(ToastItemModel(id: "knowledge.export.ok", title: "Saved \(url.lastPathComponent)", tone: .success))
+            } catch {
+                context.showToast(ToastItemModel(id: "knowledge.export.err", title: "Export failed: \(error.localizedDescription)", tone: .error))
+            }
         }
     }
 

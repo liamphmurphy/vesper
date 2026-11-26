@@ -18,6 +18,7 @@ struct KnowledgePageEditorSlot: View {
     var headingJumpRequest: KnowledgeHeadingJumpRequest?
     var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
     var onRegisterSave: KnowledgeEditorView.RegisterSave?
+    var onMoveToPersonal: (() -> Void)?
 
     @State private var pdfModel = PDFViewerModel()
 
@@ -70,20 +71,15 @@ struct KnowledgePageEditorSlot: View {
                 }
             }
         case .hostedPage:
-            if page.kind == .document, let canvasId = page.canvasId, !canvasId.isEmpty {
-                DocEditorView(canvasId: canvasId, embedded: true)
-                    .id(canvasId)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                KnowledgeEditorView(
-                    page: page,
-                    headingJumpRequest: headingJumpRequest,
-                    onHeadingsChange: onHeadingsChange,
-                    onRegisterSave: onRegisterSave
-                )
-                    .id(page.id)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            }
+            KnowledgeEditorView(
+                page: page,
+                headingJumpRequest: headingJumpRequest,
+                onHeadingsChange: onHeadingsChange,
+                onRegisterSave: onRegisterSave,
+                onMoveToPersonal: onMoveToPersonal
+            )
+            .id(page.id)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
     }
 
