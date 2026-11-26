@@ -211,6 +211,102 @@ public enum BrowserAutofillLogic {
         return false
     }
 
+    /// Strict autofill guard: HTTPS pages must also report `hasOnlySecureContent == true` so
+    /// mixed-content pages cannot receive credentials; loopback HTTP dev servers remain allowed.
+    public static func canAutofill(urlString: String, hasOnlySecureContent: Bool) -> Bool {
+        guard isSecureAutofillOrigin(urlString),
+              let scheme = URL(string: urlString)?.scheme?.lowercased()
+        else { return false }
+        if scheme == "https" {
+            return hasOnlySecureContent
+        }
+        return true
+    }
+
+    /// Parses standard Apple Passwords / Safari CSV exports (`Title,URL,Username,Password,Notes,OTPAuth`).
+    public static func parseApplePasswordsCSV(_ csv: String) -> [BrowserCredential] {
+        let rows = parseCSVRows(csv)
+        guard let header = rows.first else { return [] }
+        let normalizedHeader = header.map { $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() }
+        let titleIdx = normalizedHeader.firstIndex(of: "title")
+        let urlIdx = normalizedHeader.firstIndex(of: "url") ?? normalizedHeader.firstIndex(of: "website")
+        let userIdx = normalizedHeader.firstIndex(of: "username") ?? normalizedHeader.firstIndex(of: "login")
+        let passIdx = normalizedHeader.firstIndex(of: "password")
+        guard let urlIdx, let userIdx, let passIdx else { return [] }
+
+        var out: [BrowserCredential] = []
+        var seen = Set<String>()
+        for row in rows.dropFirst() {
+            guard row.count > max(urlIdx, max(userIdx, passIdx)) else { continue }
+            let rawURL = row[urlIdx].trimmingCharacters(in: .whitespacesAndNewlines)
+            let username = row[userIdx].trimmingCharacters(in: .whitespacesAndNewlines)
+            let password = row[passIdx]
+            guard !rawURL.isEmpty, !username.isEmpty, !password.isEmpty,
+                  let host = BrowserPageGuard.normalizeHost(rawURL)
+            else { continue }
+            let dedupeKey = "\(host)|\(username.lowercased())"
+            guard seen.insert(dedupeKey).inserted else { continue }
+            let title = titleIdx.flatMap { $0 < row.count ? row[$0].trimmingCharacters(in: .whitespacesAndNewlines) : nil }
+            out.append(BrowserCredential(
+                host: host,
+                username: username,
+                password: password,
+                label: (title?.isEmpty == false) ? title! : host
+            ))
+        }
+        return out
+    }
+
+    private static func parseCSVRows(_ input: String) -> [[String]] {
+        var rows: [[String]] = []
+        var row: [String] = []
+        var field = ""
+        var inQuotes = false
+        let chars = Array(input)
+        var i = 0
+        while i < chars.count {
+            let ch = chars[i]
+            if inQuotes {
+                if ch == "\"" {
+                    if i + 1 < chars.count && chars[i + 1] == "\"" {
+                        field.append("\"")
+                        i += 2
+                        continue
+                    }
+                    inQuotes = false
+                } else {
+                    field.append(ch)
+                }
+            } else {
+                if ch == "\"" {
+                    inQuotes = true
+                } else if ch == "," {
+                    row.append(field)
+                    field = ""
+                } else if ch == "\r" {
+                    if i + 1 < chars.count && chars[i + 1] == "\n" { i += 1 }
+                    row.append(field)
+                    field = ""
+                    if !row.allSatisfy({ $0.isEmpty }) { rows.append(row) }
+                    row = []
+                } else if ch == "\n" {
+                    row.append(field)
+                    field = ""
+                    if !row.allSatisfy({ $0.isEmpty }) { rows.append(row) }
+                    row = []
+                } else {
+                    field.append(ch)
+                }
+            }
+            i += 1
+        }
+        if !field.isEmpty || !row.isEmpty {
+            row.append(field)
+            if !row.allSatisfy({ $0.isEmpty }) { rows.append(row) }
+        }
+        return rows
+    }
+
     /// Computes a conservative registrable domain (eTLD+1) for matching subdomains like
     /// `accounts.github.com` with `github.com`.
     public static func domainGroup(for rawHost: String) -> String {
