@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"strings"
 	"sync"
 	"time"
@@ -486,6 +487,26 @@ func (s *Service) Create(ctx context.Context, ws, userID uuid.UUID, in CreateInp
 	return s.Get(ctx, ws, userID, slug)
 }
 
+// downgradePrivilegedCapabilities resets any user-approved external or host
+// capability back to requires_approval after a persona modifies an app's code.
+// Local app-scoped SQLite access (app.sql:read, app.sql:write) stays intact.
+func downgradePrivilegedCapabilities(caps Capabilities) (Capabilities, bool) {
+	if len(caps) == 0 {
+		return caps, false
+	}
+	out := make(Capabilities, len(caps))
+	changed := false
+	for k, mode := range caps {
+		if mode == agentdef.Allowed && k != "app.sql:read" && k != "app.sql:write" {
+			out[k] = agentdef.RequiresApproval
+			changed = true
+		} else {
+			out[k] = mode
+		}
+	}
+	return out, changed
+}
+
 func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string, in UpdateInput) (AppDetail, error) {
 	authorType := in.AuthorType
 	if authorType == "" {
@@ -495,6 +516,7 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 		return AppDetail{}, apperr.Invalid("edits", "edits can't be combined with restore_seq")
 	}
 
+	var syncVM *VMAppSpec
 	err := pgx.BeginTxFunc(ctx, s.Pool, pgx.TxOptions{}, func(tx pgx.Tx) error {
 		q := store.New(tx)
 		app, err := q.GetCustomAppForUpdate(ctx, store.GetCustomAppForUpdateParams{WorkspaceID: ws, UserID: userID, Slug: slug})
@@ -682,6 +704,19 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 			}
 		}
 
+		if authorType == "persona" && createVersion {
+			codeChanged := !maps.Equal(curFiles, nextFiles) ||
+				nextManifest.Entry != curManifest.Entry ||
+				nextManifest.MCPEntry != curManifest.MCPEntry
+			if codeChanged {
+				if downgraded, changed := downgradePrivilegedCapabilities(curCaps); changed {
+					curCaps = downgraded
+					spec := vmSpecForApp(app.ID, app.Slug, decodeMounts(app.Mounts), curCaps)
+					syncVM = &spec
+				}
+			}
+		}
+
 		manifestJSON, err := json.Marshal(nextManifest)
 		if err != nil {
 			return err
@@ -714,6 +749,11 @@ func (s *Service) Update(ctx context.Context, ws, userID uuid.UUID, slug string,
 	})
 	if err != nil {
 		return AppDetail{}, err
+	}
+	if syncVM != nil {
+		if vm := s.VM(); vm != nil {
+			_ = vm.SyncAppVMPolicy(ctx, *syncVM)
+		}
 	}
 	return s.Get(ctx, ws, userID, slug)
 }

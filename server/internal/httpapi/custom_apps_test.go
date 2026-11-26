@@ -420,3 +420,44 @@ func TestCustomAppImageProxy(t *testing.T) {
 	apiSrv.CustomAppImageTransport = nil
 	e.invalid("GET", "/custom-apps/feed/image?url="+url.QueryEscape("https://127.0.0.1/img.png"), nil, "url", "private address")
 }
+
+func TestValidateCustomAppAPIRequestAllowlist(t *testing.T) {
+	blocked := []string{
+		"/api/v1/companion/pairing-code",
+		"/api/v1/sign-in",
+		"/api/v1/sign-ins",
+		"/api/v1/auth/login",
+		"/api/v1/browser-extension-token",
+		"/api/v1/push-requests",
+		"/api/v1/push-requests/123/approve",
+		"/api/v1/repositories",
+		"/api/v1/secrets",
+		"/api/v1/api-secrets",
+		"/api/v1/api-secret-approvals",
+		"/api/v1/instance/export",
+		"/api/v1/personas",
+		"/api/v1/connectors",
+		"/api/v1/approvals",
+		"/api/v1/http/workspaces",
+		"/api/v1/custom-apps",
+		"/api/v1/tickets/../companion/pairing-code",
+		"/api/v1/unknown-future-endpoint",
+	}
+	for _, p := range blocked {
+		if _, _, err := validateCustomAppAPIRequest(http.MethodPost, p); err == nil {
+			t.Errorf("validateCustomAppAPIRequest(%q) allowed, want restricted error", p)
+		}
+	}
+
+	allowed := []string{
+		"/api/v1/projects",
+		"/api/v1/tickets/123",
+		"/api/v1/knowledge/pages",
+		"/api/v1/search?q=foo",
+	}
+	for _, p := range allowed {
+		if _, _, err := validateCustomAppAPIRequest(http.MethodGet, p); err != nil {
+			t.Errorf("validateCustomAppAPIRequest(%q) failed: %v", p, err)
+		}
+	}
+}
