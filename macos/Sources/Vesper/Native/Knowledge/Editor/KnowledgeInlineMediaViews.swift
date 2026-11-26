@@ -69,6 +69,64 @@ enum KnowledgeAttachmentActions {
         )
     }
 
+    static func copyFile(
+        url: String,
+        filename: String,
+        contentType: String?,
+        context: NativeScreenContext
+    ) {
+        guard let client = context.store.client else { return }
+        Task { @MainActor in
+            do {
+                let localURL = try await LibraryFiles.localFile(
+                    path: url,
+                    filename: filename,
+                    contentType: contentType,
+                    client: client
+                )
+                let pb = NSPasteboard.general
+                pb.clearContents()
+                pb.writeObjects([localURL as NSURL])
+                context.showToast(ToastItemModel(
+                    id: "knowledge.copy-file.ok.\(url)",
+                    title: "Copied \(filename)",
+                    tone: .success
+                ))
+            } catch {
+                context.showToast(ToastItemModel(
+                    id: "knowledge.copy-file.err.\(url)",
+                    title: "Couldn\u{2019}t copy \(filename)",
+                    description: (error as? APIError)?.userMessage ?? error.localizedDescription,
+                    tone: .error
+                ))
+            }
+        }
+    }
+
+    static func typeLabel(for contentType: String?, filename: String) -> String {
+        let ct = contentType?.lowercased() ?? ""
+        let ext = (filename as NSString).pathExtension.lowercased()
+        if ct.hasPrefix("image/") || ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif"].contains(ext) {
+            return "Image"
+        }
+        if ct.hasPrefix("video/") || ["mp4", "mov", "m4v", "webm", "mkv", "avi"].contains(ext) {
+            return "Video"
+        }
+        if ct.hasPrefix("audio/") || ["mp3", "m4a", "wav", "flac", "ogg", "opus", "aac", "aiff"].contains(ext) {
+            return "Audio"
+        }
+        if ct.contains("pdf") || ext == "pdf" {
+            return "PDF"
+        }
+        if ct.contains("zip") || ct.contains("tar") || ct.contains("gzip") || ["zip", "tar", "gz", "7z"].contains(ext) {
+            return "Archive"
+        }
+        if !ext.isEmpty {
+            return ext.uppercased()
+        }
+        return "File"
+    }
+
     static func sfSymbol(for contentType: String?, filename: String) -> String {
         let ct = contentType?.lowercased() ?? ""
         let ext = (filename as NSString).pathExtension.lowercased()
@@ -230,8 +288,16 @@ struct KnowledgeMediaActionButtons: View {
                         context.showToast(ToastItemModel(id: "knowledge.att.copy", title: "Copied embed link", tone: .success))
                     }
                 }
+                Button("Copy File") {
+                    KnowledgeAttachmentActions.copyFile(
+                        url: url,
+                        filename: filename,
+                        contentType: contentType,
+                        context: context
+                    )
+                }
                 Divider()
-                Button("Save Copy\u{2026}") {
+                Button("Download\u{2026}") {
                     KnowledgeAttachmentActions.saveCopy(
                         url: url,
                         filename: filename,
@@ -266,44 +332,113 @@ struct KnowledgeInlineImageCard: View {
     let embedRef: String?
     let maxImageWidth: CGFloat
     let maxImageHeight: CGFloat
+    var containerMaxWidth: CGFloat? = nil
+    var explicitDimensions: KnowledgeEmbedDimensions? = nil
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
+    var onResizeWidth: ((Int?) -> Void)? = nil
+
+    @State private var isHovered = false
+    @State private var dragStartWidth: CGFloat?
+    @State private var liveDragWidth: CGFloat?
+
+    private var effectiveContainerMaxWidth: CGFloat {
+        max(120, containerMaxWidth ?? maxImageWidth)
+    }
+
+    private var activeDimensions: KnowledgeEmbedDimensions? {
+        if let liveDragWidth {
+            return KnowledgeEmbedDimensions(width: liveDragWidth, height: nil)
+        }
+        return explicitDimensions
+    }
 
     var body: some View {
         let p = theme.palette
+        let captionMaxWidth: CGFloat = {
+            if let dims = activeDimensions {
+                return min(effectiveContainerMaxWidth, max(120, dims.width))
+            }
+            return maxImageWidth
+        }()
+
         VStack(alignment: .leading, spacing: 4) {
-            Button {
-                KnowledgeAttachmentActions.openFullscreen(
-                    url: url,
-                    title: label,
-                    contentType: contentType,
-                    context: context
+            AuthenticatedImageView(source: url, maxPixel: 1600) { img, naturalSize in
+                let fitted = KnowledgeMarkdownSyntax.fittedInlineImageSize(
+                    naturalSize: naturalSize,
+                    maxWidth: maxImageWidth,
+                    maxHeight: maxImageHeight,
+                    explicitDimensions: activeDimensions,
+                    containerMaxWidth: effectiveContainerMaxWidth
                 )
-            } label: {
-                AuthenticatedImageView(source: url, maxPixel: 1080) { img, naturalSize in
-                    let fitted = KnowledgeMarkdownSyntax.fittedInlineImageSize(
-                        naturalSize: naturalSize,
-                        maxWidth: maxImageWidth,
-                        maxHeight: maxImageHeight
-                    )
+                ZStack(alignment: .bottomTrailing) {
                     img.resizable()
                         .aspectRatio(contentMode: .fit)
                         .frame(width: fitted.width, height: fitted.height)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
-                } placeholder: {
-                    ProgressView().controlSize(.small).padding(16)
-                } failure: {
-                    Label(label, systemImage: "photo")
-                        .vesperText(.small, theme)
-                        .foregroundStyle(p.secondaryText)
-                        .padding(10)
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 8)
+                                .stroke(isSelected ? p.accent : (liveDragWidth != nil ? p.accent.opacity(0.7) : .clear), lineWidth: isSelected ? 2 : 1.5)
+                        )
+                        .contentShape(Rectangle())
+                        .onTapGesture(count: 2) {
+                            KnowledgeAttachmentActions.openFullscreen(
+                                url: url,
+                                title: label,
+                                contentType: contentType,
+                                context: context
+                            )
+                        }
+                        .onTapGesture(count: 1) {
+                            if let onSelect {
+                                NSApp.keyWindow?.makeFirstResponder(nil)
+                                onSelect()
+                            } else {
+                                KnowledgeAttachmentActions.openFullscreen(
+                                    url: url,
+                                    title: label,
+                                    contentType: contentType,
+                                    context: context
+                                )
+                            }
+                        }
+
+                    if let liveDragWidth {
+                        Text("\(Int(liveDragWidth.rounded())) px")
+                            .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 3)
+                            .background(Color.black.opacity(0.72), in: Capsule())
+                            .padding(.trailing, 30)
+                            .padding(.bottom, 8)
+                            .allowsHitTesting(false)
+                    }
+
+                    if onResizeWidth != nil && (isHovered || isSelected || liveDragWidth != nil) {
+                        resizeHandle(currentWidth: fitted.width)
+                            .padding(6)
+                    }
                 }
+            } placeholder: {
+                ProgressView().controlSize(.small).padding(16)
+            } failure: {
+                Label(label, systemImage: "photo")
+                    .vesperText(.small, theme)
+                    .foregroundStyle(p.secondaryText)
+                    .padding(10)
             }
-            .buttonStyle(.plain)
 
             HStack(spacing: 6) {
                 Text(label)
                     .font(.system(size: theme.pointSize(.micro) + 1))
                     .foregroundStyle(p.tertiaryText)
                     .lineLimit(1)
+                if let dims = activeDimensions {
+                    Text("\(Int(dims.width.rounded()))px")
+                        .font(.system(size: theme.pointSize(.micro), design: .monospaced))
+                        .foregroundStyle(p.tertiaryText)
+                }
                 Spacer(minLength: 4)
                 KnowledgeMediaActionButtons(
                     url: url,
@@ -312,7 +447,10 @@ struct KnowledgeInlineImageCard: View {
                     embedRef: embedRef
                 )
             }
-            .frame(maxWidth: maxImageWidth, alignment: .leading)
+            .frame(maxWidth: captionMaxWidth, alignment: .leading)
+        }
+        .onHover { hovering in
+            isHovered = hovering
         }
         .contextMenu {
             Button("Open Fullscreen (Quick Look)") {
@@ -321,10 +459,51 @@ struct KnowledgeInlineImageCard: View {
             Button("Open in Another App") {
                 KnowledgeAttachmentActions.openInExternalApp(url: url, filename: label, contentType: contentType, context: context)
             }
-            Button("Save Copy\u{2026}") {
+            Button("Copy File") {
+                KnowledgeAttachmentActions.copyFile(url: url, filename: label, contentType: contentType, context: context)
+            }
+            if explicitDimensions != nil, let onResizeWidth {
+                Divider()
+                Button("Reset Image Size") {
+                    onResizeWidth(nil)
+                }
+            }
+            Divider()
+            Button("Download\u{2026}") {
                 KnowledgeAttachmentActions.saveCopy(url: url, filename: label, contentType: contentType, context: context)
             }
         }
+    }
+
+    private func resizeHandle(currentWidth: CGFloat) -> some View {
+        let p = theme.palette
+        return Image(systemName: "arrow.up.left.and.arrow.down.right")
+            .font(.system(size: 9, weight: .bold))
+            .foregroundStyle(.white)
+            .frame(width: 20, height: 20)
+            .background(p.accent.opacity(0.92), in: RoundedRectangle(cornerRadius: 5))
+            .overlay(RoundedRectangle(cornerRadius: 5).stroke(Color.white.opacity(0.35), lineWidth: 0.75))
+            .shadow(color: .black.opacity(0.25), radius: 3, y: 1)
+            .help("Drag to resize image (double-click to reset)")
+            .onTapGesture(count: 2) {
+                onResizeWidth?(nil)
+            }
+            .gesture(
+                DragGesture(minimumDistance: 2)
+                    .onChanged { value in
+                        let start = dragStartWidth ?? currentWidth
+                        if dragStartWidth == nil { dragStartWidth = start }
+                        let clamped = max(80, min(effectiveContainerMaxWidth, start + value.translation.width))
+                        liveDragWidth = clamped
+                    }
+                    .onEnded { value in
+                        let start = dragStartWidth ?? currentWidth
+                        let final = max(80, min(effectiveContainerMaxWidth, start + value.translation.width))
+                        dragStartWidth = nil
+                        liveDragWidth = nil
+                        onResizeWidth?(Int(final.rounded()))
+                    }
+            )
     }
 }
 
@@ -339,6 +518,8 @@ struct KnowledgeInlineVideoCard: View {
     let contentType: String?
     let embedRef: String?
     var playerHeight: CGFloat = 300
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
 
     @State private var loader = KnowledgeMediaFileLoader()
     @State private var player: AVPlayer?
@@ -390,9 +571,16 @@ struct KnowledgeInlineVideoCard: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(p.surface)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let onSelect {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    onSelect()
+                }
+            }
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border, lineWidth: isSelected ? 2 : 1))
         .task(id: url) {
             await loader.load(url: url, filename: label, contentType: contentType, client: context.store.client)
             if let local = loader.localURL, player == nil {
@@ -415,6 +603,8 @@ struct KnowledgeInlineAudioCard: View {
     let label: String
     let contentType: String?
     let embedRef: String?
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
 
     @State private var loader = KnowledgeMediaFileLoader()
     @State private var player: AVPlayer?
@@ -497,7 +687,14 @@ struct KnowledgeInlineAudioCard: View {
         }
         .padding(10)
         .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border, lineWidth: isSelected ? 2 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if let onSelect {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+                onSelect()
+            }
+        }
         .task(id: url) {
             await loader.load(url: url, filename: label, contentType: contentType, client: context.store.client)
             guard let local = loader.localURL, player == nil else { return }
@@ -557,6 +754,8 @@ struct KnowledgeInlinePDFCard: View {
     let contentType: String?
     let embedRef: String?
     var viewerHeight: CGFloat = 420
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
 
     @State private var model = PDFViewerModel()
 
@@ -622,6 +821,13 @@ struct KnowledgeInlinePDFCard: View {
             .padding(.horizontal, 10)
             .padding(.vertical, 6)
             .background(p.surface)
+            .contentShape(Rectangle())
+            .onTapGesture {
+                if let onSelect {
+                    NSApp.keyWindow?.makeFirstResponder(nil)
+                    onSelect()
+                }
+            }
 
             Divider().overlay(p.border)
 
@@ -648,7 +854,7 @@ struct KnowledgeInlinePDFCard: View {
             .frame(height: viewerHeight)
         }
         .clipShape(RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border, lineWidth: isSelected ? 2 : 1))
         .task(id: url) {
             await model.load(path: url, client: context.store.client)
         }
@@ -668,6 +874,8 @@ struct KnowledgeInlineFileCard: View {
     let label: String
     let contentType: String?
     let embedRef: String?
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
 
     var body: some View {
         let p = theme.palette
@@ -696,7 +904,17 @@ struct KnowledgeInlineFileCard: View {
         }
         .padding(10)
         .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
-        .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+        .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border, lineWidth: isSelected ? 2 : 1))
+        .contentShape(Rectangle())
+        .onTapGesture(count: 2) {
+            KnowledgeAttachmentActions.openFullscreen(url: url, title: label, contentType: contentType, context: context)
+        }
+        .onTapGesture(count: 1) {
+            if let onSelect {
+                NSApp.keyWindow?.makeFirstResponder(nil)
+                onSelect()
+            }
+        }
     }
 }
 
@@ -707,6 +925,8 @@ struct KnowledgeAttachmentDetailView: View {
     @Environment(\.vesperTheme) private var theme
 
     let attachment: KnowledgeAttachment
+    var onRename: ((KnowledgeAttachment) -> Void)? = nil
+    var onDelete: ((KnowledgeAttachment) -> Void)? = nil
 
     @State private var pdfModel = PDFViewerModel()
 
@@ -720,11 +940,17 @@ struct KnowledgeAttachmentDetailView: View {
                 Image(systemName: KnowledgeAttachmentActions.sfSymbol(for: attachment.contentType, filename: attachment.filename))
                     .font(.system(size: 14))
                     .foregroundStyle(p.accent)
-                VStack(alignment: .leading, spacing: 1) {
-                    Text(attachment.filename)
-                        .vesperText(.heading, theme)
-                        .foregroundStyle(p.text)
-                        .lineLimit(1)
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: 8) {
+                        Text(attachment.filename)
+                            .vesperText(.heading, theme)
+                            .foregroundStyle(p.text)
+                            .lineLimit(1)
+                        TonePill(
+                            label: attachment.usageSummary,
+                            tone: attachment.isOrphaned ? "human" : "done"
+                        )
+                    }
                     HStack(spacing: 6) {
                         Text(attachment.path)
                         if !attachment.contentType.isEmpty {
@@ -735,6 +961,8 @@ struct KnowledgeAttachmentDetailView: View {
                             Text("\u{00B7}")
                             Text(sizeText)
                         }
+                        Text("\u{00B7}")
+                        Text("Press Space for Quick Look")
                     }
                     .font(.system(size: theme.pointSize(.micro) + 1))
                     .foregroundStyle(p.tertiaryText)
@@ -759,7 +987,7 @@ struct KnowledgeAttachmentDetailView: View {
                         context: context
                     )
                 } label: {
-                    Label("Fullscreen", systemImage: "arrow.up.left.and.arrow.down.right")
+                    Label("Quick Look", systemImage: "arrow.up.left.and.arrow.down.right")
                 }
                 .buttonStyle(.vesper())
 
@@ -774,10 +1002,93 @@ struct KnowledgeAttachmentDetailView: View {
                     Label("Open in App", systemImage: "arrow.up.forward.app")
                 }
                 .buttonStyle(.vesper(.primary))
+
+                Menu {
+                    Button("Copy File") {
+                        KnowledgeAttachmentActions.copyFile(
+                            url: attachment.url,
+                            filename: attachment.filename,
+                            contentType: attachment.contentType,
+                            context: context
+                        )
+                    }
+                    Button("Download\u{2026}") {
+                        KnowledgeAttachmentActions.saveCopy(
+                            url: attachment.url,
+                            filename: attachment.filename,
+                            contentType: attachment.contentType,
+                            context: context
+                        )
+                    }
+                    if attachment.isOwner {
+                        Divider()
+                        if let onRename {
+                            Button("Rename\u{2026}") { onRename(attachment) }
+                        }
+                        if let onDelete {
+                            Button("Delete\u{2026}", role: .destructive) { onDelete(attachment) }
+                        }
+                    }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                        .font(.system(size: 14))
+                        .foregroundStyle(p.secondaryText)
+                        .frame(width: 24, height: 24)
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .fixedSize()
+                .help("More attachment actions")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
             .background(p.surface)
+
+            Divider().overlay(p.border)
+
+            HStack(spacing: 8) {
+                if attachment.usedIn.isEmpty {
+                    Image(systemName: "tray")
+                        .font(.system(size: 11))
+                        .foregroundStyle(p.tertiaryText)
+                    Text("Not currently referenced in any document. Drag it from attachments/ into a doc to embed it.")
+                        .font(.system(size: theme.pointSize(.micro) + 1))
+                        .foregroundStyle(p.tertiaryText)
+                } else {
+                    Text("Used in:")
+                        .font(.system(size: theme.pointSize(.micro) + 1, weight: .semibold))
+                        .foregroundStyle(p.secondaryText)
+                    ScrollView(.horizontal, showsIndicators: false) {
+                        HStack(spacing: 6) {
+                            ForEach(attachment.usedIn) { doc in
+                                Button {
+                                    context.navigate(KnowledgeShellLogic.pageHref(id: doc.id, title: doc.title))
+                                } label: {
+                                    HStack(spacing: 4) {
+                                        Image(systemName: "doc.text")
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(p.accent)
+                                        Text(doc.title.isEmpty ? KnowledgeShellLogic.nameOf(doc.path) : doc.title)
+                                            .font(.system(size: theme.pointSize(.micro) + 1, weight: .medium))
+                                            .foregroundStyle(p.text)
+                                            .lineLimit(1)
+                                    }
+                                    .padding(.horizontal, 8)
+                                    .padding(.vertical, 3)
+                                    .background(p.surface, in: Capsule())
+                                    .overlay(Capsule().stroke(p.border))
+                                }
+                                .buttonStyle(.plain)
+                                .help(doc.path.isEmpty ? doc.title : doc.path)
+                            }
+                        }
+                    }
+                }
+                Spacer(minLength: 0)
+            }
+            .padding(.horizontal, 16)
+            .padding(.vertical, 6)
+            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
 
             Divider().overlay(p.border)
 

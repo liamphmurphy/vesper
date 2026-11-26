@@ -55,6 +55,7 @@ struct KnowledgeEditorView: View {
     var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
     var onRegisterSave: RegisterSave?
     var onMoveToPersonal: (() -> Void)?
+    var onSelectedEmbedChange: ((KnowledgeEmbed?, [KnowledgeEmbed]) -> Void)?
 
     @State private var document: KnowledgeEditorDocument
     @State private var lastSavedMarkdown: String
@@ -83,25 +84,64 @@ struct KnowledgeEditorView: View {
     @FocusState private var findFieldFocused: Bool
     @State private var findBridge = KnowledgeEditorFindBridge()
     @State private var isFileDropTargeted = false
+    @State private var draggedKnowledgeItem: KnowledgeDragItem?
     @State private var uploadingFileCount = 0
+    @State private var selectedEmbedID: String?
+    @State private var inlineDrawerMode: KnowledgeInlineDrawerMode?
+    @State private var localHeadingJumpRequest: KnowledgeHeadingJumpRequest?
+    @State private var localHeadingJumpToken = 0
+    @State private var linkingMentionId: String?
 
     init(
         page: KnowledgePage,
         headingJumpRequest: KnowledgeHeadingJumpRequest? = nil,
         onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)? = nil,
         onRegisterSave: RegisterSave? = nil,
-        onMoveToPersonal: (() -> Void)? = nil
+        onMoveToPersonal: (() -> Void)? = nil,
+        onSelectedEmbedChange: ((KnowledgeEmbed?, [KnowledgeEmbed]) -> Void)? = nil
     ) {
         self.page = page
         self.headingJumpRequest = headingJumpRequest
         self.onHeadingsChange = onHeadingsChange
         self.onRegisterSave = onRegisterSave
         self.onMoveToPersonal = onMoveToPersonal
+        self.onSelectedEmbedChange = onSelectedEmbedChange
         let initial = page.bodyMd ?? ""
         _document = State(initialValue: KnowledgeEditorDocument(markdown: initial))
         _lastSavedMarkdown = State(initialValue: initial)
         _currentVersionId = State(initialValue: page.versionId)
         _resolvedEmbeds = State(initialValue: page.embeds)
+    }
+
+    private var networkRequest: APIRequest<KnowledgeNetwork> {
+        KnowledgeAPI.getNetwork(includeAgent: page.audience == .agent)
+    }
+
+    private var mentionCandidatesRequest: APIRequest<KnowledgePageTable> {
+        KnowledgeAPI.listPages(includeAgent: page.audience == .agent, limit: 200)
+    }
+
+    private var currentHeadings: [KnowledgeOutlineHeading] {
+        KnowledgeInspectorLogic.extractHeadings(from: document.segments)
+    }
+
+    private var currentBacklinks: [KnowledgeBacklinkItem] {
+        let network = context.store.entry(networkRequest).data ?? KnowledgeNetwork()
+        return KnowledgePanelsLogic.backlinks(for: page.id, in: network)
+    }
+
+    private var currentOutgoingLinks: (resolved: [KnowledgeBacklinkItem], unresolved: [String]) {
+        let network = context.store.entry(networkRequest).data ?? KnowledgeNetwork()
+        return KnowledgePanelsLogic.outgoingLinks(for: page.id, in: network)
+    }
+
+    private var currentUnlinkedMentions: [KnowledgeUnlinkedMention] {
+        let candidates = context.store.entry(mentionCandidatesRequest).data?.rows ?? []
+        return KnowledgePanelsLogic.findUnlinkedMentions(
+            of: page,
+            in: candidates,
+            linkedSourceIds: Set(currentBacklinks.map(\.id))
+        )
     }
 
     private var hasUnsavedChanges: Bool {
@@ -144,59 +184,81 @@ struct KnowledgeEditorView: View {
                 )
                 Divider().overlay(p.border)
             }
-            ZStack(alignment: .bottomLeading) {
-                ScrollViewReader { scrollProxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 14) {
-                            pageHeader
-                            segmentsColumn
+            HStack(spacing: 0) {
+                ZStack(alignment: .bottomLeading) {
+                    ScrollViewReader { scrollProxy in
+                        ScrollView {
+                            VStack(alignment: .leading, spacing: 14) {
+                                pageHeader
+                                segmentsColumn
+                            }
+                            .frame(maxWidth: 740, alignment: .leading)
+                            .padding(.horizontal, 28)
+                            .padding(.vertical, 24)
+                            .frame(maxWidth: .infinity, alignment: .center)
                         }
-                        .frame(maxWidth: 740, alignment: .leading)
-                        .padding(.horizontal, 28)
-                        .padding(.vertical, 24)
-                        .frame(maxWidth: .infinity, alignment: .center)
+                        .onChange(of: headingJumpRequest) { _, req in
+                            guard let req, req.pageId == page.id else { return }
+                            jumpToHeading(req.heading, scrollProxy: scrollProxy)
+                        }
+                        .onChange(of: localHeadingJumpRequest) { _, req in
+                            guard let req, req.pageId == page.id else { return }
+                            jumpToHeading(req.heading, scrollProxy: scrollProxy)
+                        }
                     }
-                    .onChange(of: headingJumpRequest) { _, req in
-                        guard let req, req.pageId == page.id else { return }
-                        let heading = req.heading
-                        withAnimation(.easeOut(duration: 0.18)) {
-                            scrollProxy.scrollTo("editor-segment-\(heading.segmentIndex)", anchor: .top)
+                    if completionSession.isOpen {
+                        KnowledgeCompletionPopoverView(session: completionSession) { idx in
+                            acceptCompletion(at: idx)
                         }
-                        selectionToken += 1
-                        selectionRequest = KnowledgeTextSelectionRequest(
-                            token: selectionToken,
-                            segmentIndex: heading.segmentIndex,
-                            range: NSRange(location: heading.utf16Location, length: heading.utf16Length)
-                        )
+                        .padding(.leading, 28)
+                        .padding(.bottom, 16)
+                        .transition(.opacity)
+                    }
+
+                    if isFileDropTargeted || draggedKnowledgeItem != nil {
+                        dropOverlay
+                            .allowsHitTesting(false)
+                            .transition(.opacity)
                     }
                 }
-                if completionSession.isOpen {
-                    KnowledgeCompletionPopoverView(session: completionSession) { idx in
-                        acceptCompletion(at: idx)
-                    }
-                    .padding(.leading, 28)
-                    .padding(.bottom, 16)
-                    .transition(.opacity)
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .onDrop(of: [.fileURL, .utf8PlainText], isTargeted: $isFileDropTargeted) { providers in
+                    handleEditorPaneDrop(providers)
                 }
 
-                if isFileDropTargeted {
-                    fileDropOverlay
-                        .allowsHitTesting(false)
-                        .transition(.opacity)
+                if inlineDrawerMode != nil {
+                    Divider().overlay(p.border)
+                    KnowledgeInlineDrawerView(
+                        page: page,
+                        mode: $inlineDrawerMode,
+                        headings: currentHeadings,
+                        backlinks: currentBacklinks,
+                        outgoingResolved: currentOutgoingLinks.resolved,
+                        outgoingUnresolved: currentOutgoingLinks.unresolved,
+                        unlinkedMentions: currentUnlinkedMentions,
+                        onJumpHeading: { heading in
+                            localHeadingJumpToken += 1
+                            localHeadingJumpRequest = KnowledgeHeadingJumpRequest(
+                                token: localHeadingJumpToken,
+                                pageId: page.id,
+                                heading: heading
+                            )
+                        },
+                        onLinkMention: { mention in
+                            linkUnlinkedMention(mention)
+                        },
+                        linkingMentionId: linkingMentionId
+                    )
+                    .transition(.move(edge: .trailing))
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .dropDestination(for: URL.self) { urls, _ in
-                let fileURLs = urls.filter(\.isFileURL)
-                guard !fileURLs.isEmpty else { return false }
-                handleDroppedFiles(fileURLs, segmentIndex: nil, utf16Offset: nil)
-                return true
-            } isTargeted: { targeted in
-                isFileDropTargeted = targeted
-            }
         }
         .background(p.background)
         .task(id: page.id) {
+            context.store.load(networkRequest)
+            context.store.load(mentionCandidatesRequest)
+            context.store.load(KnowledgeShellController.attachmentsRequest)
             await loadCompletionCandidates()
         }
         .onChange(of: page.embeds) { _, nextEmbeds in
@@ -225,6 +287,7 @@ struct KnowledgeEditorView: View {
         }
         .onDisappear {
             onRegisterSave?(nil)
+            onSelectedEmbedChange?(nil, [])
             autosaveTask?.cancel()
             if context.find.searcher === findBridge {
                 context.find.searcher = nil
@@ -275,8 +338,8 @@ struct KnowledgeEditorView: View {
                         .frame(width: 24, height: 24)
                 }
                 .buttonStyle(.borderless)
-                .keyboardShortcut("k", modifiers: .command)
-                .knowledgeToolbarTooltip("Insert link", hint: "\u{2318}K")
+                .keyboardShortcut("k", modifiers: [.command, .option])
+                .knowledgeToolbarTooltip("Insert link", hint: "\u{2325}\u{2318}K")
                 .popover(isPresented: $showLinkPopover) {
                     HStack(spacing: 6) {
                         TextField("https://\u{2026}", text: $linkURLDraft)
@@ -333,6 +396,63 @@ struct KnowledgeEditorView: View {
             .menuIndicator(.hidden)
             .fixedSize()
             .knowledgeToolbarTooltip("Export or copy", alignment: .bottomTrailing)
+
+            let headingCount = currentHeadings.count
+            let linksBadgeCount = currentBacklinks.count + currentUnlinkedMentions.count
+
+            Button {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    inlineDrawerMode = inlineDrawerMode == .outline ? nil : .outline
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "list.bullet.indent")
+                        .font(.system(size: 11.5))
+                    if headingCount > 0 {
+                        Text("\(headingCount)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                }
+                .foregroundStyle(inlineDrawerMode == .outline ? p.accent : p.secondaryText)
+                .padding(.horizontal, 5)
+                .frame(height: 24)
+                .background(
+                    inlineDrawerMode == .outline ? theme.swiftUIColor("accent-soft", fallback: p.selected) : .clear,
+                    in: RoundedRectangle(cornerRadius: 5)
+                )
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("o", modifiers: [.command, .option])
+            .knowledgeToolbarTooltip("Heading Outline (TOC)", hint: "\u{2325}\u{2318}O", alignment: .bottomTrailing)
+
+            Button {
+                withAnimation(.easeOut(duration: 0.16)) {
+                    inlineDrawerMode = inlineDrawerMode == .backlinks ? nil : .backlinks
+                }
+            } label: {
+                HStack(spacing: 3) {
+                    Image(systemName: "arrow.triangle.branch")
+                        .font(.system(size: 11.5))
+                    if linksBadgeCount > 0 {
+                        Text("\(linksBadgeCount)")
+                            .font(.system(size: 10, weight: .semibold))
+                            .monospacedDigit()
+                    }
+                }
+                .foregroundStyle(inlineDrawerMode == .backlinks ? p.accent : p.secondaryText)
+                .padding(.horizontal, 5)
+                .frame(height: 24)
+                .background(
+                    inlineDrawerMode == .backlinks ? theme.swiftUIColor("accent-soft", fallback: p.selected) : .clear,
+                    in: RoundedRectangle(cornerRadius: 5)
+                )
+            }
+            .buttonStyle(.borderless)
+            .keyboardShortcut("b", modifiers: [.command, .option])
+            .knowledgeToolbarTooltip("Backlinks & Unlinked Mentions", hint: "\u{2325}\u{2318}B", alignment: .bottomTrailing)
+
+            Divider().frame(height: 14).overlay(p.border).padding(.horizontal, 2)
 
             Button {
                 showFindBar.toggle()
@@ -437,8 +557,10 @@ struct KnowledgeEditorView: View {
     private var pageHeader: some View {
         let p = theme.palette
         let matchedSpaces = linkedSpacesForPage
+        let backlinksCount = currentBacklinks.count
+        let mentionsCount = currentUnlinkedMentions.count
         return VStack(alignment: .leading, spacing: 4) {
-            if (page.path != nil && !(page.path ?? "").isEmpty) || !matchedSpaces.isEmpty {
+            if (page.path != nil && !(page.path ?? "").isEmpty) || !matchedSpaces.isEmpty || backlinksCount > 0 || mentionsCount > 0 {
                 HStack(spacing: 8) {
                     if let path = page.path, !path.isEmpty {
                         Text(path)
@@ -465,6 +587,31 @@ struct KnowledgeEditorView: View {
                         .buttonStyle(.plain)
                         .help("Open \(sp.name) Space")
                     }
+                    if backlinksCount > 0 || mentionsCount > 0 {
+                        Button {
+                            withAnimation(.easeOut(duration: 0.16)) {
+                                inlineDrawerMode = inlineDrawerMode == .backlinks ? nil : .backlinks
+                            }
+                        } label: {
+                            HStack(spacing: 4) {
+                                Image(systemName: "arrow.triangle.branch")
+                                    .font(.system(size: 9.5))
+                                    .foregroundStyle(p.accent)
+                                Text(backlinksPillLabel(backlinks: backlinksCount, mentions: mentionsCount))
+                                    .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                                    .foregroundStyle(p.secondaryText)
+                            }
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 2)
+                            .background(
+                                inlineDrawerMode == .backlinks ? theme.swiftUIColor("accent-soft", fallback: p.selected) : p.surface,
+                                in: Capsule()
+                            )
+                            .overlay(Capsule().stroke(inlineDrawerMode == .backlinks ? p.accent : p.border))
+                        }
+                        .buttonStyle(.plain)
+                        .help("Toggle Backlinks & Unlinked Mentions")
+                    }
                 }
             }
             Text(page.title.isEmpty ? "Untitled" : page.title)
@@ -480,6 +627,17 @@ struct KnowledgeEditorView: View {
                 }
             }
         }
+    }
+
+    private func backlinksPillLabel(backlinks: Int, mentions: Int) -> String {
+        var parts: [String] = []
+        if backlinks > 0 {
+            parts.append("\(backlinks) \(backlinks == 1 ? "backlink" : "backlinks")")
+        }
+        if mentions > 0 {
+            parts.append("\(mentions) unlinked")
+        }
+        return parts.joined(separator: " \u{00B7} ")
     }
 
     private var segmentsColumn: some View {
@@ -509,16 +667,37 @@ struct KnowledgeEditorView: View {
             activeFindMatchRange: activeProseMatchRange(forSegment: index),
             selectionRequest: selectionRequest,
             segmentIndex: index,
+            selectedEmbedID: selectedEmbedID,
             onTextChange: { updated, range in handleProseEdit(updated, selection: range, at: index) },
             onSelectionChange: { range, isFocused in handleProseSelection(range, isFocused: isFocused, at: index) },
             onOpenLink: { target in openWikiLink(target) },
             onCompletionKey: { action in handleCompletionKey(action) },
             onEmbedLayoutChange: { embedLayoutVersion &+= 1 },
             onDropFiles: { urls, offset in
-                handleDroppedFiles(urls, segmentIndex: index, utf16Offset: offset)
+                handleDroppedFiles(urls, segmentIndex: index, utf16Offset: offset, replacementRange: nil)
             },
             onFileDragActiveChange: { active in
                 isFileDropTargeted = active
+            },
+            onPasteFiles: { urls, range in
+                handleDroppedFiles(urls, segmentIndex: index, utf16Offset: range.location, replacementRange: range)
+            },
+            onPasteImageData: { data, filename, range in
+                handlePastedImageData(data, filename: filename, segmentIndex: index, replacementRange: range)
+            },
+            onDropKnowledgeItem: { item, offset, optionHeld in
+                handleDroppedKnowledgeItem(item, segmentIndex: index, utf16Offset: offset, optionHeld: optionHeld)
+            },
+            onKnowledgeDragActiveChange: { item in
+                draggedKnowledgeItem = item
+            },
+            onResizeImage: { placement, width in
+                handleResizeImage(placement: placement, newWidth: width, segmentIndex: index)
+            },
+            onSelectEmbed: { placement in
+                selectedEmbedID = placement?.id
+                let allEmbeds = resolvedEmbeds.filter { $0.available && ($0.url?.isEmpty == false) }
+                onSelectedEmbedChange?(placement?.embed, allEmbeds)
             }
         )
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -707,8 +886,8 @@ struct KnowledgeEditorView: View {
             return
         }
         completionSegmentIndex = segmentIndex
-        let combined = remoteCandidates + currentDocumentCandidates()
-        completionSession.update(text: text, caretUTF16: selection.location, allCandidates: combined, limit: 20)
+        let combined = remoteCandidates + liveAttachmentCandidates() + currentDocumentCandidates()
+        completionSession.update(text: text, caretUTF16: selection.location, allCandidates: combined, limit: 24)
     }
 
     private func handleCompletionKey(_ action: KnowledgeTextKeyAction) -> Bool {
@@ -724,7 +903,13 @@ struct KnowledgeEditorView: View {
             completionSession.dismiss()
             return true
         case .accept:
+            let acceptedCandidate = (completionSession.activeIndex >= 0 && completionSession.activeIndex < completionSession.candidates.count)
+                ? completionSession.candidates[completionSession.activeIndex]
+                : nil
             guard let insertion = completionSession.acceptActive() else { return false }
+            if let acceptedCandidate, acceptedCandidate.kind == .embed {
+                preloadInlineEmbed(forRef: acceptedCandidate.insertRef)
+            }
             applyCompletionInsertion(insertion)
             return true
         }
@@ -733,9 +918,40 @@ struct KnowledgeEditorView: View {
     private func acceptCompletion(at index: Int) {
         guard let trigger = completionSession.trigger,
               index >= 0, index < completionSession.candidates.count else { return }
-        let insertion = KnowledgeCompletionLogic.insertion(for: completionSession.candidates[index], trigger: trigger)
+        let candidate = completionSession.candidates[index]
+        let insertion = KnowledgeCompletionLogic.insertion(for: candidate, trigger: trigger)
         completionSession.close()
+        if candidate.kind == .embed {
+            preloadInlineEmbed(forRef: candidate.insertRef)
+        }
         applyCompletionInsertion(insertion)
+    }
+
+    private func preloadInlineEmbed(forRef insertRef: String) {
+        let storeAttachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
+        if let att = storeAttachments.first(where: { $0.ref == insertRef }) {
+            let embed = att.asKnowledgeEmbed()
+            if !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+                resolvedEmbeds.append(embed)
+                embedLayoutVersion &+= 1
+            }
+        }
+    }
+
+    private func liveAttachmentCandidates() -> [KnowledgeCompletionCandidate] {
+        let storeAttachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
+        return storeAttachments.map { att in
+            let typeText = KnowledgeAttachmentActions.typeLabel(for: att.contentType, filename: att.filename)
+            let sizeText = KnowledgeAttachmentActions.formattedSize(att.sizeBytes)
+            let detailParts = [typeText, sizeText.isEmpty ? nil : sizeText, att.usageSummary, att.path].compactMap { $0 }
+            return KnowledgeCompletionCandidate(
+                kind: .embed,
+                title: att.filename.isEmpty ? att.ref : att.filename,
+                insertRef: att.ref,
+                detail: detailParts.joined(separator: " \u{00B7} "),
+                symbolName: KnowledgeAttachmentActions.sfSymbol(for: att.contentType, filename: att.filename)
+            )
+        }
     }
 
     private func applyCompletionInsertion(_ insertion: KnowledgeCompletionInsertion) {
@@ -795,42 +1011,51 @@ struct KnowledgeEditorView: View {
             }
         }
 
-        if let attachments = try? await client.send(KnowledgeAPI.listAttachments()) {
-            for att in attachments.attachments {
-                candidates.append(KnowledgeCompletionCandidate(
-                    kind: .embed,
-                    title: att.filename.isEmpty ? att.ref : att.filename,
-                    insertRef: att.ref,
-                    detail: att.path
-                ))
-            }
-        } else if let assets = try? await client.send(KnowledgeAPI.listAssets()) {
-            for asset in assets.images {
-                candidates.append(KnowledgeCompletionCandidate(
-                    kind: .embed,
-                    title: asset.title.isEmpty ? asset.ref : asset.title,
-                    insertRef: asset.ref,
-                    detail: asset.contentType
-                ))
-            }
+        if context.store.entry(KnowledgeShellController.attachmentsRequest).data == nil {
+            _ = await context.store.refetch(KnowledgeShellController.attachmentsRequest)
         }
         remoteCandidates = candidates
     }
 
-    // MARK: - Finder File Drag & Drop
+    // MARK: - Finder File Drop, Clipboard Paste, Sidebar Drops & Image Resize
 
-    private var fileDropOverlay: some View {
+    private var dropOverlay: some View {
         let p = theme.palette
+        let isOptionHeld = NSEvent.modifierFlags.contains(.option)
+        let titleText: String
+        let subtitleText: String
+        let symbolName: String
+        if let item = draggedKnowledgeItem {
+            switch item.kind {
+            case .page:
+                symbolName = isOptionHeld ? "doc.richtext" : "link.circle.fill"
+                titleText = isOptionHeld ? "Drop to embed \u{201C}\(item.title)\u{201D}" : "Drop to link \u{201C}\(item.title)\u{201D}"
+                subtitleText = isOptionHeld ? "Inserts ![[embed]] (release Option for [[wikilink]])" : "Inserts [[wikilink]] (hold Option for ![[embed]])"
+            case .attachment:
+                symbolName = "paperclip.circle.fill"
+                titleText = "Drop to embed \u{201C}\(item.title)\u{201D}"
+                subtitleText = "Inserts ![[...]] inline preview"
+            case .folder:
+                symbolName = "paperclip.circle.fill"
+                titleText = "Drop files to attach"
+                subtitleText = "Saved in attachments/ and displayed inline"
+            }
+        } else {
+            symbolName = "paperclip.circle.fill"
+            titleText = "Drop files to attach"
+            subtitleText = "Saved in attachments/ and displayed inline"
+        }
+
         return ZStack {
             p.background.opacity(0.75)
             VStack(spacing: 8) {
-                Image(systemName: "paperclip.circle.fill")
+                Image(systemName: symbolName)
                     .font(.system(size: 34))
                     .foregroundStyle(p.accent)
-                Text("Drop files to attach")
+                Text(titleText)
                     .vesperText(.heading, theme)
                     .foregroundStyle(p.text)
-                Text("Saved in attachments/ and displayed inline")
+                Text(subtitleText)
                     .vesperText(.small, theme)
                     .foregroundStyle(p.secondaryText)
             }
@@ -846,7 +1071,238 @@ struct KnowledgeEditorView: View {
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
 
-    private func handleDroppedFiles(_ urls: [URL], segmentIndex: Int?, utf16Offset: Int?) {
+    private func handleEditorPaneDrop(_ providers: [NSItemProvider]) -> Bool {
+        let optionHeld = NSEvent.modifierFlags.contains(.option)
+        let fileProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }
+        if !fileProviders.isEmpty {
+            Task { @MainActor in
+                var urls: [URL] = []
+                for provider in fileProviders {
+                    if let url = await loadFileURL(from: provider) {
+                        urls.append(url)
+                    }
+                }
+                if !urls.isEmpty {
+                    handleDroppedFiles(urls, segmentIndex: nil, utf16Offset: nil, replacementRange: nil)
+                }
+            }
+            return true
+        }
+
+        let textProviders = providers.filter { $0.hasItemConformingToTypeIdentifier(UTType.utf8PlainText.identifier) }
+        if let first = textProviders.first {
+            Task { @MainActor in
+                if let raw = await loadPlainString(from: first),
+                   let item = KnowledgeDragItem.decodeDragPayload(raw) {
+                    handleDroppedKnowledgeItem(item, segmentIndex: nil, utf16Offset: nil, optionHeld: optionHeld)
+                }
+            }
+            return true
+        }
+        return false
+    }
+
+    private func loadFileURL(from provider: NSItemProvider) async -> URL? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                if let url = item as? URL {
+                    continuation.resume(returning: url.isFileURL ? url : nil)
+                } else if let data = item as? Data, let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    continuation.resume(returning: url.isFileURL ? url : nil)
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private func loadPlainString(from provider: NSItemProvider) async -> String? {
+        await withCheckedContinuation { continuation in
+            provider.loadItem(forTypeIdentifier: UTType.utf8PlainText.identifier, options: nil) { item, _ in
+                if let s = item as? String {
+                    continuation.resume(returning: s)
+                } else if let data = item as? Data, let s = String(data: data, encoding: .utf8) {
+                    continuation.resume(returning: s)
+                } else {
+                    continuation.resume(returning: nil)
+                }
+            }
+        }
+    }
+
+    private func handleDroppedKnowledgeItem(
+        _ item: KnowledgeDragItem,
+        segmentIndex: Int?,
+        utf16Offset: Int?,
+        optionHeld: Bool
+    ) {
+        guard let markdown = KnowledgeShellLogic.droppedMarkdown(for: item, optionHeld: optionHeld) else { return }
+
+        if item.kind == .attachment {
+            if let embed = item.asKnowledgeEmbed(), !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+                resolvedEmbeds.append(embed)
+            }
+            insertDroppedEmbedBlock(markdown, preferredSegmentIndex: segmentIndex, preferredUTF16Offset: utf16Offset, replacementRange: nil)
+            embedLayoutVersion &+= 1
+            noteDocumentEdited()
+            Task { @MainActor in
+                await saveNow()
+                context.store.invalidate(KnowledgeAPI.invalidation)
+            }
+            return
+        }
+
+        // Page drop: inline `[[link]]` by default, or standalone `![[embed]]` when Option is held.
+        if optionHeld {
+            insertDroppedEmbedBlock(markdown, preferredSegmentIndex: segmentIndex, preferredUTF16Offset: utf16Offset, replacementRange: nil)
+            noteDocumentEdited()
+            Task { @MainActor in
+                await saveNow()
+            }
+        } else {
+            let targetSeg = segmentIndex ?? min(activeSelectionSegment, max(0, document.segments.count - 1))
+            if let text = document.proseText(at: targetSeg) {
+                let ns = text as NSString
+                let offset = max(0, min(utf16Offset ?? (activeSelectionRange.location + activeSelectionRange.length), ns.length))
+                let caretAfter = offset + (markdown as NSString).length
+                let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: targetSeg, utf16Offset: caretAfter))
+                if document.replaceProse(in: targetSeg, range: NSRange(location: offset, length: 0), with: markdown, newSelection: newSel) {
+                    activeSelectionSegment = targetSeg
+                    activeSelectionRange = NSRange(location: caretAfter, length: 0)
+                    selectionToken += 1
+                    selectionRequest = KnowledgeTextSelectionRequest(
+                        token: selectionToken,
+                        segmentIndex: targetSeg,
+                        range: NSRange(location: caretAfter, length: 0)
+                    )
+                    noteDocumentEdited()
+                }
+            } else {
+                insertDroppedEmbedBlock(markdown, preferredSegmentIndex: segmentIndex, preferredUTF16Offset: utf16Offset, replacementRange: nil)
+                noteDocumentEdited()
+            }
+        }
+    }
+
+    private func handlePastedImageData(_ data: Data, filename: String, segmentIndex: Int, replacementRange: NSRange) {
+        guard let client = context.store.client, !data.isEmpty else { return }
+        let maxBytes = 512 * 1024 * 1024
+        guard data.count <= maxBytes else {
+            context.showToast(ToastItemModel(id: "knowledge.paste.size", title: "Image exceeds 512 MB limit", tone: .error))
+            return
+        }
+        uploadingFileCount += 1
+        Task { @MainActor in
+            defer { uploadingFileCount = max(0, uploadingFileCount - 1) }
+            do {
+                let uploaded = try await client.send(KnowledgeAPI.uploadAsset(data: data, filename: filename))
+                let embed = uploaded.asKnowledgeEmbed()
+                if !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+                    resolvedEmbeds.append(embed)
+                }
+                let block = KnowledgeShellLogic.markdownEmbedBlock(for: [uploaded.ref])
+                insertDroppedEmbedBlock(
+                    block,
+                    preferredSegmentIndex: segmentIndex,
+                    preferredUTF16Offset: replacementRange.location,
+                    replacementRange: replacementRange
+                )
+                embedLayoutVersion &+= 1
+                noteDocumentEdited()
+                await saveNow()
+                context.store.invalidate(KnowledgeAPI.invalidation)
+                _ = await context.store.refetch(KnowledgeShellController.attachmentsRequest)
+                context.showToast(ToastItemModel(
+                    id: "knowledge.paste.image.ok",
+                    title: "Saved \(uploaded.filename ?? filename) to attachments/",
+                    tone: .success
+                ))
+            } catch {
+                context.showToast(ToastItemModel(
+                    id: "knowledge.paste.image.err",
+                    title: "Couldn\u{2019}t paste image",
+                    description: (error as? APIError)?.userMessage ?? error.localizedDescription,
+                    tone: .error
+                ))
+            }
+        }
+    }
+
+    private func handleResizeImage(placement: KnowledgeInlineEmbedPlacement, newWidth: Int?, segmentIndex: Int) {
+        guard let prose = document.proseText(at: segmentIndex) else { return }
+        let ns = prose as NSString
+        guard placement.tokenRange.location >= 0,
+              placement.tokenRange.location + placement.tokenRange.length <= ns.length else { return }
+        let currentToken = ns.substring(with: placement.tokenRange)
+        let updatedToken = KnowledgeMarkdownSyntax.updatingEmbedWidth(in: currentToken, width: newWidth)
+        guard updatedToken != currentToken else { return }
+        let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: segmentIndex, utf16Offset: activeSelectionRange.location))
+        if document.replaceProse(in: segmentIndex, range: placement.tokenRange, with: updatedToken, newSelection: newSel) {
+            embedLayoutVersion &+= 1
+            noteDocumentEdited()
+        }
+    }
+
+    private func jumpToHeading(_ heading: KnowledgeOutlineHeading, scrollProxy: ScrollViewProxy) {
+        withAnimation(.easeOut(duration: 0.18)) {
+            scrollProxy.scrollTo("editor-segment-\(heading.segmentIndex)", anchor: .top)
+        }
+        selectionToken += 1
+        selectionRequest = KnowledgeTextSelectionRequest(
+            token: selectionToken,
+            segmentIndex: heading.segmentIndex,
+            range: NSRange(location: heading.utf16Location, length: heading.utf16Length)
+        )
+    }
+
+    private func linkUnlinkedMention(_ mention: KnowledgeUnlinkedMention) {
+        guard let client = context.store.client else { return }
+        linkingMentionId = mention.id
+        Task { @MainActor in
+            defer { linkingMentionId = nil }
+            do {
+                let sourcePage = try await client.send(KnowledgeAPI.getPage(id: mention.pageId))
+                guard let body = sourcePage.bodyMd,
+                      let patched = KnowledgePanelsLogic.linkFirstMention(
+                        in: body,
+                        term: mention.matchedTerm,
+                        targetTitle: page.title
+                      ) else {
+                    context.showToast(ToastItemModel(
+                        id: "knowledge.mention.miss",
+                        title: "Couldn\u{2019}t find unlinked mention in \(mention.pageTitle)",
+                        tone: .error
+                    ))
+                    return
+                }
+                _ = try await context.store.mutate(
+                    KnowledgeAPI.updatePage(
+                        id: sourcePage.id,
+                        body: KnowledgePageInput(
+                            bodyMd: patched,
+                            baseVersionId: sourcePage.versionId,
+                            note: "Linked mention to \(page.title)"
+                        )
+                    ),
+                    invalidating: KnowledgeAPI.invalidation
+                )
+                context.showToast(ToastItemModel(
+                    id: "knowledge.mention.linked",
+                    title: "Linked mention in \(mention.pageTitle)",
+                    tone: .success
+                ))
+            } catch {
+                context.showToast(ToastItemModel(
+                    id: "knowledge.mention.err",
+                    title: "Couldn\u{2019}t link mention",
+                    description: (error as? APIError)?.userMessage ?? error.localizedDescription,
+                    tone: .error
+                ))
+            }
+        }
+    }
+
+    private func handleDroppedFiles(_ urls: [URL], segmentIndex: Int?, utf16Offset: Int?, replacementRange: NSRange?) {
         guard let client = context.store.client else { return }
         let maxBytes = 512 * 1024 * 1024
         var validFiles: [URL] = []
@@ -922,11 +1378,17 @@ struct KnowledgeEditorView: View {
             }
 
             let block = KnowledgeShellLogic.markdownEmbedBlock(for: uploadedRefs)
-            insertDroppedEmbedBlock(block, preferredSegmentIndex: segmentIndex, preferredUTF16Offset: utf16Offset)
+            insertDroppedEmbedBlock(
+                block,
+                preferredSegmentIndex: segmentIndex,
+                preferredUTF16Offset: utf16Offset,
+                replacementRange: replacementRange
+            )
             embedLayoutVersion &+= 1
             noteDocumentEdited()
             await saveNow()
             context.store.invalidate(KnowledgeAPI.invalidation)
+            _ = await context.store.refetch(KnowledgeShellController.attachmentsRequest)
             await loadCompletionCandidates()
 
             context.showToast(ToastItemModel(
@@ -939,24 +1401,37 @@ struct KnowledgeEditorView: View {
         }
     }
 
-    private func insertDroppedEmbedBlock(_ block: String, preferredSegmentIndex: Int?, preferredUTF16Offset: Int?) {
+    private func insertDroppedEmbedBlock(
+        _ block: String,
+        preferredSegmentIndex: Int?,
+        preferredUTF16Offset: Int?,
+        replacementRange: NSRange?
+    ) {
         let targetSeg = preferredSegmentIndex ?? min(activeSelectionSegment, max(0, document.segments.count - 1))
         if let text = document.proseText(at: targetSeg) {
             let ns = text as NSString
-            let offset: Int
-            if let preferredUTF16Offset {
-                offset = max(0, min(preferredUTF16Offset, ns.length))
-            } else if targetSeg == activeSelectionSegment {
-                offset = max(0, min(activeSelectionRange.location + activeSelectionRange.length, ns.length))
+            let replaceRange: NSRange
+            if let replacementRange {
+                let loc = max(0, min(replacementRange.location, ns.length))
+                let len = max(0, min(replacementRange.length, ns.length - loc))
+                replaceRange = NSRange(location: loc, length: len)
             } else {
-                offset = ns.length
+                let offset: Int
+                if let preferredUTF16Offset {
+                    offset = max(0, min(preferredUTF16Offset, ns.length))
+                } else if targetSeg == activeSelectionSegment {
+                    offset = max(0, min(activeSelectionRange.location + activeSelectionRange.length, ns.length))
+                } else {
+                    offset = ns.length
+                }
+                replaceRange = NSRange(location: offset, length: 0)
             }
+            let offset = replaceRange.location
             let prefix = (offset > 0 && ns.substring(with: NSRange(location: offset - 1, length: 1)) != "\n") ? "\n" : ""
-            let suffix = (offset < ns.length && ns.substring(with: NSRange(location: offset, length: 1)) != "\n") ? "\n" : "\n"
-            let inserted = "\(prefix)\(block)\(suffix)"
+            let inserted = "\(prefix)\(block)\n"
             let caretAfter = offset + (inserted as NSString).length
             let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: targetSeg, utf16Offset: caretAfter))
-            if document.replaceProse(in: targetSeg, range: NSRange(location: offset, length: 0), with: inserted, newSelection: newSel) {
+            if document.replaceProse(in: targetSeg, range: replaceRange, with: inserted, newSelection: newSel) {
                 activeSelectionSegment = targetSeg
                 activeSelectionRange = NSRange(location: caretAfter, length: 0)
                 selectionToken += 1

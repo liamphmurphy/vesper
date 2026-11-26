@@ -40,6 +40,7 @@ struct KnowledgeTextView: NSViewRepresentable {
     var selectionRequest: KnowledgeTextSelectionRequest? = nil
     var segmentIndex: Int = 0
     var minHeight: CGFloat = 28
+    var selectedEmbedID: String? = nil
 
     let onTextChange: (String, NSRange) -> Void
     let onSelectionChange: (NSRange, Bool) -> Void
@@ -48,6 +49,12 @@ struct KnowledgeTextView: NSViewRepresentable {
     var onEmbedLayoutChange: () -> Void = {}
     var onDropFiles: ([URL], Int) -> Void = { _, _ in }
     var onFileDragActiveChange: (Bool) -> Void = { _ in }
+    var onPasteFiles: ([URL], NSRange) -> Void = { _, _ in }
+    var onPasteImageData: (Data, String, NSRange) -> Void = { _, _, _ in }
+    var onDropKnowledgeItem: (KnowledgeDragItem, Int, Bool) -> Void = { _, _, _ in }
+    var onKnowledgeDragActiveChange: (KnowledgeDragItem?) -> Void = { _ in }
+    var onResizeImage: (KnowledgeInlineEmbedPlacement, Int?) -> Void = { _, _ in }
+    var onSelectEmbed: (KnowledgeInlineEmbedPlacement?) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -56,23 +63,7 @@ struct KnowledgeTextView: NSViewRepresentable {
     func makeNSView(context: Context) -> LivePreviewNSTextView {
         let view = LivePreviewNSTextView()
         view.delegate = context.coordinator
-        view.onCommandClickLink = { [weak coordinator = context.coordinator] target in
-            coordinator?.parent.onOpenLink(target)
-        }
-        view.onFocusChange = { [weak coordinator = context.coordinator, weak view] focused in
-            guard let coordinator, let view else { return }
-            coordinator.handleFocusChange(in: view, isFocused: focused)
-        }
-        view.onEmbedSizeChange = { [weak coordinator = context.coordinator, weak view] in
-            guard let coordinator, let view else { return }
-            coordinator.handleEmbedSizeChange(in: view)
-        }
-        view.onDropFiles = { [weak coordinator = context.coordinator] urls, offset in
-            coordinator?.parent.onDropFiles(urls, offset)
-        }
-        view.onFileDragActiveChange = { [weak coordinator = context.coordinator] active in
-            coordinator?.parent.onFileDragActiveChange(active)
-        }
+        wireCallbacks(on: view, coordinator: context.coordinator)
         view.string = text
         context.coordinator.applyStyling(to: view)
         return view
@@ -81,23 +72,7 @@ struct KnowledgeTextView: NSViewRepresentable {
     func updateNSView(_ view: LivePreviewNSTextView, context: Context) {
         let coordinator = context.coordinator
         coordinator.parent = self
-        view.onCommandClickLink = { [weak coordinator] target in
-            coordinator?.parent.onOpenLink(target)
-        }
-        view.onFocusChange = { [weak coordinator, weak view] focused in
-            guard let coordinator, let view else { return }
-            coordinator.handleFocusChange(in: view, isFocused: focused)
-        }
-        view.onEmbedSizeChange = { [weak coordinator, weak view] in
-            guard let coordinator, let view else { return }
-            coordinator.handleEmbedSizeChange(in: view)
-        }
-        view.onDropFiles = { [weak coordinator] urls, offset in
-            coordinator?.parent.onDropFiles(urls, offset)
-        }
-        view.onFileDragActiveChange = { [weak coordinator] active in
-            coordinator?.parent.onFileDragActiveChange(active)
-        }
+        wireCallbacks(on: view, coordinator: coordinator)
 
         coordinator.isUpdatingFromSwiftUI = true
         defer { coordinator.isUpdatingFromSwiftUI = false }
@@ -129,6 +104,44 @@ struct KnowledgeTextView: NSViewRepresentable {
         }
     }
 
+    private func wireCallbacks(on view: LivePreviewNSTextView, coordinator: Coordinator) {
+        view.onCommandClickLink = { [weak coordinator] target in
+            coordinator?.parent.onOpenLink(target)
+        }
+        view.onFocusChange = { [weak coordinator, weak view] focused in
+            guard let coordinator, let view else { return }
+            coordinator.handleFocusChange(in: view, isFocused: focused)
+        }
+        view.onEmbedSizeChange = { [weak coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            coordinator.handleEmbedSizeChange(in: view)
+        }
+        view.onDropFiles = { [weak coordinator] urls, offset in
+            coordinator?.parent.onDropFiles(urls, offset)
+        }
+        view.onFileDragActiveChange = { [weak coordinator] active in
+            coordinator?.parent.onFileDragActiveChange(active)
+        }
+        view.onPasteFiles = { [weak coordinator] urls, range in
+            coordinator?.parent.onPasteFiles(urls, range)
+        }
+        view.onPasteImageData = { [weak coordinator] data, filename, range in
+            coordinator?.parent.onPasteImageData(data, filename, range)
+        }
+        view.onDropKnowledgeItem = { [weak coordinator] item, offset, optionHeld in
+            coordinator?.parent.onDropKnowledgeItem(item, offset, optionHeld)
+        }
+        view.onKnowledgeDragActiveChange = { [weak coordinator] item in
+            coordinator?.parent.onKnowledgeDragActiveChange(item)
+        }
+        view.onResizeImage = { [weak coordinator] placement, width in
+            coordinator?.parent.onResizeImage(placement, width)
+        }
+        view.onSelectEmbed = { [weak coordinator] placement in
+            coordinator?.parent.onSelectEmbed(placement)
+        }
+    }
+
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: LivePreviewNSTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
         if view.updateContainerWidth(width) {
@@ -157,6 +170,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             var embeds: [KnowledgeEmbed]
             var embedSizes: [String: RoundedSize]
             var containerWidth: Int
+            var selectedEmbedID: String?
         }
 
         private struct RoundedSize: Equatable {
@@ -212,20 +226,51 @@ struct KnowledgeTextView: NSViewRepresentable {
         }
 
         func textView(_ textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            guard parent.isCompletionOpen else { return false }
-            switch commandSelector {
-            case #selector(NSResponder.moveUp(_:)):
-                return parent.onCompletionKey(.moveUp)
-            case #selector(NSResponder.moveDown(_:)):
-                return parent.onCompletionKey(.moveDown)
-            case #selector(NSResponder.insertTab(_:)),
-                 #selector(NSResponder.insertNewline(_:)):
-                return parent.onCompletionKey(.accept)
-            case #selector(NSResponder.cancelOperation(_:)):
-                return parent.onCompletionKey(.dismiss)
-            default:
+            if parent.isCompletionOpen {
+                switch commandSelector {
+                case #selector(NSResponder.moveUp(_:)):
+                    return parent.onCompletionKey(.moveUp)
+                case #selector(NSResponder.moveDown(_:)):
+                    return parent.onCompletionKey(.moveDown)
+                case #selector(NSResponder.insertTab(_:)),
+                     #selector(NSResponder.insertNewline(_:)):
+                    return parent.onCompletionKey(.accept)
+                case #selector(NSResponder.cancelOperation(_:)):
+                    return parent.onCompletionKey(.dismiss)
+                default:
+                    return false
+                }
+            }
+
+            guard let view = textView as? LivePreviewNSTextView, !view.hasMarkedText() else {
                 return false
             }
+
+            switch commandSelector {
+            case #selector(NSResponder.insertNewline(_:)):
+                if let res = KnowledgeSmartEditing.handleNewline(in: view.string, selection: view.selectedRange()) {
+                    view.applySmartEdit(res)
+                    return true
+                }
+            case #selector(NSResponder.insertTab(_:)):
+                if let res = KnowledgeSmartEditing.handleTab(in: view.string, selection: view.selectedRange(), outdent: false) {
+                    view.applySmartEdit(res)
+                    return true
+                }
+            case #selector(NSResponder.insertBacktab(_:)):
+                if let res = KnowledgeSmartEditing.handleTab(in: view.string, selection: view.selectedRange(), outdent: true) {
+                    view.applySmartEdit(res)
+                    return true
+                }
+            case #selector(NSResponder.deleteBackward(_:)):
+                if let res = KnowledgeSmartEditing.handleBackspace(in: view.string, selection: view.selectedRange()) {
+                    view.applySmartEdit(res)
+                    return true
+                }
+            default:
+                break
+            }
+            return false
         }
 
         /// Returns `true` when inline embed metrics or group layout changed and the view's fitting height may differ.
@@ -246,7 +291,8 @@ struct KnowledgeTextView: NSViewRepresentable {
                 activeFind: parent.activeFindMatchRange,
                 embeds: parent.embeds,
                 embedSizes: view.measuredEmbedSizes.mapValues(RoundedSize.init),
-                containerWidth: Int(ceil(containerWidth))
+                containerWidth: Int(ceil(containerWidth)),
+                selectedEmbedID: parent.selectedEmbedID
             )
             guard key != lastRenderedKey else { return false }
             lastRenderedKey = key
@@ -280,7 +326,13 @@ struct KnowledgeTextView: NSViewRepresentable {
             let fullLength = storage.length
             guard fullLength > 0 else {
                 view.cachedTokens = []
-                view.syncEmbedHosts(groups: [], theme: parent.theme, screenContext: parent.screenContext, containerWidth: containerWidth)
+                view.syncEmbedHosts(
+                    groups: [],
+                    theme: parent.theme,
+                    screenContext: parent.screenContext,
+                    containerWidth: containerWidth,
+                    selectedEmbedID: parent.selectedEmbedID
+                )
                 return view.updateEmbedLayout(groups: [], metricsByID: [:])
             }
 
@@ -300,7 +352,8 @@ struct KnowledgeTextView: NSViewRepresentable {
                 groups: embedGroups,
                 theme: parent.theme,
                 screenContext: parent.screenContext,
-                containerWidth: containerWidth
+                containerWidth: containerWidth,
+                selectedEmbedID: parent.selectedEmbedID
             )
 
             storage.beginEditing()
@@ -523,24 +576,27 @@ final class LivePreviewNSTextView: NSTextView {
         let id: String
         let hostView: NSHostingView<AnyView>
         var measuredSize: CGSize
-        var lastEmbeds: [KnowledgeEmbed]
+        var lastPlacements: [KnowledgeInlineEmbedPlacement]
         var lastMaxWidth: CGFloat
         var lastThemeMode: ColorMode
+        var lastSelectedEmbedID: String?
 
         init(
             id: String,
             hostView: NSHostingView<AnyView>,
             measuredSize: CGSize,
-            lastEmbeds: [KnowledgeEmbed],
+            lastPlacements: [KnowledgeInlineEmbedPlacement],
             lastMaxWidth: CGFloat,
-            lastThemeMode: ColorMode
+            lastThemeMode: ColorMode,
+            lastSelectedEmbedID: String?
         ) {
             self.id = id
             self.hostView = hostView
             self.measuredSize = measuredSize
-            self.lastEmbeds = lastEmbeds
+            self.lastPlacements = lastPlacements
             self.lastMaxWidth = lastMaxWidth
             self.lastThemeMode = lastThemeMode
+            self.lastSelectedEmbedID = lastSelectedEmbedID
         }
     }
 
@@ -551,6 +607,12 @@ final class LivePreviewNSTextView: NSTextView {
     var onEmbedSizeChange: (() -> Void)?
     var onDropFiles: (([URL], Int) -> Void)?
     var onFileDragActiveChange: ((Bool) -> Void)?
+    var onPasteFiles: (([URL], NSRange) -> Void)?
+    var onPasteImageData: ((Data, String, NSRange) -> Void)?
+    var onDropKnowledgeItem: ((KnowledgeDragItem, Int, Bool) -> Void)?
+    var onKnowledgeDragActiveChange: ((KnowledgeDragItem?) -> Void)?
+    var onResizeImage: ((KnowledgeInlineEmbedPlacement, Int?) -> Void)?
+    var onSelectEmbed: ((KnowledgeInlineEmbedPlacement?) -> Void)?
     private(set) var isFocusedEditor = false
 
     private var embedHosts: [String: MountedEmbedHost] = [:]
@@ -591,7 +653,7 @@ final class LivePreviewNSTextView: NSTextView {
         isVerticallyResizable = false
         isHorizontallyResizable = false
         autoresizingMask = [.width]
-        registerForDraggedTypes([.fileURL])
+        registerForDraggedTypes([.fileURL, .string])
     }
 
     @available(*, unavailable)
@@ -601,6 +663,7 @@ final class LivePreviewNSTextView: NSTextView {
         let ok = super.becomeFirstResponder()
         if ok {
             isFocusedEditor = true
+            onSelectEmbed?(nil)
             onFocusChange?(true)
         }
         return ok
@@ -615,32 +678,136 @@ final class LivePreviewNSTextView: NSTextView {
         return ok
     }
 
+    // MARK: - Smart Editing & Clipboard Paste
+
+    func applySmartEdit(_ result: KnowledgeMarkdownFormatting.EditResult) {
+        let current = string as NSString
+        let fullRange = NSRange(location: 0, length: current.length)
+        if result.text == string {
+            setSelectedRange(result.selection)
+            return
+        }
+        guard shouldChangeText(in: fullRange, replacementString: result.text) else { return }
+        replaceCharacters(in: fullRange, with: result.text)
+        let newLen = (string as NSString).length
+        let loc = max(0, min(result.selection.location, newLen))
+        let len = max(0, min(result.selection.length, newLen - loc))
+        setSelectedRange(NSRange(location: loc, length: len))
+        didChangeText()
+    }
+
+    override func insertText(_ insertString: Any, replacementRange: NSRange) {
+        if !hasMarkedText(),
+           replacementRange.location == NSNotFound,
+           let raw: String = (insertString as? String) ?? (insertString as? NSAttributedString)?.string,
+           raw.count == 1,
+           let res = KnowledgeSmartEditing.handleTypedText(raw, in: string, selection: selectedRange()) {
+            applySmartEdit(res)
+            return
+        }
+        super.insertText(insertString, replacementRange: replacementRange)
+    }
+
     override func paste(_ sender: Any?) {
+        let pb = NSPasteboard.general
+        let range = selectedRange()
+
+        // 1. Copied Finder files (`Cmd+C` in Finder) take precedence over icon TIFFs and filenames.
+        let fileURLs = readFileURLs(from: pb)
+        if !fileURLs.isEmpty {
+            onPasteFiles?(fileURLs, range)
+            return
+        }
+
+        // 2. Screenshots (`Cmd+Ctrl+Shift+4`) and copied images.
+        if let (imageData, filename) = extractClipboardImage(from: pb) {
+            onPasteImageData?(imageData, filename, range)
+            return
+        }
+
+        // 3. Pasting a URL over selected text turns it into `[phrase](url)`.
+        if range.length > 0,
+           let pastedText = pb.string(forType: .string),
+           let res = KnowledgeMarkdownFormatting.pasteURLOverSelection(
+               text: string,
+               selection: range,
+               pastedString: pastedText
+           ) {
+            applySmartEdit(res)
+            return
+        }
+
         pasteAsPlainText(sender)
     }
 
-    // MARK: - Finder File Drag & Drop
-
-    private func draggedFileURLs(from sender: NSDraggingInfo) -> [URL] {
+    private func readFileURLs(from pasteboard: NSPasteboard) -> [URL] {
         let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
-        guard let objs = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else {
+        guard let objs = pasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else {
             return []
         }
         return objs.filter(\.isFileURL)
     }
 
+    private func extractClipboardImage(from pasteboard: NSPasteboard) -> (Data, String)? {
+        let explicitTypes: [(NSPasteboard.PasteboardType, String)] = [
+            (.png, "png"),
+            (NSPasteboard.PasteboardType("public.jpeg"), "jpg"),
+            (NSPasteboard.PasteboardType("com.compuserve.gif"), "gif"),
+            (NSPasteboard.PasteboardType("public.heic"), "heic"),
+            (NSPasteboard.PasteboardType("org.webmproject.webp"), "webp"),
+        ]
+        for (pbType, ext) in explicitTypes {
+            if let data = pasteboard.data(forType: pbType), !data.isEmpty {
+                return (data, KnowledgeMarkdownFormatting.screenshotFilename(extension: ext))
+            }
+        }
+        // Fallback for apps that copy TIFF-only images (e.g. Safari/Preview Copy Image).
+        // Skip TIFF if non-URL plain text is also on the pasteboard so rich-text copies paste as text.
+        if let tiffData = pasteboard.data(forType: .tiff), !tiffData.isEmpty {
+            let plain = pasteboard.string(forType: .string)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            let plainIsIgnorable = plain.isEmpty || KnowledgeMarkdownFormatting.pastableURL(from: plain) != nil
+            if plainIsIgnorable,
+               let rep = NSBitmapImageRep(data: tiffData),
+               let pngData = rep.representation(using: .png, properties: [:]),
+               !pngData.isEmpty {
+                return (pngData, KnowledgeMarkdownFormatting.screenshotFilename(extension: "png"))
+            }
+        }
+        return nil
+    }
+
+    // MARK: - Finder File & Sidebar Knowledge Drag & Drop
+
+    private func draggedFileURLs(from sender: NSDraggingInfo) -> [URL] {
+        readFileURLs(from: sender.draggingPasteboard)
+    }
+
+    private func draggedKnowledgeItem(from sender: NSDraggingInfo) -> KnowledgeDragItem? {
+        guard let raw = sender.draggingPasteboard.string(forType: .string),
+              let item = KnowledgeDragItem.decodeDragPayload(raw),
+              item.kind == .page || item.kind == .attachment else {
+            return nil
+        }
+        return item
+    }
+
     override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let urls = draggedFileURLs(from: sender)
-        if !urls.isEmpty {
+        if !draggedFileURLs(from: sender).isEmpty {
             onFileDragActiveChange?(true)
+            return .copy
+        }
+        if let item = draggedKnowledgeItem(from: sender) {
+            onKnowledgeDragActiveChange?(item)
             return .copy
         }
         return super.draggingEntered(sender)
     }
 
     override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        let urls = draggedFileURLs(from: sender)
-        if !urls.isEmpty {
+        if !draggedFileURLs(from: sender).isEmpty {
+            return .copy
+        }
+        if draggedKnowledgeItem(from: sender) != nil {
             return .copy
         }
         return super.draggingUpdated(sender)
@@ -648,25 +815,33 @@ final class LivePreviewNSTextView: NSTextView {
 
     override func draggingExited(_ sender: NSDraggingInfo?) {
         onFileDragActiveChange?(false)
+        onKnowledgeDragActiveChange?(nil)
         super.draggingExited(sender)
     }
 
     override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        if !draggedFileURLs(from: sender).isEmpty {
+        if !draggedFileURLs(from: sender).isEmpty || draggedKnowledgeItem(from: sender) != nil {
             return true
         }
         return super.prepareForDragOperation(sender)
     }
 
     override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let point = convert(sender.draggingLocation, from: nil)
+        let rawOffset = characterIndexForInsertion(at: point)
+        let maxLen = (string as NSString).length
+        let clampedOffset = rawOffset == NSNotFound ? maxLen : max(0, min(rawOffset, maxLen))
+
         let urls = draggedFileURLs(from: sender)
         if !urls.isEmpty {
             onFileDragActiveChange?(false)
-            let point = convert(sender.draggingLocation, from: nil)
-            let rawOffset = characterIndexForInsertion(at: point)
-            let maxLen = (string as NSString).length
-            let clampedOffset = rawOffset == NSNotFound ? maxLen : max(0, min(rawOffset, maxLen))
             onDropFiles?(urls, clampedOffset)
+            return true
+        }
+        if let item = draggedKnowledgeItem(from: sender) {
+            onKnowledgeDragActiveChange?(nil)
+            let optionHeld = NSEvent.modifierFlags.contains(.option)
+            onDropKnowledgeItem?(item, clampedOffset, optionHeld)
             return true
         }
         return super.performDragOperation(sender)
@@ -705,7 +880,8 @@ final class LivePreviewNSTextView: NSTextView {
         groups: [KnowledgeInlineEmbedParagraph],
         theme: ThemeTokens,
         screenContext: NativeScreenContext,
-        containerWidth: CGFloat
+        containerWidth: CGFloat,
+        selectedEmbedID: String?
     ) {
         let maxWidth = max(120, containerWidth)
         let activeIDs = Set(groups.map(\.id))
@@ -716,12 +892,18 @@ final class LivePreviewNSTextView: NSTextView {
         }
 
         for group in groups {
-            let groupEmbeds = group.placements.map(\.embed)
             let rootView = AnyView(
                 KnowledgeInlineEmbedGroupView(
                     placements: group.placements,
                     maxWidth: maxWidth,
                     fillsWidth: group.fillsContainerWidth,
+                    selectedEmbedID: selectedEmbedID,
+                    onSelectEmbed: { [weak self] placement in
+                        self?.onSelectEmbed?(placement)
+                    },
+                    onResizeImage: { [weak self] placement, width in
+                        self?.onResizeImage?(placement, width)
+                    },
                     onSizeChange: { [weak self] newSize in
                         self?.handleMeasuredSize(newSize, forGroupID: group.id)
                     }
@@ -731,14 +913,16 @@ final class LivePreviewNSTextView: NSTextView {
             )
 
             if let existing = embedHosts[group.id] {
-                let needsRootUpdate = existing.lastEmbeds != groupEmbeds
+                let needsRootUpdate = existing.lastPlacements != group.placements
                     || abs(existing.lastMaxWidth - maxWidth) > 0.5
                     || existing.lastThemeMode != theme.mode
+                    || existing.lastSelectedEmbedID != selectedEmbedID
                 if needsRootUpdate {
                     existing.hostView.rootView = rootView
-                    existing.lastEmbeds = groupEmbeds
+                    existing.lastPlacements = group.placements
                     existing.lastMaxWidth = maxWidth
                     existing.lastThemeMode = theme.mode
+                    existing.lastSelectedEmbedID = selectedEmbedID
                     let fitted = existing.hostView.fittingSize
                     if fitted.width > 1, fitted.height > 1 {
                         existing.measuredSize = fitted
@@ -760,9 +944,10 @@ final class LivePreviewNSTextView: NSTextView {
                     id: group.id,
                     hostView: hostView,
                     measuredSize: initialSize,
-                    lastEmbeds: groupEmbeds,
+                    lastPlacements: group.placements,
                     lastMaxWidth: maxWidth,
-                    lastThemeMode: theme.mode
+                    lastThemeMode: theme.mode,
+                    lastSelectedEmbedID: selectedEmbedID
                 )
             }
         }
