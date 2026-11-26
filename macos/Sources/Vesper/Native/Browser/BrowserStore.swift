@@ -4,65 +4,216 @@ import Observation
 import VesperCore
 import WebKit
 
+/// Live runtime state for one Browser profile (isolated tabs, groups, split view, bookmarks,
+/// history, WebExtensions, content blocker, and Keychain AutoFill scope).
+@MainActor
+@Observable
+final class BrowserProfileRuntime: Identifiable {
+    let id: UUID
+    var name: String
+    var icon: String
+    var color: BrowserProfileColor
+    let dataStoreID: UUID
+
+    var tabs: [BrowserTabSession] = []
+    var activeTabId: UUID?
+    var splitTabId: UUID?
+    var focusedPane: BrowserStore.SplitPane = .primary
+    var splitRatio: Double = 0.5
+    var tabGroups: [BrowserTabGroup] = []
+    var bookmarks: [BrowserBookmark] = []
+    var history: [BrowserHistoryEntry] = []
+    var adBlockDisabledHosts: [String] = []
+    var siteZooms: [String: Double] = [:]
+    var autofillNeverSaveHosts: [String] = []
+
+    let extensionHost: BrowserExtensionHost
+    let autofill: BrowserAutofillManager
+
+    @ObservationIgnored let blocker: BrowserContentBlockerManager
+    @ObservationIgnored var closedTabs: [BrowserTabRecord] = []
+
+    init(
+        profile: BrowserProfile,
+        dataDirectory: URL,
+        credentialStore: any BrowserCredentialStore
+    ) {
+        self.id = profile.id
+        self.name = profile.name
+        self.icon = profile.icon
+        self.color = profile.color
+        self.dataStoreID = profile.dataStoreID
+        self.splitRatio = profile.splitRatio
+        self.tabGroups = profile.tabGroups
+        self.bookmarks = profile.bookmarks
+        self.history = profile.history
+        self.adBlockDisabledHosts = profile.adBlockDisabledHosts
+        self.siteZooms = profile.siteZooms
+        self.autofillNeverSaveHosts = profile.autofillNeverSaveHosts
+        self.blocker = BrowserContentBlockerManager(profileID: profile.id)
+        self.extensionHost = BrowserExtensionHost(
+            profileID: profile.id,
+            dataStoreID: profile.dataStoreID,
+            dataDirectory: dataDirectory,
+            initialRecords: profile.extensions
+        )
+        self.autofill = BrowserAutofillManager(profileID: profile.id, store: credentialStore)
+    }
+
+    func persistedProfile() -> BrowserProfile {
+        BrowserProfile(
+            id: id,
+            name: name,
+            icon: icon,
+            color: color,
+            dataStoreID: dataStoreID,
+            tabs: tabs.map(\.record),
+            activeTabId: activeTabId,
+            splitTabId: splitTabId,
+            splitRatio: splitRatio,
+            tabGroups: tabGroups,
+            bookmarks: bookmarks,
+            history: history,
+            adBlockDisabledHosts: adBlockDisabledHosts,
+            siteZooms: siteZooms,
+            extensions: extensionHost.records,
+            autofillNeverSaveHosts: autofillNeverSaveHosts
+        )
+    }
+}
+
 /// App-wide state for Vesper's internal Browser (`AppModel.browser`).
 ///
-/// Living on `AppModel` means open web tabs, scroll positions, logged-in sessions, and active
-/// persona shares stay alive when switching between Chat, Knowledge, Spaces, and Browser.
+/// Living on `AppModel` means open web tabs, profiles, split panes, logged-in sessions,
+/// extensions, and active persona shares stay alive when switching between Chat, Knowledge,
+/// Spaces, and Browser.
 @MainActor
 @Observable
 final class BrowserStore {
-    private(set) var tabs: [BrowserTabSession] = []
-    var activeTabId: UUID?
-    private(set) var bookmarks: [BrowserBookmark] = []
-    private(set) var history: [BrowserHistoryEntry] = []
+    enum SplitPane: Equatable {
+        case primary
+        case secondary
+    }
+
+    private(set) var runtimes: [BrowserProfileRuntime] = []
+    var activeProfileId: UUID = BrowserProfile.defaultProfileID
+
     var adBlockEnabled: Bool = true
-    private(set) var adBlockDisabledHosts: [String] = []
     var openExternalLinksInBrowser: Bool = true
     var searchEngine: BrowserSearchEngine = .duckDuckGo
-    private(set) var siteZooms: [String: Double] = [:]
+    var autofillEnabled: Bool = true
 
     /// Server-side browser sharing config (personas, recent chats, never_share lists).
     private(set) var extensionConfig: BrowserExtensionConfig = BrowserExtensionConfig()
     private(set) var isRefreshingConfig = false
 
-    /// Incremented by `⌘L` so the omnibox focuses and selects its text.
+    /// UI triggers incremented by menu shortcuts so SwiftUI opens/focuses the matching control.
     var focusAddressBarTick: Int = 0
+    var openAutofillPopoverTick: Int = 0
+    var openExtensionsPopoverTick: Int = 0
+    var regionCaptureTabId: UUID?
 
     @ObservationIgnored private weak var app: AppModel?
+    @ObservationIgnored private let dataDirectory: URL
     @ObservationIgnored private let storageURL: URL
-    @ObservationIgnored private let blocker = BrowserContentBlockerManager()
-    @ObservationIgnored private var closedTabs: [BrowserTabRecord] = []
+    @ObservationIgnored private let credentialStore: any BrowserCredentialStore
     @ObservationIgnored private var saveTask: Task<Void, Never>?
     @ObservationIgnored private var sharePollTask: Task<Void, Never>?
     @ObservationIgnored private var didLoadInitialState = false
 
-    /// Ordered tabs matching the sidebar display: pinned first, then regular tabs.
+    // MARK: Active Profile Convenience Accessors
+
+    var currentRuntime: BrowserProfileRuntime {
+        if let match = runtimes.first(where: { $0.id == activeProfileId }) {
+            return match
+        }
+        return runtimes[0]
+    }
+
+    var profiles: [BrowserProfileRuntime] { runtimes }
+    var tabs: [BrowserTabSession] { currentRuntime.tabs }
+    var activeTabId: UUID? {
+        get { currentRuntime.activeTabId }
+        set { currentRuntime.activeTabId = newValue }
+    }
+    var splitTabId: UUID? {
+        get { currentRuntime.splitTabId }
+        set { currentRuntime.splitTabId = newValue }
+    }
+    var focusedPane: SplitPane {
+        get { currentRuntime.focusedPane }
+        set { currentRuntime.focusedPane = newValue }
+    }
+    var splitRatio: Double {
+        get { currentRuntime.splitRatio }
+        set { currentRuntime.splitRatio = min(0.8, max(0.2, newValue)) }
+    }
+    var tabGroups: [BrowserTabGroup] { currentRuntime.tabGroups }
+    var bookmarks: [BrowserBookmark] { currentRuntime.bookmarks }
+    var history: [BrowserHistoryEntry] { currentRuntime.history }
+    var adBlockDisabledHosts: [String] { currentRuntime.adBlockDisabledHosts }
+    var siteZooms: [String: Double] { currentRuntime.siteZooms }
+    var extensionHost: BrowserExtensionHost { currentRuntime.extensionHost }
+    var autofill: BrowserAutofillManager { currentRuntime.autofill }
+
+    /// Ordered tabs matching the sidebar display: pinned first, then grouped tabs, then ungrouped tabs.
     var orderedTabs: [BrowserTabSession] {
-        BrowserTabListLogic.displayOrder(tabs, isPinned: \.isPinned)
+        BrowserTabGroupLogic.displayOrder(
+            tabs: currentRuntime.tabs,
+            groups: currentRuntime.tabGroups,
+            isPinned: \.isPinned,
+            groupId: \.groupId
+        )
     }
 
-    var pinnedTabs: [BrowserTabSession] {
-        tabs.filter(\.isPinned)
-    }
+    var pinnedTabs: [BrowserTabSession] { currentRuntime.tabs.filter(\.isPinned) }
+    var regularTabs: [BrowserTabSession] { currentRuntime.tabs.filter { !$0.isPinned } }
 
-    var regularTabs: [BrowserTabSession] {
-        tabs.filter { !$0.isPinned }
-    }
-
-    var activeTab: BrowserTabSession? {
-        if let activeTabId, let match = tabs.first(where: { $0.id == activeTabId }) {
+    /// Primary (left) tab in the active profile.
+    var primaryTab: BrowserTabSession? {
+        if let activeId = currentRuntime.activeTabId,
+           let match = currentRuntime.tabs.first(where: { $0.id == activeId })
+        {
             return match
         }
         return orderedTabs.first
     }
 
-    var canReopenClosedTab: Bool { !closedTabs.isEmpty }
+    /// Secondary (right) tab when Split View is active.
+    var splitTab: BrowserTabSession? {
+        guard let splitId = currentRuntime.splitTabId,
+              splitId != primaryTab?.id,
+              let match = currentRuntime.tabs.first(where: { $0.id == splitId })
+        else { return nil }
+        return match
+    }
 
-    var anyActiveShare: Bool { tabs.contains(where: { $0.activeShare != nil }) }
+    var isSplitViewActive: Bool { splitTab != nil }
 
-    init(app: AppModel, dataDirectory: URL) {
+    /// The tab currently targeted by the omnibox, keyboard shortcuts, Find, Reader Mode, and Share.
+    /// In single-pane mode this is `primaryTab`; in Split View this is whichever pane is focused.
+    var activeTab: BrowserTabSession? {
+        if currentRuntime.focusedPane == .secondary, let right = splitTab {
+            return right
+        }
+        return primaryTab
+    }
+
+    var canReopenClosedTab: Bool { !currentRuntime.closedTabs.isEmpty }
+
+    var anyActiveShare: Bool {
+        runtimes.contains { runtime in runtime.tabs.contains(where: { $0.activeShare != nil }) }
+    }
+
+    init(
+        app: AppModel,
+        dataDirectory: URL,
+        credentialStore: any BrowserCredentialStore = KeychainBrowserCredentialStore()
+    ) {
         self.app = app
+        self.dataDirectory = dataDirectory
         self.storageURL = BrowserStorage.fileURL(dataDirectory: dataDirectory)
+        self.credentialStore = credentialStore
         loadPersistedState()
     }
 
@@ -72,24 +223,98 @@ final class BrowserStore {
         guard !didLoadInitialState else { return }
         didLoadInitialState = true
         let persisted = BrowserStorage.load(from: storageURL)
-        bookmarks = persisted.bookmarks
-        history = persisted.history
         adBlockEnabled = persisted.adBlockEnabled
-        adBlockDisabledHosts = persisted.adBlockDisabledHosts
         openExternalLinksInBrowser = persisted.openExternalLinksInBrowser
         searchEngine = persisted.searchEngine
-        siteZooms = persisted.siteZooms
+        autofillEnabled = persisted.autofillEnabled
 
-        if persisted.tabs.isEmpty {
-            let initial = createSession(record: BrowserTabRecord())
-            tabs = [initial]
-            activeTabId = initial.id
+        let sourceProfiles = persisted.profiles.isEmpty ? [BrowserProfile.defaultPersonal()] : persisted.profiles
+        runtimes = sourceProfiles.map { buildRuntime(from: $0) }
+        if let activeID = persisted.activeProfileId, runtimes.contains(where: { $0.id == activeID }) {
+            activeProfileId = activeID
         } else {
-            tabs = persisted.tabs.map { createSession(record: $0) }
-            activeTabId = persisted.activeTabId ?? tabs.first?.id
+            activeProfileId = runtimes[0].id
         }
 
-        Task { await recompileContentBlocker() }
+        for runtime in runtimes {
+            Task {
+                await recompileContentBlocker(for: runtime)
+                await runtime.extensionHost.loadAllEnabledExtensions()
+            }
+        }
+    }
+
+    private func buildRuntime(from profile: BrowserProfile) -> BrowserProfileRuntime {
+        let runtime = BrowserProfileRuntime(
+            profile: profile,
+            dataDirectory: dataDirectory,
+            credentialStore: credentialStore
+        )
+        wireExtensionHost(runtime.extensionHost, for: runtime)
+
+        if profile.tabs.isEmpty {
+            let initial = createSession(record: BrowserTabRecord(), in: runtime)
+            runtime.tabs = [initial]
+            runtime.activeTabId = initial.id
+            runtime.extensionHost.notifyTabOpened(initial)
+        } else {
+            runtime.tabs = profile.tabs.map { createSession(record: $0, in: runtime) }
+            runtime.activeTabId = profile.activeTabId ?? runtime.tabs.first?.id
+            if let splitID = profile.splitTabId,
+               splitID != runtime.activeTabId,
+               runtime.tabs.contains(where: { $0.id == splitID })
+            {
+                runtime.splitTabId = splitID
+            }
+            for tab in runtime.tabs {
+                runtime.extensionHost.notifyTabOpened(tab)
+            }
+        }
+        return runtime
+    }
+
+    private func wireExtensionHost(_ host: BrowserExtensionHost, for runtime: BrowserProfileRuntime) {
+        host.tabsProvider = { [weak runtime] in runtime?.tabs ?? [] }
+        host.activeTabProvider = { [weak self, weak runtime] in
+            guard let self, let runtime else { return nil }
+            if runtime.id == self.activeProfileId {
+                return self.activeTab
+            }
+            return runtime.tabs.first(where: { $0.id == runtime.activeTabId }) ?? runtime.tabs.first
+        }
+        host.hostWindowProvider = { [weak self] in self?.app?.keyController?.window }
+        host.onOpenTab = { [weak self, weak runtime] url, isPrivate, activate in
+            guard let self, let runtime else { return nil }
+            return self.newTab(url: url, isPrivate: isPrivate, select: activate, in: runtime)
+        }
+        host.onActivateTab = { [weak self, weak runtime] tabId in
+            guard let self, let runtime else { return }
+            if runtime.id != self.activeProfileId {
+                self.switchProfile(to: runtime.id)
+            }
+            self.selectTab(tabId)
+        }
+        host.onCloseTab = { [weak self, weak runtime] tabId in
+            guard let self, let runtime else { return }
+            self.closeTab(tabId, in: runtime)
+        }
+        host.onDuplicateTab = { [weak self, weak runtime] tabId, activate in
+            guard let self, let runtime,
+                  let source = runtime.tabs.first(where: { $0.id == tabId })
+            else { return nil }
+            return self.newTab(url: URL(string: source.urlString), isPrivate: source.isPrivate, select: activate, in: runtime)
+        }
+        host.onSetPinned = { [weak self, weak runtime] tabId, pinned in
+            guard let self, let runtime,
+                  let tab = runtime.tabs.first(where: { $0.id == tabId })
+            else { return }
+            tab.isPinned = pinned
+            runtime.extensionHost.notifyTabChanged([.pinned], for: tab)
+            self.scheduleSave()
+        }
+        host.onRecordsChanged = { [weak self] _ in
+            self?.scheduleSave()
+        }
     }
 
     func scheduleSave() {
@@ -104,16 +329,21 @@ final class BrowserStore {
     func saveNow() {
         saveTask?.cancel()
         saveTask = nil
+        let persistedProfiles = runtimes.map { $0.persistedProfile() }
+        let active = currentRuntime
         let snapshot = BrowserPersistedState(
-            tabs: tabs.map(\.record),
-            activeTabId: activeTabId,
-            bookmarks: bookmarks,
-            history: history,
+            tabs: active.tabs.map(\.record),
+            activeTabId: active.activeTabId,
+            bookmarks: active.bookmarks,
+            history: active.history,
             adBlockEnabled: adBlockEnabled,
-            adBlockDisabledHosts: adBlockDisabledHosts,
+            adBlockDisabledHosts: active.adBlockDisabledHosts,
             openExternalLinksInBrowser: openExternalLinksInBrowser,
             searchEngine: searchEngine,
-            siteZooms: siteZooms
+            siteZooms: active.siteZooms,
+            profiles: persistedProfiles,
+            activeProfileId: activeProfileId,
+            autofillEnabled: autofillEnabled
         )
         do {
             try BrowserStorage.save(snapshot, to: storageURL)
@@ -122,29 +352,89 @@ final class BrowserStore {
         }
     }
 
+    // MARK: Profiles
+
+    func switchProfile(to id: UUID) {
+        guard runtimes.contains(where: { $0.id == id }), activeProfileId != id else { return }
+        regionCaptureTabId = nil
+        activeProfileId = id
+        currentRuntime.autofill.reload()
+        currentRuntime.extensionHost.rebuildToolbarItems()
+        scheduleSave()
+        showToast("Switched to \(currentRuntime.name) profile", tone: .neutral)
+    }
+
+    @discardableResult
+    func createProfile(name: String, icon: String, color: BrowserProfileColor) -> BrowserProfileRuntime {
+        let existing = runtimes.map { $0.persistedProfile() }
+        let profile = BrowserProfileLogic.makeProfile(name: name, icon: icon, color: color, existing: existing)
+        let runtime = buildRuntime(from: profile)
+        runtimes.append(runtime)
+        activeProfileId = runtime.id
+        Task {
+            await recompileContentBlocker(for: runtime)
+            await runtime.extensionHost.loadAllEnabledExtensions()
+        }
+        scheduleSave()
+        showToast("Created \(runtime.name) profile", tone: .success)
+        return runtime
+    }
+
+    func updateProfile(id: UUID, name: String, icon: String, color: BrowserProfileColor) {
+        guard let runtime = runtimes.first(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { runtime.name = trimmed }
+        if !icon.isEmpty { runtime.icon = icon }
+        runtime.color = color
+        scheduleSave()
+    }
+
+    func deleteProfile(id: UUID) {
+        guard runtimes.count > 1, let idx = runtimes.firstIndex(where: { $0.id == id }) else { return }
+        let removed = runtimes.remove(at: idx)
+        for tab in removed.tabs {
+            if tab.activeShare != nil {
+                Task { await stopShare(for: tab, reason: "profile_deleted") }
+            }
+            tab.teardown()
+        }
+        removed.extensionHost.teardown()
+        if activeProfileId == id {
+            activeProfileId = runtimes[0].id
+        }
+        scheduleSave()
+        showToast("Deleted \(removed.name) profile", tone: .neutral)
+    }
+
     // MARK: Tab Lifecycle
 
-    private func createSession(record: BrowserTabRecord) -> BrowserTabSession {
-        let session = BrowserTabSession(record: record, contentRuleList: blocker.compiledRuleList)
+    private func createSession(record: BrowserTabRecord, in runtime: BrowserProfileRuntime) -> BrowserTabSession {
+        let session = BrowserTabSession(
+            record: record,
+            profileID: runtime.id,
+            profileDataStoreID: runtime.dataStoreID,
+            contentRuleList: runtime.blocker.compiledRuleList,
+            webExtensionController: runtime.extensionHost.controller
+        )
         session.neverShareProvider = { [weak self] in self?.extensionConfig.neverShare ?? BrowserNeverShareLists() }
-        session.hostZoomProvider = { [weak self] host in
-            guard let self, let normalized = BrowserPageGuard.normalizeHost(host) else { return nil }
-            return self.siteZooms[normalized]
+        session.hostZoomProvider = { [weak runtime] host in
+            guard let runtime, let normalized = BrowserPageGuard.normalizeHost(host) else { return nil }
+            return runtime.siteZooms[normalized]
         }
-        session.onOpenNewTab = { [weak self] url, isPrivate in
-            self?.openURL(url, inNewTab: true, isPrivate: isPrivate)
+        session.onOpenNewTab = { [weak self, weak runtime] url, isPrivate in
+            guard let self, let runtime else { return }
+            _ = self.newTab(url: url, isPrivate: isPrivate, select: true, in: runtime)
         }
-        session.onPageCommitted = { [weak self] tab in
+        session.onPageCommitted = { [weak self] _ in
             self?.scheduleSave()
-            _ = tab
         }
-        session.onPageFinished = { [weak self] tab in
-            guard let self else { return }
+        session.onPageFinished = { [weak self, weak runtime] tab in
+            guard let self, let runtime else { return }
             if !tab.isPrivate, !tab.urlString.isEmpty {
-                self.history = BrowserTabListLogic.recordVisit(
+                runtime.history = BrowserTabListLogic.recordVisit(
                     url: tab.urlString,
                     title: tab.displayTitle,
-                    in: self.history
+                    in: runtime.history
                 )
             }
             self.scheduleSave()
@@ -152,8 +442,9 @@ final class BrowserStore {
         session.onStateChanged = { [weak self] in
             self?.scheduleSave()
         }
-        session.onTabShouldClose = { [weak self] tab in
-            self?.closeTab(tab.id)
+        session.onTabShouldClose = { [weak self, weak runtime] tab in
+            guard let self, let runtime else { return }
+            self.closeTab(tab.id, in: runtime)
         }
         session.onSnapshotDue = { [weak self] tab in
             guard let self else { return }
@@ -162,6 +453,22 @@ final class BrowserStore {
         session.onStopShare = { [weak self] tab, reason in
             guard let self else { return }
             Task { await self.stopShare(for: tab, reason: reason) }
+        }
+        session.onCredentialsSubmitted = { [weak self, weak runtime] tab, url, username, password in
+            guard let self, let runtime else { return }
+            if let pending = runtime.autofill.evaluateSubmission(
+                urlString: url,
+                username: username,
+                password: password,
+                isPrivate: tab.isPrivate,
+                autofillEnabled: self.autofillEnabled,
+                neverSaveHosts: runtime.autofillNeverSaveHosts
+            ) {
+                tab.pendingCredentialSave = pending
+            }
+        }
+        session.onExtensionPropertiesChanged = { [weak runtime] tab, props in
+            runtime?.extensionHost.notifyTabChanged(props, for: tab)
         }
         session.webView.contextCallbacks = BrowserWKWebView.ContextCallbacks(
             onAskPersona: { [weak self, weak session] in
@@ -184,6 +491,21 @@ final class BrowserStore {
                 guard let self, let session else { return }
                 Task { await self.screenshotToKnowledge(tab: session) }
             },
+            onCaptureRegionScreenshot: { [weak self, weak session] in
+                guard let self, let session else { return }
+                self.beginRegionCapture(for: session)
+            },
+            onAutofillKeychain: { [weak self] in
+                self?.triggerAutofillPopover()
+            },
+            onGeneratePassword: { [weak self, weak session] in
+                guard let self, let session else { return }
+                Task { await self.generateAndFillPassword(for: session) }
+            },
+            onOpenInSplitView: { [weak self, weak session] in
+                guard let self, let session else { return }
+                self.openInSplitView(tabId: session.id)
+            },
             onOpenInSafari: { [weak session] in
                 guard let session, let url = URL(string: session.urlString), BrowserURLResolver.isWebURL(url) else { return }
                 NSWorkspace.shared.open(url)
@@ -193,18 +515,34 @@ final class BrowserStore {
     }
 
     @discardableResult
-    func newTab(url: URL? = nil, isPrivate: Bool = false, select: Bool = true) -> BrowserTabSession {
+    func newTab(
+        url: URL? = nil,
+        isPrivate: Bool = false,
+        select: Bool = true,
+        groupId: UUID? = nil,
+        in targetRuntime: BrowserProfileRuntime? = nil
+    ) -> BrowserTabSession {
+        let runtime = targetRuntime ?? currentRuntime
+        let previous = runtime.tabs.first(where: { $0.id == runtime.activeTabId })
         let record = BrowserTabRecord(
             url: url?.absoluteString ?? "",
             title: isPrivate ? "Private Tab" : "New Tab",
             isPinned: false,
-            isPrivate: isPrivate
+            isPrivate: isPrivate,
+            groupId: isPrivate ? nil : groupId
         )
-        let session = createSession(record: record)
-        tabs.append(session)
+        let session = createSession(record: record, in: runtime)
+        runtime.tabs.append(session)
+        runtime.extensionHost.notifyTabOpened(session)
         if select {
-            activeTabId = session.id
-            if url == nil {
+            if runtime.focusedPane == .secondary, runtime.splitTabId != nil {
+                runtime.splitTabId = session.id
+            } else {
+                runtime.activeTabId = session.id
+                runtime.focusedPane = .primary
+            }
+            runtime.extensionHost.notifyTabActivated(session, previous: previous)
+            if url == nil && runtime.id == activeProfileId {
                 focusAddressBarTick &+= 1
             }
         }
@@ -216,8 +554,9 @@ final class BrowserStore {
     /// tab already showing the exact URL.
     func openURL(_ url: URL, inNewTab: Bool = true, isPrivate: Bool = false, reuseExisting: Bool = false) {
         guard BrowserURLResolver.isWebURL(url) else { return }
-        if reuseExisting, !isPrivate, let existing = tabs.first(where: { !$0.isPrivate && $0.urlString == url.absoluteString }) {
-            activeTabId = existing.id
+        let runtime = currentRuntime
+        if reuseExisting, !isPrivate, let existing = runtime.tabs.first(where: { !$0.isPrivate && $0.urlString == url.absoluteString }) {
+            selectTab(existing.id)
             return
         }
         if !inNewTab, let current = activeTab {
@@ -228,7 +567,7 @@ final class BrowserStore {
             current.load(url)
             return
         }
-        _ = newTab(url: url, isPrivate: isPrivate, select: true)
+        _ = newTab(url: url, isPrivate: isPrivate, select: true, in: runtime)
     }
 
     func navigateActiveTab(input: String) {
@@ -241,8 +580,18 @@ final class BrowserStore {
     }
 
     func selectTab(_ id: UUID) {
-        guard tabs.contains(where: { $0.id == id }) else { return }
-        activeTabId = id
+        let runtime = currentRuntime
+        guard let next = runtime.tabs.first(where: { $0.id == id }) else { return }
+        let previous = activeTab
+        if runtime.splitTabId == id {
+            runtime.focusedPane = .secondary
+        } else {
+            runtime.activeTabId = id
+            runtime.focusedPane = .primary
+        }
+        if previous?.id != next.id {
+            runtime.extensionHost.notifyTabActivated(next, previous: previous)
+        }
         scheduleSave()
     }
 
@@ -254,14 +603,14 @@ final class BrowserStore {
 
     func selectNextTab() {
         let ordered = orderedTabs
-        let currentIdx = activeTabId.flatMap { id in ordered.firstIndex(where: { $0.id == id }) }
+        let currentIdx = activeTab.flatMap { tab in ordered.firstIndex(where: { $0.id == tab.id }) }
         guard let next = BrowserTabListLogic.nextIndex(after: currentIdx, count: ordered.count) else { return }
         selectTab(ordered[next].id)
     }
 
     func selectPreviousTab() {
         let ordered = orderedTabs
-        let currentIdx = activeTabId.flatMap { id in ordered.firstIndex(where: { $0.id == id }) }
+        let currentIdx = activeTab.flatMap { tab in ordered.firstIndex(where: { $0.id == tab.id }) }
         guard let prev = BrowserTabListLogic.previousIndex(before: currentIdx, count: ordered.count) else { return }
         selectTab(ordered[prev].id)
     }
@@ -271,70 +620,338 @@ final class BrowserStore {
         closeTab(active.id)
     }
 
-    func closeTab(_ id: UUID) {
-        let ordered = orderedTabs
-        guard let rawIndex = tabs.firstIndex(where: { $0.id == id }) else { return }
-        let removed = tabs.remove(at: rawIndex)
+    func closeTab(_ id: UUID, in targetRuntime: BrowserProfileRuntime? = nil) {
+        let runtime = targetRuntime ?? currentRuntime
+        let ordered = BrowserTabGroupLogic.displayOrder(
+            tabs: runtime.tabs,
+            groups: runtime.tabGroups,
+            isPinned: \.isPinned,
+            groupId: \.groupId
+        )
+        guard let rawIndex = runtime.tabs.firstIndex(where: { $0.id == id }) else { return }
+        let removed = runtime.tabs.remove(at: rawIndex)
+        if regionCaptureTabId == id { regionCaptureTabId = nil }
         if removed.activeShare != nil {
             Task { await stopShare(for: removed, reason: "tab_closed") }
         }
         if !removed.isPrivate, !removed.urlString.isEmpty {
-            closedTabs.append(removed.record)
-            if closedTabs.count > 20 { closedTabs.removeFirst(closedTabs.count - 20) }
+            runtime.closedTabs.append(removed.record)
+            if runtime.closedTabs.count > 20 { runtime.closedTabs.removeFirst(runtime.closedTabs.count - 20) }
         }
+        runtime.extensionHost.notifyTabClosed(removed)
         removed.teardown()
 
-        if tabs.isEmpty {
-            let fresh = createSession(record: BrowserTabRecord())
-            tabs = [fresh]
-            activeTabId = fresh.id
-            focusAddressBarTick &+= 1
-        } else if activeTabId == id {
-            let oldOrderedIdx = ordered.firstIndex(where: { $0.id == id }) ?? 0
-            let nextOrdered = orderedTabs
-            let targetIdx = min(oldOrderedIdx, max(0, nextOrdered.count - 1))
-            activeTabId = nextOrdered[targetIdx].id
+        if runtime.tabs.isEmpty {
+            let fresh = createSession(record: BrowserTabRecord(), in: runtime)
+            runtime.tabs = [fresh]
+            runtime.activeTabId = fresh.id
+            runtime.splitTabId = nil
+            runtime.focusedPane = .primary
+            runtime.extensionHost.notifyTabOpened(fresh)
+            if runtime.id == activeProfileId { focusAddressBarTick &+= 1 }
+        } else {
+            let splitBefore = BrowserSplitState(
+                primaryTabId: runtime.activeTabId,
+                secondaryTabId: runtime.splitTabId,
+                ratio: runtime.splitRatio
+            )
+            if splitBefore.isSplit {
+                let remainingIDs = runtime.tabs.map(\.id)
+                let reconciled = BrowserTabGroupLogic.reconcileSplitAfterClose(
+                    closedTabId: id,
+                    state: splitBefore,
+                    remainingTabIds: remainingIDs
+                )
+                runtime.activeTabId = reconciled.primaryTabId
+                runtime.splitTabId = reconciled.secondaryTabId
+                if runtime.splitTabId == nil { runtime.focusedPane = .primary }
+            } else if runtime.activeTabId == id {
+                let oldOrderedIdx = ordered.firstIndex(where: { $0.id == id }) ?? 0
+                let nextOrdered = BrowserTabGroupLogic.displayOrder(
+                    tabs: runtime.tabs,
+                    groups: runtime.tabGroups,
+                    isPinned: \.isPinned,
+                    groupId: \.groupId
+                )
+                let targetIdx = min(oldOrderedIdx, max(0, nextOrdered.count - 1))
+                runtime.activeTabId = nextOrdered[targetIdx].id
+            }
         }
         scheduleSave()
     }
 
     func closeOtherTabs(keeping id: UUID) {
-        let doomed = tabs.filter { $0.id != id && !$0.isPinned }.map(\.id)
+        let doomed = currentRuntime.tabs.filter { $0.id != id && !$0.isPinned }.map(\.id)
         for tabId in doomed {
             closeTab(tabId)
         }
     }
 
     func reopenClosedTab() {
-        guard let record = closedTabs.popLast() else { return }
+        let runtime = currentRuntime
+        guard let record = runtime.closedTabs.popLast() else { return }
+        let validGroup = record.groupId.flatMap { gid in
+            runtime.tabGroups.contains(where: { $0.id == gid }) ? gid : nil
+        }
         let restored = BrowserTabRecord(
             id: UUID(),
             url: record.url,
             title: record.title,
             isPinned: false,
             isPrivate: false,
-            zoom: record.zoom
+            zoom: record.zoom,
+            groupId: validGroup,
+            isMuted: record.isMuted
         )
-        let session = createSession(record: restored)
-        tabs.append(session)
-        activeTabId = session.id
+        let session = createSession(record: restored, in: runtime)
+        runtime.tabs.append(session)
+        runtime.activeTabId = session.id
+        runtime.focusedPane = .primary
+        runtime.extensionHost.notifyTabOpened(session)
         scheduleSave()
     }
 
     func duplicateTab(_ id: UUID) {
-        guard let source = tabs.first(where: { $0.id == id }) else { return }
-        let url = URL(string: source.urlString)
-        _ = newTab(url: url, isPrivate: source.isPrivate, select: true)
+        guard let source = currentRuntime.tabs.first(where: { $0.id == id }) else { return }
+        _ = newTab(url: URL(string: source.urlString), isPrivate: source.isPrivate, select: true, groupId: source.groupId)
     }
 
     func togglePin(_ id: UUID) {
-        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        guard let tab = currentRuntime.tabs.first(where: { $0.id == id }) else { return }
         tab.isPinned.toggle()
+        if tab.isPinned { tab.groupId = nil }
+        currentRuntime.extensionHost.notifyTabChanged([.pinned], for: tab)
         scheduleSave()
     }
 
+    func toggleMute(_ id: UUID? = nil) {
+        guard let tab = id.flatMap({ tid in currentRuntime.tabs.first(where: { $0.id == tid }) }) ?? activeTab else { return }
+        tab.setMuted(!tab.isMuted)
+    }
+
+    func moveTab(_ sourceID: UUID, before targetID: UUID) {
+        let runtime = currentRuntime
+        guard let source = runtime.tabs.first(where: { $0.id == sourceID }),
+              let target = runtime.tabs.first(where: { $0.id == targetID })
+        else { return }
+        // Match target's pin & group membership when dropped onto another tab row.
+        source.isPinned = target.isPinned
+        source.groupId = target.isPinned ? nil : target.groupId
+        runtime.tabs = BrowserTabGroupLogic.move(sourceID, before: targetID, in: runtime.tabs)
+        scheduleSave()
+    }
+
+    // MARK: Tab Groups
+
+    @discardableResult
+    func createTabGroup(name: String, color: BrowserProfileColor = .blue, initialTabId: UUID? = nil) -> BrowserTabGroup {
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let group = BrowserTabGroup(
+            name: trimmed.isEmpty ? "Group \(currentRuntime.tabGroups.count + 1)" : trimmed,
+            color: color
+        )
+        currentRuntime.tabGroups.append(group)
+        if let initialTabId, let tab = currentRuntime.tabs.first(where: { $0.id == initialTabId }), !tab.isPrivate {
+            tab.isPinned = false
+            tab.groupId = group.id
+        }
+        scheduleSave()
+        return group
+    }
+
+    func renameTabGroup(id: UUID, name: String, color: BrowserProfileColor) {
+        guard let idx = currentRuntime.tabGroups.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { currentRuntime.tabGroups[idx].name = trimmed }
+        currentRuntime.tabGroups[idx].color = color
+        scheduleSave()
+    }
+
+    func toggleTabGroupCollapsed(id: UUID) {
+        guard let idx = currentRuntime.tabGroups.firstIndex(where: { $0.id == id }) else { return }
+        currentRuntime.tabGroups[idx].isCollapsed.toggle()
+        scheduleSave()
+    }
+
+    func assignTab(_ tabId: UUID, toGroup groupId: UUID?) {
+        guard let tab = currentRuntime.tabs.first(where: { $0.id == tabId }) else { return }
+        if tab.isPrivate && groupId != nil { return }
+        if groupId != nil { tab.isPinned = false }
+        tab.groupId = groupId
+        scheduleSave()
+    }
+
+    func deleteTabGroup(id: UUID, closeTabs: Bool = false) {
+        let memberIDs = currentRuntime.tabs.filter { $0.groupId == id }.map(\.id)
+        currentRuntime.tabGroups.removeAll { $0.id == id }
+        if closeTabs {
+            for tid in memberIDs { closeTab(tid) }
+        } else {
+            for tab in currentRuntime.tabs where tab.groupId == id {
+                tab.groupId = nil
+            }
+        }
+        scheduleSave()
+    }
+
+    // MARK: Split View
+
+    func toggleSplitView() {
+        let runtime = currentRuntime
+        if isSplitViewActive {
+            closeSplitView()
+            return
+        }
+        guard let primary = primaryTab else { return }
+        // Prefer another existing open tab; otherwise open a fresh tab on the right.
+        if let other = orderedTabs.first(where: { $0.id != primary.id }) {
+            runtime.splitTabId = other.id
+            runtime.focusedPane = .secondary
+        } else {
+            let right = newTab(url: nil, isPrivate: primary.isPrivate, select: false, in: runtime)
+            runtime.splitTabId = right.id
+            runtime.focusedPane = .secondary
+            focusAddressBarTick &+= 1
+        }
+        scheduleSave()
+    }
+
+    func openInSplitView(tabId: UUID) {
+        let runtime = currentRuntime
+        guard runtime.tabs.contains(where: { $0.id == tabId }) else { return }
+        if runtime.activeTabId == tabId {
+            // If called on the already-primary tab, open a companion right pane.
+            if !isSplitViewActive {
+                toggleSplitView()
+            }
+            return
+        }
+        let next = BrowserTabGroupLogic.openInSplit(
+            tabId: tabId,
+            current: BrowserSplitState(primaryTabId: runtime.activeTabId, secondaryTabId: runtime.splitTabId, ratio: runtime.splitRatio)
+        )
+        runtime.activeTabId = next.primaryTabId
+        runtime.splitTabId = next.secondaryTabId
+        runtime.focusedPane = .secondary
+        scheduleSave()
+    }
+
+    func closeSplitView() {
+        let runtime = currentRuntime
+        if runtime.focusedPane == .secondary, let sec = runtime.splitTabId {
+            runtime.activeTabId = sec
+        }
+        runtime.splitTabId = nil
+        runtime.focusedPane = .primary
+        scheduleSave()
+    }
+
+    func swapSplitPanes() {
+        let runtime = currentRuntime
+        let current = BrowserSplitState(primaryTabId: runtime.activeTabId, secondaryTabId: runtime.splitTabId, ratio: runtime.splitRatio)
+        guard current.isSplit else { return }
+        let swapped = BrowserTabGroupLogic.swapPanes(current)
+        runtime.activeTabId = swapped.primaryTabId
+        runtime.splitTabId = swapped.secondaryTabId
+        runtime.splitRatio = swapped.ratio
+        runtime.focusedPane = runtime.focusedPane == .primary ? .secondary : .primary
+        scheduleSave()
+    }
+
+    func focusSplitPane(_ pane: SplitPane) {
+        let runtime = currentRuntime
+        guard pane == .primary || isSplitViewActive else { return }
+        let previous = activeTab
+        runtime.focusedPane = pane
+        if let now = activeTab, previous?.id != now.id {
+            runtime.extensionHost.notifyTabActivated(now, previous: previous)
+        }
+    }
+
+    func setSplitRatio(_ ratio: Double) {
+        currentRuntime.splitRatio = min(0.8, max(0.2, ratio))
+        scheduleSave()
+    }
+
+    // MARK: Triggers
+
     func focusAddressBar() {
         focusAddressBarTick &+= 1
+    }
+
+    func triggerAutofillPopover() {
+        openAutofillPopoverTick &+= 1
+    }
+
+    func triggerExtensionsPopover() {
+        openExtensionsPopoverTick &+= 1
+    }
+
+    func beginRegionCapture(for tab: BrowserTabSession? = nil) {
+        guard let target = tab ?? activeTab, target.hasLoadedPage else {
+            showToast("Open a web page first", tone: .error)
+            return
+        }
+        regionCaptureTabId = target.id
+    }
+
+    func cancelRegionCapture() {
+        regionCaptureTabId = nil
+    }
+
+    // MARK: AutoFill Actions
+
+    func savePendingCredential(for tab: BrowserTabSession) {
+        guard let pending = tab.pendingCredentialSave else { return }
+        let ok = currentRuntime.autofill.saveCredential(
+            host: pending.host,
+            username: pending.username,
+            password: pending.password,
+            existingId: pending.existingCredentialId
+        )
+        tab.pendingCredentialSave = nil
+        if ok {
+            showToast(pending.isUpdate ? "Updated password for \(pending.host) in Keychain" : "Saved password for \(pending.host) to Keychain", tone: .success)
+        } else {
+            showToast(currentRuntime.autofill.lastError ?? "Couldn't save to Keychain", tone: .error)
+        }
+    }
+
+    func dismissPendingCredential(for tab: BrowserTabSession) {
+        tab.pendingCredentialSave = nil
+    }
+
+    func neverSavePasswords(for host: String, tab: BrowserTabSession?) {
+        guard let normalized = BrowserPageGuard.normalizeHost(host) else { return }
+        if !currentRuntime.autofillNeverSaveHosts.contains(normalized) {
+            currentRuntime.autofillNeverSaveHosts.append(normalized)
+            scheduleSave()
+        }
+        tab?.pendingCredentialSave = nil
+        showToast("Won't offer to save passwords for \(normalized)", tone: .neutral)
+    }
+
+    func fillCredential(_ credential: BrowserCredential, into tab: BrowserTabSession? = nil) async {
+        guard let target = tab ?? activeTab else { return }
+        let ok = await currentRuntime.autofill.fill(credential, into: target.webView)
+        if ok {
+            showToast("Filled \(credential.username) from Keychain", tone: .success)
+        } else {
+            showToast("No matching login form found on this page", tone: .neutral)
+        }
+    }
+
+    func generateAndFillPassword(for tab: BrowserTabSession? = nil, length: Int = 20, includeSymbols: Bool = true) async {
+        let password = BrowserAutofillLogic.generateStrongPassword(length: length, includeSymbols: includeSymbols)
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(password, forType: .string)
+        if let target = tab ?? activeTab, target.hasLoadedPage {
+            let filled = await currentRuntime.autofill.fillGeneratedPassword(password, into: target.webView)
+            showToast(filled ? "Filled & copied strong password" : "Copied strong password to clipboard", tone: .success)
+        } else {
+            showToast("Copied strong password to clipboard", tone: .success)
+        }
     }
 
     // MARK: Zoom & Ad-Block
@@ -352,11 +969,12 @@ final class BrowserStore {
 
     private func applyZoom(_ zoom: Double, to tab: BrowserTabSession) {
         tab.setZoom(zoom)
+        guard let runtime = runtimes.first(where: { $0.id == tab.profileID }) else { return }
         if !tab.isPrivate, let host = BrowserPageGuard.normalizeHost(tab.urlString) {
             if abs(zoom - 1.0) < 0.01 {
-                siteZooms.removeValue(forKey: host)
+                runtime.siteZooms.removeValue(forKey: host)
             } else {
-                siteZooms[host] = zoom
+                runtime.siteZooms[host] = zoom
             }
             scheduleSave()
         }
@@ -366,7 +984,7 @@ final class BrowserStore {
         BrowserContentBlockerRules.isAdBlockActive(
             globalEnabled: adBlockEnabled,
             host: urlString,
-            disabledHosts: adBlockDisabledHosts
+            disabledHosts: currentRuntime.adBlockDisabledHosts
         )
     }
 
@@ -374,70 +992,97 @@ final class BrowserStore {
         adBlockEnabled = enabled
         scheduleSave()
         Task {
-            await recompileContentBlocker()
+            for runtime in runtimes {
+                await recompileContentBlocker(for: runtime)
+            }
             activeTab?.reload()
         }
     }
 
     func toggleAdBlock(forHost rawHost: String) {
         guard let host = BrowserPageGuard.normalizeHost(rawHost) else { return }
-        if let idx = adBlockDisabledHosts.firstIndex(of: host) {
-            adBlockDisabledHosts.remove(at: idx)
+        let runtime = currentRuntime
+        if let idx = runtime.adBlockDisabledHosts.firstIndex(of: host) {
+            runtime.adBlockDisabledHosts.remove(at: idx)
         } else {
-            adBlockDisabledHosts.append(host)
+            runtime.adBlockDisabledHosts.append(host)
         }
         scheduleSave()
         Task {
-            await recompileContentBlocker()
+            await recompileContentBlocker(for: runtime)
             activeTab?.reload()
         }
     }
 
-    private func recompileContentBlocker() async {
-        let ruleList = await blocker.compile(enabled: adBlockEnabled, disabledHosts: adBlockDisabledHosts)
-        for tab in tabs {
+    private func recompileContentBlocker(for runtime: BrowserProfileRuntime) async {
+        let ruleList = await runtime.blocker.compile(enabled: adBlockEnabled, disabledHosts: runtime.adBlockDisabledHosts)
+        for tab in runtime.tabs {
             tab.applyContentRuleList(ruleList)
         }
     }
 
     // MARK: Bookmarks & History
 
-    func isBookmarked(_ urlString: String) -> Bool {
-        guard !urlString.isEmpty else { return false }
-        return bookmarks.contains(where: { $0.url == urlString })
+    var bookmarkFolders: [String] {
+        let set = Set(currentRuntime.bookmarks.compactMap { bm -> String? in
+            let trimmed = bm.folder?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            return trimmed.isEmpty ? nil : trimmed
+        })
+        return set.sorted()
     }
 
-    func toggleBookmark(for tab: BrowserTabSession? = nil) {
+    func isBookmarked(_ urlString: String) -> Bool {
+        guard !urlString.isEmpty else { return false }
+        return currentRuntime.bookmarks.contains(where: { $0.url == urlString })
+    }
+
+    func toggleBookmark(for tab: BrowserTabSession? = nil, folder: String? = nil) {
         guard let tab = tab ?? activeTab, !tab.urlString.isEmpty else { return }
-        if let idx = bookmarks.firstIndex(where: { $0.url == tab.urlString }) {
-            bookmarks.remove(at: idx)
+        let runtime = currentRuntime
+        if let idx = runtime.bookmarks.firstIndex(where: { $0.url == tab.urlString }) {
+            runtime.bookmarks.remove(at: idx)
             showToast("Removed bookmark", tone: .neutral)
         } else {
-            bookmarks.insert(BrowserBookmark(url: tab.urlString, title: tab.displayTitle), at: 0)
+            let cleanFolder = folder?.trimmingCharacters(in: .whitespacesAndNewlines)
+            runtime.bookmarks.insert(
+                BrowserBookmark(url: tab.urlString, title: tab.displayTitle, folder: cleanFolder?.isEmpty == true ? nil : cleanFolder),
+                at: 0
+            )
             showToast("Bookmarked \(tab.displayTitle)", tone: .success)
         }
         scheduleSave()
     }
 
+    func updateBookmark(id: String, title: String, folder: String?) {
+        guard let idx = currentRuntime.bookmarks.firstIndex(where: { $0.id == id }) else { return }
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !cleanTitle.isEmpty { currentRuntime.bookmarks[idx].title = cleanTitle }
+        let cleanFolder = folder?.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentRuntime.bookmarks[idx].folder = cleanFolder?.isEmpty == true ? nil : cleanFolder
+        scheduleSave()
+    }
+
     func removeBookmark(id: String) {
-        bookmarks.removeAll { $0.id == id }
+        currentRuntime.bookmarks.removeAll { $0.id == id }
         scheduleSave()
     }
 
     func clearHistory() {
-        history.removeAll()
+        currentRuntime.history.removeAll()
         scheduleSave()
     }
 
     func removeHistoryEntry(id: String) {
-        history.removeAll { $0.id == id }
+        currentRuntime.history.removeAll { $0.id == id }
         scheduleSave()
     }
 
-    func clearBrowsingData() async {
+    func clearBrowsingData(for runtime: BrowserProfileRuntime? = nil) async {
+        let target = runtime ?? currentRuntime
         let types = WKWebsiteDataStore.allWebsiteDataTypes()
-        await BrowserWebViewFactory.persistentStore.removeData(ofTypes: types, modifiedSince: .distantPast)
-        showToast("Cleared browser cookies and cache", tone: .neutral)
+        let dataStore = BrowserWebViewFactory.store(forProfileID: target.dataStoreID)
+        await dataStore.removeData(ofTypes: types, modifiedSince: .distantPast)
+        showToast("Cleared cookies & cache for \(target.name)", tone: .neutral)
     }
 
     // MARK: Server Extension API Integration (Share, Ask, Clip, Never-Share)
@@ -457,15 +1102,16 @@ final class BrowserStore {
         do {
             let cfg = try await client.fetchConfig()
             extensionConfig = cfg
-            // Sync read logs and server-side stops back to live tabs.
             let activeById = Dictionary(uniqueKeysWithValues: cfg.shares.map { ($0.id, $0) })
-            for tab in tabs {
-                if let share = tab.activeShare {
-                    if let updated = activeById[share.id] {
-                        tab.activeShare = updated
-                    } else {
-                        tab.activeShare = nil
-                        tab.shareStartURL = nil
+            for runtime in runtimes {
+                for tab in runtime.tabs {
+                    if let share = tab.activeShare {
+                        if let updated = activeById[share.id] {
+                            tab.activeShare = updated
+                        } else {
+                            tab.activeShare = nil
+                            tab.shareStartURL = nil
+                        }
                     }
                 }
             }
@@ -483,7 +1129,6 @@ final class BrowserStore {
         )
     }
 
-    /// Starts sharing a tab with a chat (such as the active Companion chat) or a persona.
     func startShare(
         for tab: BrowserTabSession,
         chatId: String?,
@@ -580,11 +1225,12 @@ final class BrowserStore {
         guard let client = makeExtensionClient() else { return }
         do {
             extensionConfig = try await client.addNeverShare(host: host)
-            // Stop any live shares on that host locally too.
-            for tab in tabs where tab.activeShare != nil {
-                if !pageShareCheck(for: tab).ok {
-                    tab.activeShare = nil
-                    tab.shareStartURL = nil
+            for runtime in runtimes {
+                for tab in runtime.tabs where tab.activeShare != nil {
+                    if !pageShareCheck(for: tab).ok {
+                        tab.activeShare = nil
+                        tab.shareStartURL = nil
+                    }
                 }
             }
             updateSharePolling()
@@ -623,18 +1269,20 @@ final class BrowserStore {
 
     private func pollActiveShares() async {
         guard let client = makeExtensionClient() else { return }
-        for tab in tabs {
-            guard let share = tab.activeShare else { continue }
-            do {
-                let updated = try await client.getShare(id: share.id)
-                if updated.stoppedAt != nil {
-                    tab.activeShare = nil
-                    tab.shareStartURL = nil
-                } else {
-                    tab.activeShare = updated
+        for runtime in runtimes {
+            for tab in runtime.tabs {
+                guard let share = tab.activeShare else { continue }
+                do {
+                    let updated = try await client.getShare(id: share.id)
+                    if updated.stoppedAt != nil {
+                        tab.activeShare = nil
+                        tab.shareStartURL = nil
+                    } else {
+                        tab.activeShare = updated
+                    }
+                } catch {
+                    // Keep trying on transient network blips.
                 }
-            } catch {
-                // Keep trying on transient network blips.
             }
         }
         if !anyActiveShare {
@@ -643,7 +1291,7 @@ final class BrowserStore {
         }
     }
 
-    // MARK: Ask, Clip, Screenshot & Quote Actions
+    // MARK: Ask, Clip, Screenshot (Viewport & Region) & Quote Actions
 
     func askAboutPage(tab: BrowserTabSession, prompt: String, personaId: String?, openInCompanion: Bool = true) async {
         guard let client = makeExtensionClient() else {
@@ -757,9 +1405,7 @@ final class BrowserStore {
         showToast(selection.isEmpty ? "Copied Markdown link" : "Copied Markdown quote", tone: .neutral)
     }
 
-    /// Captures a permission-free `WKWebView` screenshot, uploads it as a Knowledge asset,
-    /// and creates a clipping note embedding the image + source URL.
-    func screenshotToKnowledge(tab: BrowserTabSession, caption: String? = nil) async {
+    func screenshotToKnowledge(tab: BrowserTabSession, rect: CGRect? = nil, caption: String? = nil) async {
         guard let apiClient = app?.system.store.client else {
             showToast("Connect Vesper to save screenshots", tone: .error)
             return
@@ -768,7 +1414,7 @@ final class BrowserStore {
             showToast("Open a web page first", tone: .error)
             return
         }
-        guard let pngData = await tab.captureScreenshotPNG() else {
+        guard let pngData = await tab.captureScreenshotPNG(rect: rect) else {
             showToast("Couldn't capture page screenshot", tone: .error)
             return
         }
@@ -807,13 +1453,12 @@ final class BrowserStore {
         }
     }
 
-    /// Captures a permission-free `WKWebView` screenshot and offers it to Vesper's Send-to-Chat picker.
-    func screenshotToChat(tab: BrowserTabSession) async {
+    func screenshotToChat(tab: BrowserTabSession, rect: CGRect? = nil) async {
         guard tab.hasLoadedPage else {
             showToast("Open a web page first", tone: .error)
             return
         }
-        guard let pngData = await tab.captureScreenshotPNG() else {
+        guard let pngData = await tab.captureScreenshotPNG(rect: rect) else {
             showToast("Couldn't capture page screenshot", tone: .error)
             return
         }
@@ -831,15 +1476,27 @@ final class BrowserStore {
         }
     }
 
-    func copyScreenshot(tab: BrowserTabSession) async {
-        guard tab.hasLoadedPage, let pngData = await tab.captureScreenshotPNG(), let image = NSImage(data: pngData) else {
+    func copyScreenshot(tab: BrowserTabSession, rect: CGRect? = nil) async {
+        guard tab.hasLoadedPage, let pngData = await tab.captureScreenshotPNG(rect: rect), let image = NSImage(data: pngData) else {
             showToast("Couldn't capture page screenshot", tone: .error)
             return
         }
         let pb = NSPasteboard.general
         pb.clearContents()
         pb.writeObjects([image])
-        showToast("Copied page screenshot", tone: .neutral)
+        showToast(rect == nil ? "Copied page screenshot" : "Copied region screenshot", tone: .neutral)
+    }
+
+    func completeRegionCapture(tab: BrowserTabSession, rect: CGRect, destination: BrowserRegionCaptureDestination) async {
+        regionCaptureTabId = nil
+        switch destination {
+        case .knowledge:
+            await screenshotToKnowledge(tab: tab, rect: rect)
+        case .chat:
+            await screenshotToChat(tab: tab, rect: rect)
+        case .clipboard:
+            await copyScreenshot(tab: tab, rect: rect)
+        }
     }
 
     func saveFullPagePDF(tab: BrowserTabSession) async {
@@ -876,7 +1533,7 @@ final class BrowserStore {
         return prefix.isEmpty ? "page" : prefix
     }
 
-    private func showToast(
+    func showToast(
         _ title: String,
         tone: ToastTone,
         actionLabel: String? = nil,

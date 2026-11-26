@@ -1,19 +1,57 @@
 import AppKit
+import Observation
 import WebKit
 
+struct BrowserDownloadRecord: Identifiable, Equatable {
+    enum State: Equatable {
+        case inProgress
+        case finished
+        case failed(String)
+    }
+
+    let id: UUID
+    var filename: String
+    var destinationURL: URL?
+    var state: State
+    var startedAt: Date
+}
+
 /// Saves WKDownloads to ~/Downloads (Chromium's default): suggested filename, " 2"/" 3" on a clash,
-/// the Downloads stack bounced when done, a small non-modal notice, errors shown.
+/// the Downloads stack bounced when done, a small non-modal notice, errors shown, and an observable
+/// list of recent downloads for the internal Browser's Downloads popover.
 @MainActor
+@Observable
 final class WebDownloads: NSObject, WKDownloadDelegate {
     static let shared = WebDownloads()
 
-    private var destinations: [ObjectIdentifier: URL] = [:]
-    private var windows: [ObjectIdentifier: NSWindow] = [:]
+    private(set) var recentDownloads: [BrowserDownloadRecord] = []
+
+    @ObservationIgnored private var destinations: [ObjectIdentifier: URL] = [:]
+    @ObservationIgnored private var windows: [ObjectIdentifier: NSWindow] = [:]
+    @ObservationIgnored private var recordIDs: [ObjectIdentifier: UUID] = [:]
+
+    var hasActiveDownloads: Bool {
+        recentDownloads.contains(where: { $0.state == .inProgress })
+    }
+
+    func clearRecentDownloads() {
+        recentDownloads.removeAll { $0.state != .inProgress }
+    }
 
     /// Takes over a download WebKit started from `webView`'s navigation.
     func adopt(_ download: WKDownload, in webView: WKWebView?) {
         download.delegate = self
-        if let window = webView?.window { windows[ObjectIdentifier(download)] = window }
+        let key = ObjectIdentifier(download)
+        if let window = webView?.window { windows[key] = window }
+        let recID = UUID()
+        recordIDs[key] = recID
+        recentDownloads.insert(
+            BrowserDownloadRecord(id: recID, filename: "Preparing download…", destinationURL: nil, state: .inProgress, startedAt: Date()),
+            at: 0
+        )
+        if recentDownloads.count > 25 {
+            recentDownloads = Array(recentDownloads.prefix(25))
+        }
     }
 
     // MARK: Naming
@@ -48,7 +86,12 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
             ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
         try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let dest = Self.uniqueURL(in: dir, name: Self.sanitizedName(suggestedFilename))
-        destinations[ObjectIdentifier(download)] = dest
+        let key = ObjectIdentifier(download)
+        destinations[key] = dest
+        if let recID = recordIDs[key], let idx = recentDownloads.firstIndex(where: { $0.id == recID }) {
+            recentDownloads[idx].filename = dest.lastPathComponent
+            recentDownloads[idx].destinationURL = dest
+        }
         vlog("download: -> \(dest.path)")
         completionHandler(dest)
     }
@@ -56,7 +99,12 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
     func downloadDidFinish(_ download: WKDownload) {
         let id = ObjectIdentifier(download)
         let window = windows.removeValue(forKey: id)
+        let recID = recordIDs.removeValue(forKey: id)
         guard let dest = destinations.removeValue(forKey: id) else { return }
+        if let recID, let idx = recentDownloads.firstIndex(where: { $0.id == recID }) {
+            recentDownloads[idx].state = .finished
+            recentDownloads[idx].destinationURL = dest
+        }
         vlog("download: finished \(dest.path)")
         DistributedNotificationCenter.default().postNotificationName(
             Notification.Name("com.apple.DownloadFileFinished"), object: dest.path, userInfo: nil, deliverImmediately: true)
@@ -66,10 +114,18 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
     func download(_ download: WKDownload, didFailWithError error: Error, resumeData: Data?) {
         let id = ObjectIdentifier(download)
         let window = windows.removeValue(forKey: id)
+        let recID = recordIDs.removeValue(forKey: id)
         let dest = destinations.removeValue(forKey: id)
         if let dest { try? FileManager.default.removeItem(at: dest) }
         let ns = error as NSError
         vlog("download: failed \(ns.domain) \(ns.code)")
+        if let recID, let idx = recentDownloads.firstIndex(where: { $0.id == recID }) {
+            if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled {
+                recentDownloads.remove(at: idx)
+            } else {
+                recentDownloads[idx].state = .failed(ns.localizedDescription)
+            }
+        }
         if ns.domain == NSURLErrorDomain && ns.code == NSURLErrorCancelled { return }
         DownloadNotice.show("Download failed: \(ns.localizedDescription)", revealing: nil, over: window, isError: true)
     }
