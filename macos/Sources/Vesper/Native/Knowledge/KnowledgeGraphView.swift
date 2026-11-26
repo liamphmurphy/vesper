@@ -9,6 +9,9 @@ struct KnowledgeGraphView: View {
     @State private var filter = KnowledgeGraphFilter()
     @State private var viewport = KnowledgeGraphViewport()
     @State private var dragStartViewport: KnowledgeGraphViewport?
+    @State private var draggedNodeId: String?
+    @State private var isPanningCanvas = false
+    @State private var settleTask: Task<Void, Never>?
     @State private var magnifyStartScale: Double?
     @State private var hoveredNodeId: String?
     @State private var selectedNodeId: String?
@@ -82,24 +85,37 @@ struct KnowledgeGraphView: View {
         .onChange(of: structuralFilterKey) { _, _ in
             rebuildSnapshot(network: entry.data)
         }
+        .onDisappear {
+            settleTask?.cancel()
+            settleTask = nil
+        }
+    }
+
+    private struct LabelCandidate {
+        let node: KnowledgeGraphRenderNode
+        let screenPoint: (x: Double, y: Double)
+        let screenRadius: Double
+        let opacity: Double
+        let isFocused: Bool
+        let matchesSearch: Bool
+        let isDimmed: Bool
     }
 
     private var graphCanvas: some View {
         let p = theme.palette
         let accentColor = p.accent
-        let borderStrong = theme.swiftUIColor("border-strong", fallback: p.border)
         let textColor = p.text
         let secondaryText = p.secondaryText
         let tertiaryText = p.tertiaryText
 
-        let activeFocus = hoveredNodeId ?? selectedNodeId
+        let activeFocus = draggedNodeId ?? hoveredNodeId ?? selectedNodeId
         let layoutLinks = snapshot.edges.map { KnowledgeGraphInputLink(source: $0.source, target: $0.target) }
         let activeNeighbors: Set<String>? = activeFocus.map {
             KnowledgeGraphLogic.neighborhood(of: $0, edges: layoutLinks, hops: 1)
         }
         let searchQuery = filter.search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        let hasSearch = !searchQuery.isEmpty
         let nodeById = Dictionary(snapshot.nodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
-        let labelAll = snapshot.nodes.count < 60 || viewport.scale > 2.0
 
         return GeometryReader { proxy in
             Canvas { gc, size in
@@ -123,24 +139,29 @@ struct KnowledgeGraphView: View {
                     path.move(to: CGPoint(x: pa.x, y: pa.y))
                     path.addLine(to: CGPoint(x: pb.x, y: pb.y))
 
-                    let strokeColor = lit ? accentColor : borderStrong
+                    let baseEdgeColor = Color(cssHex: a.colorHex) ?? Color(cssHex: b.colorHex) ?? secondaryText
+                    let strokeColor = lit ? accentColor : (dimmed ? secondaryText : baseEdgeColor)
+                    let lineWidth: CGFloat = lit ? 1.6 : (dimmed ? 0.75 : (edge.isUnresolved ? 0.9 : 1.0))
                     let style = edge.isUnresolved
-                        ? StrokeStyle(lineWidth: lit ? 1.5 : 1.0, dash: [4, 3])
-                        : StrokeStyle(lineWidth: lit ? 1.8 : 1.0)
-                    gc.opacity = dimmed ? 0.2 : (edge.isUnresolved ? 0.65 : 0.9)
+                        ? StrokeStyle(lineWidth: lineWidth, dash: [4, 3])
+                        : StrokeStyle(lineWidth: lineWidth)
+                    gc.opacity = dimmed ? 0.1 : (lit ? 0.95 : (edge.isUnresolved ? 0.4 : 0.48))
                     gc.stroke(path, with: .color(strokeColor), style: style)
                 }
 
+                var labelCandidates: [LabelCandidate] = []
+                labelCandidates.reserveCapacity(min(snapshot.nodes.count, 128))
+
                 for node in snapshot.nodes {
                     let pt = viewport.worldToScreen(x: node.x, y: node.y, bounds: snapshot.bounds, canvasWidth: w, canvasHeight: h)
-                    let screenRadius = max(3.0, min(16.0, node.radius * ppu))
-                    let matchesSearch = searchQuery.isEmpty
+                    let matchesSearch = !hasSearch
                         || node.title.lowercased().contains(searchQuery)
                         || node.path.lowercased().contains(searchQuery)
                     let inNeighborhood = activeNeighbors?.contains(node.id) ?? true
                     let isDimmed = !inNeighborhood || !matchesSearch
-                    let isFocused = node.id == hoveredNodeId || node.id == selectedNodeId
-                    let showLabel = labelAll || node.degree >= 6 || isFocused || (!searchQuery.isEmpty && matchesSearch)
+                    let isFocused = node.id == draggedNodeId || node.id == hoveredNodeId || node.id == selectedNodeId
+                    let baseScreenRadius = max(node.degree == 0 ? 1.8 : 2.2, min(9.5, node.radius * ppu))
+                    let screenRadius = isFocused ? baseScreenRadius + 1.2 : baseScreenRadius
 
                     let circleRect = CGRect(
                         x: pt.x - screenRadius,
@@ -150,28 +171,69 @@ struct KnowledgeGraphView: View {
                     )
                     let circle = Path(ellipseIn: circleRect)
 
-                    gc.opacity = isDimmed ? 0.2 : 1.0
+                    gc.opacity = isDimmed ? 0.18 : 1.0
                     if node.isUnresolved {
-                        gc.stroke(circle, with: .color(tertiaryText), style: StrokeStyle(lineWidth: 1.2, dash: [2, 2]))
+                        gc.stroke(circle, with: .color(tertiaryText), style: StrokeStyle(lineWidth: 1.1, dash: [2, 2]))
                     } else {
                         let fill = Color(cssHex: node.colorHex) ?? tertiaryText
                         gc.fill(circle, with: .color(fill))
                     }
                     if isFocused {
-                        gc.stroke(circle, with: .color(textColor), lineWidth: 1.6)
+                        gc.stroke(circle, with: .color(textColor), lineWidth: 1.5)
                     }
 
-                    if showLabel {
-                        let displayTitle = node.title.count > 28 ? String(node.title.prefix(27)) + "…" : node.title
-                        let text = Text(displayTitle)
-                            .font(.system(size: 10.5, weight: isFocused ? .semibold : .regular))
-                            .foregroundStyle(isFocused ? textColor : secondaryText)
-                        gc.draw(
-                            gc.resolve(text),
-                            at: CGPoint(x: pt.x, y: pt.y + screenRadius + 9),
-                            anchor: .center
-                        )
+                    let opacity = KnowledgeGraphLogic.labelOpacity(
+                        scale: viewport.scale,
+                        nodeCount: snapshot.nodes.count,
+                        degree: node.degree,
+                        isFocused: isFocused,
+                        matchesSearch: matchesSearch,
+                        hasSearch: hasSearch
+                    )
+                    if opacity > 0.04 && (!isDimmed || isFocused) {
+                        labelCandidates.append(LabelCandidate(
+                            node: node,
+                            screenPoint: pt,
+                            screenRadius: screenRadius,
+                            opacity: opacity,
+                            isFocused: isFocused,
+                            matchesSearch: hasSearch && matchesSearch,
+                            isDimmed: isDimmed
+                        ))
                     }
+                }
+
+                labelCandidates.sort { lhs, rhs in
+                    if lhs.isFocused != rhs.isFocused { return lhs.isFocused }
+                    if lhs.matchesSearch != rhs.matchesSearch { return lhs.matchesSearch }
+                    if lhs.node.degree != rhs.node.degree { return lhs.node.degree > rhs.node.degree }
+                    return lhs.node.id < rhs.node.id
+                }
+
+                var placedLabelRects: [CGRect] = []
+                placedLabelRects.reserveCapacity(labelCandidates.count)
+                for candidate in labelCandidates {
+                    let displayTitle = candidate.node.title.count > 28
+                        ? String(candidate.node.title.prefix(27)) + "…"
+                        : candidate.node.title
+                    let text = Text(displayTitle)
+                        .font(.system(size: 10.5, weight: candidate.isFocused ? .semibold : .regular))
+                        .foregroundStyle(candidate.isFocused ? textColor : secondaryText)
+                    let resolved = gc.resolve(text)
+                    let measured = resolved.measure(in: CGSize(width: 240, height: 32))
+                    let center = CGPoint(x: candidate.screenPoint.x, y: candidate.screenPoint.y + candidate.screenRadius + 9)
+                    let paddedRect = CGRect(
+                        x: center.x - measured.width * 0.5 - 4,
+                        y: center.y - measured.height * 0.5 - 2,
+                        width: measured.width + 8,
+                        height: measured.height + 4
+                    )
+                    if !candidate.isFocused && placedLabelRects.contains(where: { $0.intersects(paddedRect) }) {
+                        continue
+                    }
+                    placedLabelRects.append(paddedRect)
+                    gc.opacity = candidate.isDimmed ? 0.25 : candidate.opacity
+                    gc.draw(resolved, at: center, anchor: .center)
                 }
             }
             .contentShape(Rectangle())
@@ -201,6 +263,7 @@ struct KnowledgeGraphView: View {
                 }
             }
             .onContinuousHover { phase in
+                guard draggedNodeId == nil else { return }
                 switch phase {
                 case .active(let loc):
                     let world = viewport.screenToWorld(
@@ -224,18 +287,69 @@ struct KnowledgeGraphView: View {
             .gesture(
                 DragGesture(minimumDistance: 3)
                     .onChanged { value in
-                        let start = dragStartViewport ?? viewport
-                        if dragStartViewport == nil { dragStartViewport = start }
-                        viewport = start.panned(
-                            deltaX: Double(value.translation.width),
-                            deltaY: Double(value.translation.height),
-                            canvasWidth: Double(proxy.size.width),
-                            canvasHeight: Double(proxy.size.height),
-                            bounds: snapshot.bounds
-                        )
+                        let canvasW = Double(proxy.size.width)
+                        let canvasH = Double(proxy.size.height)
+                        if draggedNodeId == nil && !isPanningCanvas {
+                            let startWorld = viewport.screenToWorld(
+                                x: Double(value.startLocation.x),
+                                y: Double(value.startLocation.y),
+                                bounds: snapshot.bounds,
+                                canvasWidth: canvasW,
+                                canvasHeight: canvasH
+                            )
+                            let minHit = max(8.0, 12.0 / KnowledgeGraphViewport.pixelsPerWorldUnit(
+                                bounds: snapshot.bounds,
+                                canvasWidth: canvasW,
+                                canvasHeight: canvasH,
+                                scale: viewport.scale
+                            ))
+                            if let hit = KnowledgeGraphLogic.hitTest(worldPoint: startWorld, nodes: snapshot.nodes, minHitRadius: minHit) {
+                                settleTask?.cancel()
+                                settleTask = nil
+                                draggedNodeId = hit.id
+                                hoveredNodeId = hit.id
+                            } else {
+                                isPanningCanvas = true
+                                dragStartViewport = viewport
+                            }
+                        }
+
+                        if let nodeId = draggedNodeId {
+                            let world = viewport.screenToWorld(
+                                x: Double(value.location.x),
+                                y: Double(value.location.y),
+                                bounds: snapshot.bounds,
+                                canvasWidth: canvasW,
+                                canvasHeight: canvasH
+                            )
+                            if let idx = snapshot.nodes.firstIndex(where: { $0.id == nodeId }) {
+                                snapshot.nodes[idx].x = world.x
+                                snapshot.nodes[idx].y = world.y
+                                KnowledgeGraphLogic.relaxStep(
+                                    nodes: &snapshot.nodes,
+                                    edges: snapshot.edges,
+                                    pinnedNodeId: nodeId,
+                                    alpha: 0.45
+                                )
+                            }
+                        } else if isPanningCanvas, let start = dragStartViewport {
+                            viewport = start.panned(
+                                deltaX: Double(value.translation.width),
+                                deltaY: Double(value.translation.height),
+                                canvasWidth: canvasW,
+                                canvasHeight: canvasH,
+                                bounds: snapshot.bounds
+                            )
+                        }
                     }
                     .onEnded { _ in
+                        let wasDraggingNode = draggedNodeId != nil
+                        draggedNodeId = nil
+                        isPanningCanvas = false
                         dragStartViewport = nil
+                        if wasDraggingNode {
+                            startSettleAnimation()
+                        }
                     }
             )
             .simultaneousGesture(
@@ -405,7 +519,7 @@ struct KnowledgeGraphView: View {
                 }
             }
 
-            Text("Drag or scroll to pan, pinch or ⌘+scroll to zoom, click a node to open.")
+            Text("Drag a node to move it, drag canvas or scroll to pan, pinch or ⌘+scroll to zoom, click a node to open.")
                 .font(.system(size: theme.pointSize(.micro)))
                 .foregroundStyle(p.tertiaryText)
         }
@@ -437,7 +551,30 @@ struct KnowledgeGraphView: View {
         .background(p.surface)
     }
 
+    private func startSettleAnimation() {
+        settleTask?.cancel()
+        settleTask = Task { @MainActor in
+            let totalFrames = 36
+            for frame in 0..<totalFrames {
+                if Task.isCancelled { return }
+                let progress = Double(frame) / Double(totalFrames)
+                let alpha = 0.35 * (1.0 - progress)
+                let maxDisp = KnowledgeGraphLogic.relaxStep(
+                    nodes: &snapshot.nodes,
+                    edges: snapshot.edges,
+                    pinnedNodeId: nil,
+                    alpha: alpha
+                )
+                if maxDisp < 0.05 { break }
+                try? await Task.sleep(for: .milliseconds(16))
+            }
+        }
+    }
+
     private func rebuildSnapshot(network: KnowledgeNetwork?) {
+        settleTask?.cancel()
+        settleTask = nil
+        draggedNodeId = nil
         guard let network else {
             snapshot = KnowledgeGraphSnapshot()
             return

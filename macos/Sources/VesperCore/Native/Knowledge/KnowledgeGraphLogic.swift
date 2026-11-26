@@ -620,21 +620,27 @@ public enum KnowledgeGraphLogic: Sendable {
         let activeFocus = hoveredNodeId ?? selectedNodeId
         let activeNeighbors: Set<String>? = activeFocus.map { neighborhood(of: $0, edges: layoutLinks, hops: 1) }
         let query = filter.search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        let labelAll = placed.count < 60 || viewport.scale > 2.0
 
         let nodeMetaById = Dictionary(filteredNodes.map { ($0.id, $0) }, uniquingKeysWith: { _, latest in latest })
         let renderNodes: [KnowledgeGraphRenderNode] = placed.compactMap { p in
             guard let meta = nodeMetaById[p.id] else { return nil }
             let isUnresolved = p.id.hasPrefix(unresolvedNodePrefix)
             let group = isUnresolved ? "Unresolved" : groupName(for: meta.path)
-            let radius = min(12.0, 3.5 + Double(p.degree).squareRoot() * 1.6) * unit
+            let radius = nodeRadius(degree: p.degree, unit: unit)
             let matchesSearch = query.isEmpty
                 || meta.title.lowercased().contains(query)
                 || meta.path.lowercased().contains(query)
             let inNeighborhood = activeNeighbors?.contains(p.id) ?? true
             let isDimmed = !inNeighborhood || !matchesSearch
             let isHighlighted = p.id == hoveredNodeId || p.id == selectedNodeId
-            let showLabel = labelAll || p.degree >= 6 || isHighlighted || (!query.isEmpty && matchesSearch)
+            let showLabel = labelOpacity(
+                scale: viewport.scale,
+                nodeCount: placed.count,
+                degree: p.degree,
+                isFocused: isHighlighted,
+                matchesSearch: matchesSearch,
+                hasSearch: !query.isEmpty
+            ) > 0.04
             let colorHex: String? = isUnresolved
                 ? nil
                 : (p.degree > 0 ? (colorByGroup[group] ?? fallbackColorHex) : nil)
@@ -683,6 +689,126 @@ public enum KnowledgeGraphLogic: Sendable {
             unresolvedCount: unresolvedCount,
             totalLinkCount: finalRawEdges.count
         )
+    }
+
+    /// Returns a compact, degree-scaled world radius so dense clusters stay readable.
+    public static func nodeRadius(degree: Int, unit: Double) -> Double {
+        let base = degree == 0 ? 1.7 : (2.0 + log2(Double(degree) + 1.0) * 1.15)
+        return min(7.0, base) * unit
+    }
+
+    /// Returns a smooth 0...1 label opacity based on zoom scale, graph size, and node importance.
+    public static func labelOpacity(
+        scale: Double,
+        nodeCount: Int,
+        degree: Int,
+        isFocused: Bool,
+        matchesSearch: Bool,
+        hasSearch: Bool
+    ) -> Double {
+        if isFocused || (hasSearch && matchesSearch) { return 1.0 }
+        if nodeCount < 40 { return 1.0 }
+        let start: Double
+        let full: Double
+        if degree >= 8 {
+            start = 1.15
+            full = 1.65
+        } else if degree > 0 {
+            start = 1.6
+            full = 2.3
+        } else {
+            start = 2.2
+            full = 3.0
+        }
+        guard scale > start else { return 0.0 }
+        return min(1.0, (scale - start) / (full - start))
+    }
+
+    /// Runs one incremental force-directed relaxation step on `nodes` in place,
+    /// keeping `pinnedNodeId` fixed (e.g. while the user drags it).
+    /// Returns the maximum displacement applied to any non-pinned node.
+    @discardableResult
+    public static func relaxStep(
+        nodes: inout [KnowledgeGraphRenderNode],
+        edges: [KnowledgeGraphRenderEdge],
+        pinnedNodeId: String?,
+        alpha: Double = 0.35
+    ) -> Double {
+        let n = nodes.count
+        guard n > 1, alpha > 0 else { return 0 }
+
+        var indexById: [String: Int] = Dictionary(minimumCapacity: n)
+        for (i, node) in nodes.enumerated() {
+            indexById[node.id] = i
+        }
+        let pinnedIndex = pinnedNodeId.flatMap { indexById[$0] }
+
+        let ideal = 34.0
+        let cell = ideal * 3.0
+        let cellSquared = cell * cell
+        let idealSquared = ideal * ideal
+
+        var vx = [Double](repeating: 0, count: n)
+        var vy = [Double](repeating: 0, count: n)
+
+        var grid: [GridCell: [Int]] = Dictionary(minimumCapacity: n)
+        for i in 0..<n {
+            let key = GridCell(x: Int(floor(nodes[i].x / cell)), y: Int(floor(nodes[i].y / cell)))
+            grid[key, default: []].append(i)
+        }
+
+        for i in 0..<n {
+            let cx = Int(floor(nodes[i].x / cell))
+            let cy = Int(floor(nodes[i].y / cell))
+            for gx in (cx - 1)...(cx + 1) {
+                for gy in (cy - 1)...(cy + 1) {
+                    guard let bucket = grid[GridCell(x: gx, y: gy)] else { continue }
+                    for j in bucket where j > i {
+                        let rawDx = nodes[i].x - nodes[j].x
+                        let rawDy = nodes[i].y - nodes[j].y
+                        let dx = rawDx == 0 ? 0.01 : rawDx
+                        let dy = rawDy == 0 ? 0.01 : rawDy
+                        let d2 = dx * dx + dy * dy
+                        if d2 > cellSquared { continue }
+                        let f = idealSquared / d2
+                        vx[i] += dx * f * 0.05
+                        vy[i] += dy * f * 0.05
+                        vx[j] -= dx * f * 0.05
+                        vy[j] -= dy * f * 0.05
+                    }
+                }
+            }
+        }
+
+        for edge in edges {
+            guard let a = indexById[edge.source], let b = indexById[edge.target], a != b else { continue }
+            let dx = nodes[b].x - nodes[a].x
+            let dy = nodes[b].y - nodes[a].y
+            let rawD = (dx * dx + dy * dy).squareRoot()
+            let d = rawD == 0 ? 0.01 : rawD
+            let f = ((d - ideal) / d) * 0.09
+            vx[a] += dx * f
+            vy[a] += dy * f
+            vx[b] -= dx * f
+            vy[b] -= dy * f
+        }
+
+        let maxStep = 5.0 * alpha
+        var maxDisplacement = 0.0
+        for i in 0..<n {
+            if i == pinnedIndex { continue }
+            vx[i] -= nodes[i].x * 0.002
+            vy[i] -= nodes[i].y * 0.002
+            let m = (vx[i] * vx[i] + vy[i] * vy[i]).squareRoot()
+            guard m > 0 else { continue }
+            let step = min(m, maxStep)
+            let dx = (vx[i] / m) * step
+            let dy = (vy[i] / m) * step
+            nodes[i].x += dx
+            nodes[i].y += dy
+            maxDisplacement = max(maxDisplacement, step)
+        }
+        return maxDisplacement
     }
 
     /// Returns the closest node whose hit circle contains `worldPoint`, preferring higher-degree nodes on ties.
