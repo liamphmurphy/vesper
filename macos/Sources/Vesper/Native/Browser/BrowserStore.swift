@@ -277,7 +277,9 @@ final class BrowserStore {
         host.tabsProvider = { [weak runtime] in runtime?.tabs ?? [] }
         host.activeTabProvider = { [weak self, weak runtime] in
             guard let self, let runtime else { return nil }
-            if runtime.id == self.activeProfileId {
+            // While `loadPersistedState` builds runtimes, `runtimes` is still empty, so
+            // `activeTab` (via `currentRuntime`) must not be used until this runtime is registered.
+            if runtime.id == self.activeProfileId, self.runtimes.contains(where: { $0 === runtime }) {
                 return self.activeTab
             }
             return runtime.tabs.first(where: { $0.id == runtime.activeTabId }) ?? runtime.tabs.first
