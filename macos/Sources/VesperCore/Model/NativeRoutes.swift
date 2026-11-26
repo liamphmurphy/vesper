@@ -6,6 +6,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
     case debugPlaceholder
     case inbox
     case library
+    case browser
     case pdf
     /// /native-debug/markdown: every markdown feature through `MarkdownView` (debug only).
     case markdownDebug
@@ -63,6 +64,7 @@ public enum NativeScreen: String, Sendable, CaseIterable {
         case .spacesHome, .spaceNew, .spaceDetail: .spaces
         case .knowledge, .knowledgeGraph, .knowledgePage, .docEditor, .slidesEditor, .designEditor: .knowledge
         case .library, .artifactDetail, .artifactReview: .library
+        case .browser: .browser
         case .workflows, .workflowEditor, .workflowRun, .scheduled, .learn, .learnCourse, .reports, .http, .dev, .appsHome, .appsRedirect, .customApp: .apps
         case .inbox, .pdf, .setup, .agentDetail, .slidesPresent, .designPresent, .printKnowledge, .printArtifact, .debugPlaceholder, .markdownDebug, .scenesDebug, .embedsDebug: nil
         }
@@ -116,6 +118,7 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/native-debug/:id", .debugPlaceholder),
         NativeRoute("/inbox", .inbox),
         NativeRoute("/library", .library),
+        NativeRoute("/browser", .browser),
         NativeRoute("/pdf", .pdf),
         // The Dev workspace terminal (SwiftTerm on the workspace's PTY socket).
         NativeRoute("/dev", .dev),

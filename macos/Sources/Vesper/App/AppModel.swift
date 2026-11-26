@@ -37,6 +37,8 @@ final class AppModel {
     @ObservationIgnored lazy var nativeRoutes = NativeRouteRegistry.standard(debug: NativeDebug.isEnabled)
     /// Settings, Quick Capture, Screenshot, files in, Import Backup, backups, updates, login item.
     @ObservationIgnored lazy var aux = AuxWindows(app: self)
+    /// App-wide internal Browser tabs, bookmarks, history, ad-block, and live persona sharing.
+    @ObservationIgnored lazy var browser = BrowserStore(app: self, dataDirectory: dataDirectory)
     @ObservationIgnored private var appearanceMonitor: AppearanceMonitor?
 
     var ownsAppearance: Bool { settings.settings.appearance != nil }
@@ -368,6 +370,7 @@ final class AppModel {
 
     func saveSessionNow() {
         saveTask?.cancel()
+        browser.saveNow()
         let ref = (NSApp.keyWindow?.windowController as? MainWindowController) ?? windows.first
         guard let refWindow = ref?.window, let ref else { return }
         let urls: [String?]
