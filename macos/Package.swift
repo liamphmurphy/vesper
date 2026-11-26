@@ -67,6 +67,11 @@ let package = Package(
             path: "Tests/VesperCoreTests"
         ),
         .testTarget(
+            name: "VesperTests",
+            dependencies: ["Vesper", "VesperCore"],
+            path: "Tests/VesperTests"
+        ),
+        .testTarget(
             name: "VesperSafariBridgeTests",
             dependencies: ["VesperSafariBridge"],
             path: "SafariExtension/BridgeTests",
