@@ -88,6 +88,9 @@ func httpSaveRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPSaveRe
 		BodyMode: in.BodyMode,
 		Body:     in.Body,
 	}
+	if httpclient.ContainsSecretRef(reqIn) {
+		return nil, apperr.Invalid("request", "agent-saved HTTP requests cannot reference {{secret:...}} placeholders; use vesper_secrets http_request instead")
+	}
 	svc := httpClientService(d)
 	if strings.TrimSpace(in.RequestID) != "" {
 		reqID, err := uuid.Parse(strings.TrimSpace(in.RequestID))
@@ -123,5 +126,6 @@ func httpRunRequest(ctx context.Context, d Deps, c agents.Caller, in HTTPRunRequ
 	}
 	return httpClientService(d).RunSavedRequest(ctx, c.Agent.WorkspaceID, s.UserID, reqID, httpclient.RunOptions{
 		EnvironmentID: envID,
+		DenySecrets:   true,
 	})
 }
