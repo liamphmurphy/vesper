@@ -27,6 +27,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     var favicon: NSImage?
     var hasLoginForm: Bool = false
     var pendingCredentialSave: BrowserPendingCredentialSave?
+    var adBlockInterventionsCount: Int = 0
 
     /// Active live share for this tab (backed by `/api/v1/browser-extension/shares`).
     var activeShare: BrowserShare?
@@ -38,6 +39,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored private var popups: [BrowserPopupWindowController] = []
     @ObservationIgnored private var snapshotDebounceTask: Task<Void, Never>?
     @ObservationIgnored private var faviconTask: Task<Void, Never>?
+    @ObservationIgnored private var appliedRuleLists: [WKContentRuleList] = []
+    @ObservationIgnored private var appliedAdBlockPageScript: WKUserScript?
+    @ObservationIgnored private var isAdBlockAttached: Bool = false
 
     @ObservationIgnored var onOpenNewTab: ((URL, Bool) -> Void)?
     @ObservationIgnored var onPageCommitted: ((BrowserTabSession) -> Void)?
@@ -50,6 +54,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored var onExtensionPropertiesChanged: ((BrowserTabSession, WKWebExtension.TabChangedProperties) -> Void)?
     @ObservationIgnored var neverShareProvider: (() -> BrowserNeverShareLists)?
     @ObservationIgnored var hostZoomProvider: ((String) -> Double?)?
+    @ObservationIgnored var adBlockActiveProvider: ((String) -> Bool)?
 
     var hasLoadedPage: Bool { !urlString.isEmpty }
 
@@ -88,7 +93,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         record: BrowserTabRecord,
         profileID: UUID = BrowserProfile.defaultProfileID,
         profileDataStoreID: UUID = BrowserProfile.defaultDataStoreID,
-        contentRuleList: WKContentRuleList?,
+        contentRuleLists: [WKContentRuleList] = [],
+        adBlockPageScript: WKUserScript? = nil,
+        adBlockActive: Bool = true,
         webExtensionController: WKWebExtensionController? = nil
     ) {
         self.id = record.id
@@ -101,19 +108,27 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         self.title = record.title
         self.zoom = record.zoom
         self.favicon = BrowserFaviconCache.shared.cachedIcon(for: record.url)
+        self.appliedRuleLists = contentRuleLists
+        self.appliedAdBlockPageScript = adBlockPageScript
+        self.isAdBlockAttached = adBlockActive
 
         var weakSessionBox: WeakTabSessionBox?
         let box = WeakTabSessionBox()
         weakSessionBox = box
-        let proxy = BrowserScriptMessageProxy { message in
+        let autofillProxy = BrowserScriptMessageProxy { message in
             weakSessionBox?.session?.handleAutofillMessage(message.body)
+        }
+        let adBlockMetricsProxy = BrowserScriptMessageProxy { _ in
+            weakSessionBox?.session?.adBlockInterventionsCount += 1
         }
         self.webView = BrowserWebViewFactory.makeWebView(
             isPrivate: record.isPrivate,
             profileDataStoreID: profileDataStoreID,
-            contentRuleList: contentRuleList,
+            contentRuleLists: adBlockActive ? contentRuleLists : [],
+            adBlockPageScript: adBlockActive ? adBlockPageScript : nil,
             webExtensionController: webExtensionController,
-            autofillMessageHandler: proxy
+            autofillMessageHandler: autofillProxy,
+            adBlockMetricsHandler: adBlockMetricsProxy
         )
         super.init()
         box.session = self
@@ -176,8 +191,10 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         loadError = nil
         isReaderMode = false
         hasLoginForm = false
+        adBlockInterventionsCount = 0
         urlString = url.absoluteString
         favicon = BrowserFaviconCache.shared.cachedIcon(for: url.absoluteString)
+        syncAdBlockForURL(url.absoluteString)
         if let host = url.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom
@@ -235,10 +252,52 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
-    func applyContentRuleList(_ ruleList: WKContentRuleList?) {
-        webView.configuration.userContentController.removeAllContentRuleLists()
-        if let ruleList {
-            webView.configuration.userContentController.add(ruleList)
+    /// Applies compiled multi-list `WKContentRuleList`s and the Phase B page-world scriptlet runtime.
+    /// Per-site allowlisting toggles attach/detach immediately with zero recompilation.
+    func applyAdBlockState(
+        ruleLists: [WKContentRuleList],
+        pageScript: WKUserScript?,
+        activeForCurrentURL: Bool
+    ) {
+        appliedRuleLists = ruleLists
+        appliedAdBlockPageScript = pageScript
+        isAdBlockAttached = activeForCurrentURL
+        syncContentController(attachAdBlock: activeForCurrentURL)
+    }
+
+    /// Instantly attaches or detaches pre-compiled ad-block rules & scriptlets when navigating
+    /// between protected and per-site allowlisted hosts.
+    func syncAdBlockForURL(_ urlString: String) {
+        let shouldAttach = adBlockActiveProvider?(urlString) ?? true
+        guard shouldAttach != isAdBlockAttached else { return }
+        isAdBlockAttached = shouldAttach
+        syncContentController(attachAdBlock: shouldAttach)
+    }
+
+    private func syncContentController(attachAdBlock: Bool) {
+        let ucc = webView.configuration.userContentController
+        ucc.removeAllContentRuleLists()
+        if attachAdBlock {
+            for ruleList in appliedRuleLists {
+                ucc.add(ruleList)
+            }
+        }
+        // Rebuild user scripts cleanly so AutoFill & metrics bridge scripts are always preserved.
+        ucc.removeAllUserScripts()
+        ucc.addUserScript(WKUserScript(
+            source: BrowserAdBlockScripts.metricsBridgeScriptSource,
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: false,
+            in: .defaultClient
+        ))
+        ucc.addUserScript(WKUserScript(
+            source: BrowserAutofillScripts.detectorScriptSource,
+            injectionTime: .atDocumentEnd,
+            forMainFrameOnly: false,
+            in: .defaultClient
+        ))
+        if attachAdBlock, let pageScript = appliedAdBlockPageScript {
+            ucc.addUserScript(pageScript)
         }
     }
 
@@ -305,6 +364,10 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         observations.removeAll()
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: BrowserAutofillScripts.messageHandlerName,
+            contentWorld: .defaultClient
+        )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: BrowserAdBlockScripts.metricsHandlerName,
             contentWorld: .defaultClient
         )
         webView.contextCallbacks = nil
@@ -441,6 +504,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             onOpenNewTab?(url, isPrivate)
             return .cancel
         }
+        if navigationAction.targetFrame?.isMainFrame == true {
+            syncAdBlockForURL(url.absoluteString)
+        }
         return .allow
     }
 
@@ -460,6 +526,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         loadError = nil
         isReaderMode = false
         hasLoginForm = false
+        adBlockInterventionsCount = 0
         if let host = webView.url?.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom

@@ -30,7 +30,6 @@ final class BrowserProfileRuntime: Identifiable {
     let extensionHost: BrowserExtensionHost
     let autofill: BrowserAutofillManager
 
-    @ObservationIgnored let blocker: BrowserContentBlockerManager
     @ObservationIgnored var closedTabs: [BrowserTabRecord] = []
 
     init(
@@ -50,7 +49,6 @@ final class BrowserProfileRuntime: Identifiable {
         self.adBlockDisabledHosts = profile.adBlockDisabledHosts
         self.siteZooms = profile.siteZooms
         self.autofillNeverSaveHosts = profile.autofillNeverSaveHosts
-        self.blocker = BrowserContentBlockerManager(profileID: profile.id)
         self.extensionHost = BrowserExtensionHost(
             profileID: profile.id,
             dataStoreID: profile.dataStoreID,
@@ -99,9 +97,13 @@ final class BrowserStore {
     var activeProfileId: UUID = BrowserProfile.defaultProfileID
 
     var adBlockEnabled: Bool = true
+    var adBlockConfig: BrowserAdBlockConfig = .default
     var openExternalLinksInBrowser: Bool = true
     var searchEngine: BrowserSearchEngine = .duckDuckGo
     var autofillEnabled: Bool = true
+
+    /// Shared Wipr/uBO-style multi-list content blocker & Phase B scriptlet engine.
+    let adBlockEngine: BrowserAdBlockEngine
 
     /// Server-side browser sharing config (personas, recent chats, never_share lists).
     private(set) var extensionConfig: BrowserExtensionConfig = BrowserExtensionConfig()
@@ -208,12 +210,14 @@ final class BrowserStore {
     init(
         app: AppModel,
         dataDirectory: URL,
-        credentialStore: any BrowserCredentialStore = KeychainBrowserCredentialStore()
+        credentialStore: any BrowserCredentialStore = KeychainBrowserCredentialStore(),
+        adBlockFetcher: BrowserFilterListFetcher? = nil
     ) {
         self.app = app
         self.dataDirectory = dataDirectory
         self.storageURL = BrowserStorage.fileURL(dataDirectory: dataDirectory)
         self.credentialStore = credentialStore
+        self.adBlockEngine = BrowserAdBlockEngine(dataDirectory: dataDirectory, fetcher: adBlockFetcher)
         loadPersistedState()
     }
 
@@ -224,6 +228,7 @@ final class BrowserStore {
         didLoadInitialState = true
         let persisted = BrowserStorage.load(from: storageURL)
         adBlockEnabled = persisted.adBlockEnabled
+        adBlockConfig = persisted.adBlockConfig
         openExternalLinksInBrowser = persisted.openExternalLinksInBrowser
         searchEngine = persisted.searchEngine
         autofillEnabled = persisted.autofillEnabled
@@ -236,9 +241,14 @@ final class BrowserStore {
             activeProfileId = runtimes[0].id
         }
 
+        Task {
+            await recompileAdBlockAndApply()
+            if adBlockEnabled && adBlockEngine.needsAutoUpdate(config: adBlockConfig) {
+                await refreshAdBlockLists(silent: true)
+            }
+        }
         for runtime in runtimes {
             Task {
-                await recompileContentBlocker(for: runtime)
                 await runtime.extensionHost.loadAllEnabledExtensions()
             }
         }
@@ -345,7 +355,8 @@ final class BrowserStore {
             siteZooms: active.siteZooms,
             profiles: persistedProfiles,
             activeProfileId: activeProfileId,
-            autofillEnabled: autofillEnabled
+            autofillEnabled: autofillEnabled,
+            adBlockConfig: adBlockConfig
         )
         do {
             try BrowserStorage.save(snapshot, to: storageURL)
@@ -374,7 +385,7 @@ final class BrowserStore {
         runtimes.append(runtime)
         activeProfileId = runtime.id
         Task {
-            await recompileContentBlocker(for: runtime)
+            applyAdBlockToTabs(in: runtime)
             await runtime.extensionHost.loadAllEnabledExtensions()
         }
         scheduleSave()
@@ -415,9 +426,15 @@ final class BrowserStore {
             record: record,
             profileID: runtime.id,
             profileDataStoreID: runtime.dataStoreID,
-            contentRuleList: runtime.blocker.compiledRuleList,
+            contentRuleLists: adBlockEngine.compiledRuleLists,
+            adBlockPageScript: adBlockEngine.compiledPageScript,
+            adBlockActive: isAdBlockActive(for: record.url, in: runtime),
             webExtensionController: runtime.extensionHost.controller
         )
+        session.adBlockActiveProvider = { [weak self, weak runtime] url in
+            guard let self, let runtime else { return true }
+            return self.isAdBlockActive(for: url, in: runtime)
+        }
         session.neverShareProvider = { [weak self] in self?.extensionConfig.neverShare ?? BrowserNeverShareLists() }
         session.hostZoomProvider = { [weak runtime] host in
             guard let runtime, let normalized = BrowserPageGuard.normalizeHost(host) else { return nil }
@@ -982,11 +999,12 @@ final class BrowserStore {
         }
     }
 
-    func isAdBlockActive(for urlString: String) -> Bool {
-        BrowserContentBlockerRules.isAdBlockActive(
+    func isAdBlockActive(for urlString: String, in runtime: BrowserProfileRuntime? = nil) -> Bool {
+        let target = runtime ?? currentRuntime
+        return BrowserContentBlockerRules.isAdBlockActive(
             globalEnabled: adBlockEnabled,
             host: urlString,
-            disabledHosts: currentRuntime.adBlockDisabledHosts
+            disabledHosts: target.adBlockDisabledHosts
         )
     }
 
@@ -994,13 +1012,12 @@ final class BrowserStore {
         adBlockEnabled = enabled
         scheduleSave()
         Task {
-            for runtime in runtimes {
-                await recompileContentBlocker(for: runtime)
-            }
+            await recompileAdBlockAndApply()
             activeTab?.reload()
         }
     }
 
+    /// Instantly toggles ad-blocking for one host without recompiling any `WKContentRuleList`.
     func toggleAdBlock(forHost rawHost: String) {
         guard let host = BrowserPageGuard.normalizeHost(rawHost) else { return }
         let runtime = currentRuntime
@@ -1010,16 +1027,129 @@ final class BrowserStore {
             runtime.adBlockDisabledHosts.append(host)
         }
         scheduleSave()
+        applyAdBlockToTabs(in: runtime)
+        activeTab?.reload()
+    }
+
+    func setAdBlockCategory(_ category: BrowserAdBlockCategory, enabled: Bool) {
+        adBlockConfig.setCategory(category, enabled: enabled)
+        scheduleSave()
         Task {
-            await recompileContentBlocker(for: runtime)
+            await recompileAdBlockAndApply()
             activeTab?.reload()
         }
     }
 
-    private func recompileContentBlocker(for runtime: BrowserProfileRuntime) async {
-        let ruleList = await runtime.blocker.compile(enabled: adBlockEnabled, disabledHosts: runtime.adBlockDisabledHosts)
+    func setYouTubeAdShieldEnabled(_ enabled: Bool) {
+        adBlockConfig.youtubeAdShieldEnabled = enabled
+        scheduleSave()
+        Task {
+            await recompileAdBlockAndApply()
+            if let tab = activeTab, tab.urlString.lowercased().contains("youtube.com") {
+                tab.reload()
+            }
+        }
+    }
+
+    func setAdBlockAutoUpdateEnabled(_ enabled: Bool) {
+        adBlockConfig.autoUpdateEnabled = enabled
+        scheduleSave()
+    }
+
+    func setFilterListEnabled(id: String, enabled: Bool) {
+        guard let idx = adBlockConfig.subscriptions.firstIndex(where: { $0.id == id }) else { return }
+        adBlockConfig.subscriptions[idx].isEnabled = enabled
+        scheduleSave()
+        Task {
+            await recompileAdBlockAndApply()
+        }
+    }
+
+    @discardableResult
+    func addCustomFilterList(name: String, urlString: String, category: BrowserAdBlockCategory) -> String? {
+        guard let validated = BrowserAdBlockConfig.validateSubscriptionURL(urlString) else {
+            return "Filter list URL must be a valid https:// address."
+        }
+        let cleanedName = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let title = cleanedName.isEmpty ? (validated.host ?? "Custom Filter List") : cleanedName
+        if adBlockConfig.subscriptions.contains(where: { $0.url.caseInsensitiveCompare(validated.absoluteString) == .orderedSame }) {
+            return "That filter list URL is already subscribed."
+        }
+        let sub = BrowserFilterListSubscription(
+            name: title,
+            category: category,
+            url: validated.absoluteString,
+            isBuiltIn: false,
+            isEnabled: true
+        )
+        adBlockConfig.subscriptions.append(sub)
+        scheduleSave()
+        Task {
+            await refreshAdBlockLists(silent: false)
+        }
+        return nil
+    }
+
+    func removeCustomFilterList(id: String) {
+        guard let idx = adBlockConfig.subscriptions.firstIndex(where: { $0.id == id && !$0.isBuiltIn }) else { return }
+        adBlockConfig.subscriptions.remove(at: idx)
+        adBlockEngine.deleteCachedList(for: id)
+        scheduleSave()
+        Task {
+            await recompileAdBlockAndApply(force: true)
+        }
+    }
+
+    func updateCustomAdBlockRules(_ rules: String) {
+        adBlockConfig.customRules = rules
+        scheduleSave()
+        Task {
+            await recompileAdBlockAndApply()
+            activeTab?.reload()
+        }
+    }
+
+    func refreshAdBlockLists(silent: Bool = false) async {
+        let result = await adBlockEngine.updateFilterLists(config: adBlockConfig)
+        // Merge only subscription fetch metadata back into current `adBlockConfig` so concurrent
+        // toggles, custom rules edits, or added/removed lists are never overwritten.
+        let byID = Dictionary(uniqueKeysWithValues: result.config.subscriptions.map { ($0.id, $0) })
+        for idx in adBlockConfig.subscriptions.indices {
+            if let updated = byID[adBlockConfig.subscriptions[idx].id] {
+                adBlockConfig.subscriptions[idx].lastUpdatedAt = updated.lastUpdatedAt
+                adBlockConfig.subscriptions[idx].ruleCount = updated.ruleCount
+                adBlockConfig.subscriptions[idx].lastError = updated.lastError
+            }
+        }
+        if let ts = result.config.lastUpdatedAt {
+            adBlockConfig.lastUpdatedAt = ts
+        }
+        scheduleSave()
+        await recompileAdBlockAndApply(force: result.updatedCount > 0)
+        if !silent {
+            if result.errorCount == 0 && result.updatedCount > 0 {
+                showToast("Updated \(result.updatedCount) filter list\(result.updatedCount == 1 ? "" : "s") (\(adBlockEngine.stats.totalActiveRules) rules)", tone: .success)
+            } else if result.updatedCount > 0 {
+                showToast("Updated \(result.updatedCount) lists (\(result.errorCount) failed)", tone: .neutral)
+            } else if result.errorCount > 0 {
+                showToast("Couldn't refresh filter lists (check network)", tone: .error)
+            }
+        }
+    }
+
+    func recompileAdBlockAndApply(force: Bool = false) async {
+        await adBlockEngine.recompile(enabled: adBlockEnabled, config: adBlockConfig, force: force)
+        for runtime in runtimes {
+            applyAdBlockToTabs(in: runtime)
+        }
+    }
+
+    private func applyAdBlockToTabs(in runtime: BrowserProfileRuntime) {
+        let lists = adBlockEngine.compiledRuleLists
+        let script = adBlockEngine.compiledPageScript
         for tab in runtime.tabs {
-            tab.applyContentRuleList(ruleList)
+            let active = isAdBlockActive(for: tab.urlString, in: runtime)
+            tab.applyAdBlockState(ruleLists: lists, pageScript: script, activeForCurrentURL: active)
         }
     }
 

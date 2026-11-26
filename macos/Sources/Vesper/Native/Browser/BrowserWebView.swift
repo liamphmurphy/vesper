@@ -39,9 +39,11 @@ enum BrowserWebViewFactory {
     static func makeWebView(
         isPrivate: Bool,
         profileDataStoreID: UUID = browsingStoreID,
-        contentRuleList: WKContentRuleList?,
+        contentRuleLists: [WKContentRuleList] = [],
+        adBlockPageScript: WKUserScript? = nil,
         webExtensionController: WKWebExtensionController? = nil,
-        autofillMessageHandler: (any WKScriptMessageHandler)? = nil
+        autofillMessageHandler: (any WKScriptMessageHandler)? = nil,
+        adBlockMetricsHandler: (any WKScriptMessageHandler)? = nil
     ) -> BrowserWKWebView {
         let config = WKWebViewConfiguration()
         config.websiteDataStore = isPrivate ? WKWebsiteDataStore.nonPersistent() : store(forProfileID: profileDataStoreID)
@@ -52,8 +54,25 @@ enum BrowserWebViewFactory {
         if let webExtensionController {
             config.webExtensionController = webExtensionController
         }
-        if let contentRuleList {
-            config.userContentController.add(contentRuleList)
+        for ruleList in contentRuleLists {
+            config.userContentController.add(ruleList)
+        }
+        if let adBlockMetricsHandler {
+            let bridge = WKUserScript(
+                source: BrowserAdBlockScripts.metricsBridgeScriptSource,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: false,
+                in: .defaultClient
+            )
+            config.userContentController.addUserScript(bridge)
+            config.userContentController.add(
+                adBlockMetricsHandler,
+                contentWorld: .defaultClient,
+                name: BrowserAdBlockScripts.metricsHandlerName
+            )
+        }
+        if let adBlockPageScript {
+            config.userContentController.addUserScript(adBlockPageScript)
         }
         if let autofillMessageHandler {
             let script = WKUserScript(
@@ -75,42 +94,6 @@ enum BrowserWebViewFactory {
         webView.allowsMagnification = true
         webView.isInspectable = true
         return webView
-    }
-}
-
-/// Compiles and caches the native WebKit `WKContentRuleList` for ad & tracker blocking.
-@MainActor
-final class BrowserContentBlockerManager {
-    private let ruleListIdentifier: String
-    private(set) var compiledRuleList: WKContentRuleList?
-    private var lastJSON: String?
-
-    init(profileID: UUID = BrowserProfile.defaultProfileID) {
-        self.ruleListIdentifier = "com.vesper.mac.browser.adblock.v1.\(profileID.uuidString.lowercased())"
-    }
-
-    func compile(enabled: Bool, disabledHosts: [String]) async -> WKContentRuleList? {
-        guard enabled else {
-            compiledRuleList = nil
-            lastJSON = nil
-            return nil
-        }
-        let json = BrowserContentBlockerRules.ruleListJSON(disabledHosts: disabledHosts)
-        if json == lastJSON, let existing = compiledRuleList {
-            return existing
-        }
-        do {
-            let list = try await WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: ruleListIdentifier,
-                encodedContentRuleList: json
-            )
-            compiledRuleList = list
-            lastJSON = json
-            return list
-        } catch {
-            vlog("browser adblock compile failed: \(error)")
-            return compiledRuleList
-        }
     }
 }
 

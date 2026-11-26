@@ -1,0 +1,96 @@
+! Title: Vesper Bundled Cookie Banners & Annoyances Filter List
+! Description: Offline starter rules suppressing cookie consent banners, GDPR overlays, scroll locks, newsletter modals, and social share nags.
+! Supplemented by live Fanboy's Annoyance List updates.
+
+! --- Consent Management Platforms (Network) ---
+||cdn.cookielaw.org^$third-party
+||geolocation.onetrust.com^$third-party
+||consent.cookiebot.com^$third-party
+||consentcdn.cookiebot.com^$third-party
+||sdk.privacy-center.org^$third-party
+||consent.trustarc.com^$third-party
+||cmp.osano.com^$third-party
+||cdn-cookieyes.com^$third-party
+||app.usercentrics.eu^$third-party
+||privacy-proxy.usercentrics.eu^$third-party
+||quantcast.mgr.consensu.org^$third-party
+||cdn.privacy-mgmt.com^$third-party
+||cmp.quantcast.com^$third-party
+||consentmanager.net^$third-party
+||cdn.consentmanager.net^$third-party
+||cdn.iubenda.com/cs/^$third-party
+||cs.iubenda.com^$third-party
+||app.termly.io^$third-party
+||cookie-cdn.cookiepro.com^$third-party
+||consent.transcend.io^$third-party
+||cdn.ketchjs.com^$third-party
+||s.skimresources.com^$third-party
+||viglink.com^$third-party
+||sharethis.com^$third-party
+||addthis.com^$third-party
+||addtoany.com^$third-party
+||onesignal.com^$third-party
+||cdn.onesignal.com^$third-party
+||pushwoosh.com^$third-party
+||pushengage.com^$third-party
+||gravitec.net^$third-party
+
+! --- Cookie Banners & Consent Overlays (Cosmetic) ---
+###onetrust-consent-sdk
+###onetrust-banner-sdk
+##.onetrust-pc-dark-filter
+###CybotCookiebotDialog
+###CybotCookiebotDialogBodyUnderlay
+###didomi-host
+###didomi-popup
+##.didomi-popup-backdrop
+##.qc-cmp2-container
+##.qc-cmp-ui-container
+###truste-consent-track
+##.truste_overlay
+##.truste_box_overlay
+##.osano-cm-window
+##.cky-consent-container
+##.cky-overlay
+###usercentrics-root
+##.sp-message-open .message-container
+##[id^="sp_message_container_"]
+##.fc-consent-root
+##.fc-dialog-overlay
+###iubenda-cs-banner
+##.cmplz-cookiebanner-container
+###BorlabsCookieBox
+##.klaro .cookie-notice
+##.klaro .cookie-modal
+##.cc-window.cc-banner
+###cookie-law-info-bar
+###cookie-notice
+###cookie-banner
+###cookieConsent
+###cookie_consent_banner
+##.cookie-consent-banner
+##.cookie-banner-wrapper
+##.gdpr-banner
+##.gdpr-modal
+##[aria-label="Cookie Consent Banner"]
+##[aria-label="cookieconsent"]
+##[data-testid="cookie-policy-dialog"]
+##[data-testid="cookie-banner"]
+
+! --- Mobile App Nags & Sign-In Prompts ---
+reddit.com##.XPromoPopup
+reddit.com##shreddit-experience-tree[name="xpromo"]
+quora.com##.q-box.qu-zIndex--modal
+pinterest.com##[data-test-id="full-page-signup-close-button"]
+medium.com##[data-testid="close-button"]
+accounts.google.com/gsi/iframe$third-party,subdocument
+||accounts.google.com/gsi/client$third-party,script
+
+! --- Scroll Lock Restoration (Extended CSS Style Rules) ---
+##html.sp-message-open:style(overflow: auto !important; position: static !important;)
+##body.sp-message-open:style(overflow: auto !important; position: static !important;)
+##body.didomi-popup-open:style(overflow: auto !important;)
+##body.qc-cmp-ui-showing:style(overflow: auto !important;)
+##body.onetrust-open:style(overflow: auto !important;)
+##body.fc-ab-root-open:style(overflow: auto !important;)
+##body.modal-open.cookie-open:style(overflow: auto !important;)

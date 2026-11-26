@@ -119,6 +119,7 @@ final class CommandPaletteModel {
     @ObservationIgnored var onToggleBrowserSplitView: (() -> Void)?
     @ObservationIgnored var onOpenBrowserExtensions: (() -> Void)?
     @ObservationIgnored var onOpenBrowserAutofill: (() -> Void)?
+    @ObservationIgnored var onUpdateBrowserAdBlockLists: (() -> Void)?
 
     // Theme & focus trigger
     var theme: ThemeTokens = ThemeTokens(mode: .dark)
@@ -1648,6 +1649,26 @@ final class CommandPaletteModel {
                 perform: { [weak self] in
                     self?.close(restoreFocus: false)
                     self?.onOpenBrowserAutofill?()
+                }
+            ),
+            PaletteRow(
+                id: "cmd-browser-adblock-update",
+                title: "Browser: Update Ad-Block Filter Lists",
+                subtitle: "Refresh EasyList, EasyPrivacy, Fanboy Annoyances & uBlock scriptlets",
+                shortcut: nil,
+                sfSymbol: "shield.lefthalf.filled",
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Command · Browser",
+                    title: "Update Ad-Block Filter Lists",
+                    description: "Downloads the latest upstream filter lists and recompiles WebKit rules and scriptlets.",
+                    shortcut: nil,
+                    contextLabel: "Scope",
+                    contextValue: "Browser"
+                )),
+                perform: { [weak self] in
+                    self?.close(restoreFocus: false)
+                    self?.onUpdateBrowserAdBlockLists?()
                 }
             ),
             PaletteRow(

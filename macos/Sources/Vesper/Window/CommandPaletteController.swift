@@ -202,6 +202,10 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
             }
             app.browser.triggerAutofillPopover()
         }
+        model.onUpdateBrowserAdBlockLists = { [weak self] in
+            guard let self, let app = self.aux?.app else { return }
+            Task { await app.browser.refreshAdBlockLists(silent: false) }
+        }
         model.onClose = { [weak self] restoreFocus in
             self?.close(restoreFocus: restoreFocus)
         }
