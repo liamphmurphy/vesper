@@ -157,4 +157,116 @@ struct KnowledgeAttachmentsTests {
         #expect(KnowledgeShellLogic.filterAttachments(items, matching: "DIAGRAM").map(\.id) == ["2"])
         #expect(KnowledgeShellLogic.markdownEmbedBlock(for: ["attachment:1/a.png", "attachment:2/b.mp4"]) == "![[attachment:1/a.png]]\n![[attachment:2/b.mp4]]")
     }
+
+    @Test("removingEmbed cleanly strips standalone PDF/image lines, collapses redundant blank lines, and supports Undo")
+    func removingStandaloneInlineEmbeds() throws {
+        let pdfRef = "![[attachment:4/spec.pdf]]"
+        let pdfEmbed = KnowledgeEmbed(
+            ref: pdfRef,
+            kind: "file",
+            title: "spec.pdf",
+            url: "/api/v1/knowledge/assets/4",
+            contentType: "application/pdf",
+            available: true
+        )
+
+        // 1. Sole embed in note (no newline & with trailing newline).
+        for single in [pdfRef, "\(pdfRef)\n"] {
+            let placement = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: single, embeds: [pdfEmbed]).first)
+            let edit = try #require(KnowledgeMarkdownSyntax.removingEmbed(placement, in: single))
+            #expect(edit.resultingText == "")
+            #expect(edit.caretUTF16 == 0)
+        }
+
+        // 2. Pasted directly after a paragraph with trailing newline (exact inverse of paste insertion).
+        let pastedAfter = "Intro\n\(pdfRef)\n"
+        let p2 = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: pastedAfter, embeds: [pdfEmbed]).first)
+        let e2 = try #require(KnowledgeMarkdownSyntax.removingEmbed(p2, in: pastedAfter))
+        #expect(e2.resultingText == "Intro\n")
+        #expect(e2.caretUTF16 == 6)
+
+        // 3. Trailing line without trailing newline consumes the preceding newline cleanly.
+        let trailingNoNL = "Intro\n\(pdfRef)"
+        let p3 = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: trailingNoNL, embeds: [pdfEmbed]).first)
+        let e3 = try #require(KnowledgeMarkdownSyntax.removingEmbed(p3, in: trailingNoNL))
+        #expect(e3.resultingText == "Intro")
+        #expect(e3.caretUTF16 == 5)
+
+        // 4. Standalone embed between blank lines collapses redundant blank line.
+        let sandwiched = "Intro\n\n\(pdfRef)\n\nNext paragraph"
+        let p4 = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: sandwiched, embeds: [pdfEmbed]).first)
+        let e4 = try #require(KnowledgeMarkdownSyntax.removingEmbed(p4, in: sandwiched))
+        #expect(e4.resultingText == "Intro\n\nNext paragraph")
+        #expect(e4.caretUTF16 == 7)
+
+        // 5. Same behavior with CRLF line endings.
+        let crlfSandwiched = "Intro\r\n\r\n\(pdfRef)\r\n\r\nNext"
+        let p5 = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: crlfSandwiched, embeds: [pdfEmbed]).first)
+        let e5 = try #require(KnowledgeMarkdownSyntax.removingEmbed(p5, in: crlfSandwiched))
+        #expect(e5.resultingText == "Intro\r\n\r\nNext")
+
+        // 6. Applying via KnowledgeEditorDocument.replaceProse supports exact Undo/Redo round-trip.
+        var doc = KnowledgeEditorDocument(markdown: sandwiched)
+        let changed = doc.replaceProse(
+            in: 0,
+            range: e4.replacementRange,
+            with: e4.replacement,
+            newSelection: DocumentSelection(collapsedAt: .prose(segmentIndex: 0, utf16Offset: e4.caretUTF16))
+        )
+        #expect(changed)
+        #expect(doc.serialize() == "Intro\n\nNext paragraph")
+        let undone = doc.undo()
+        #expect(undone)
+        #expect(doc.serialize() == sandwiched)
+        let redone = doc.redo()
+        #expect(redone)
+        #expect(doc.serialize() == "Intro\n\nNext paragraph")
+    }
+
+    @Test("removingEmbed preserves sibling embeds, tidies inline spacing, handles resized/duplicate embeds, and guards out-of-bounds")
+    func removingInlineAndSharedLineEmbeds() throws {
+        let imgRef = "![[attachment:1/photo.png]]"
+        let pdfRef = "![[attachment:2/spec.pdf]]"
+        let embeds = [
+            KnowledgeEmbed(ref: imgRef, kind: "file", title: "photo.png", url: "/api/v1/knowledge/assets/1", contentType: "image/png", available: true),
+            KnowledgeEmbed(ref: pdfRef, kind: "file", title: "spec.pdf", url: "/api/v1/knowledge/assets/2", contentType: "application/pdf", available: true),
+        ]
+
+        // 1. Two embeds on the same standalone line: removing one keeps the sibling intact.
+        let sharedLine = "\(imgRef) \(pdfRef)\n"
+        let sharedPlacements = KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: sharedLine, embeds: embeds)
+        #expect(sharedPlacements.count == 2)
+        let removeFirst = try #require(KnowledgeMarkdownSyntax.removingEmbed(sharedPlacements[0], in: sharedLine))
+        #expect(removeFirst.resultingText == "\(pdfRef)\n")
+        let removeSecond = try #require(KnowledgeMarkdownSyntax.removingEmbed(sharedPlacements[1], in: sharedLine))
+        #expect(removeSecond.resultingText == "\(imgRef)\n")
+
+        // 2. Inline inside prose sentence (middle, start, end).
+        let midSentence = "See \(pdfRef) here."
+        let midP = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: midSentence, embeds: embeds).first)
+        #expect(KnowledgeMarkdownSyntax.removingEmbed(midP, in: midSentence)?.resultingText == "See here.")
+
+        let startSentence = "\(pdfRef) is attached"
+        let startP = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: startSentence, embeds: embeds).first)
+        #expect(KnowledgeMarkdownSyntax.removingEmbed(startP, in: startSentence)?.resultingText == "is attached")
+
+        let endSentence = "See \(pdfRef)"
+        let endP = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: endSentence, embeds: embeds).first)
+        #expect(KnowledgeMarkdownSyntax.removingEmbed(endP, in: endSentence)?.resultingText == "See")
+
+        // 3. Duplicate occurrences: removing the second leaves the first untouched.
+        let duplicated = "First:\n\(pdfRef)\n\nSecond:\n\(pdfRef)\n"
+        let dupPlacements = KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: duplicated, embeds: embeds)
+        #expect(dupPlacements.count == 2)
+        let removeSecondDup = try #require(KnowledgeMarkdownSyntax.removingEmbed(dupPlacements[1], in: duplicated))
+        #expect(removeSecondDup.resultingText == "First:\n\(pdfRef)\n\nSecond:\n")
+
+        // 4. Resized image embed token (`|420`) removes cleanly.
+        let resized = "Before\n![[attachment:1/photo.png|420]]\nAfter"
+        let resizedP = try #require(KnowledgeMarkdownSyntax.resolveInlineEmbedPlacements(in: resized, embeds: embeds).first)
+        #expect(KnowledgeMarkdownSyntax.removingEmbed(resizedP, in: resized)?.resultingText == "Before\nAfter")
+
+        // 5. Out-of-bounds placement against shorter text returns nil safely.
+        #expect(KnowledgeMarkdownSyntax.removingEmbed(dupPlacements[1], in: "short") == nil)
+    }
 }
