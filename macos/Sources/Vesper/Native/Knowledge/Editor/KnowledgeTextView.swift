@@ -456,7 +456,8 @@ struct KnowledgeTextView: NSViewRepresentable {
             let preview = KnowledgeMarkdownSyntax.livePreview(
                 tokens: tokens,
                 selection: selection,
-                isFocused: focused
+                isFocused: focused,
+                activeFindMatch: parent.activeFindMatchRange
             )
 
             if !embedGroups.isEmpty || view.hasMountedEmbeds {
@@ -629,13 +630,17 @@ struct KnowledgeTextView: NSViewRepresentable {
                         ], range: sub)
                     }
 
-                case .wikiLink:
+                case .wikiLink(let target):
+                    var linkAttrs: [NSAttributedString.Key: Any] = [
+                        .foregroundColor: accentColor,
+                        .underlineStyle: NSUnderlineStyle.single.rawValue,
+                        .underlineColor: accentColor.withAlphaComponent(0.45),
+                    ]
+                    if !target.target.isEmpty {
+                        linkAttrs[.toolTip] = target.target
+                    }
                     for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
-                        storage.addAttributes([
-                            .foregroundColor: accentColor,
-                            .underlineStyle: NSUnderlineStyle.single.rawValue,
-                            .underlineColor: accentColor.withAlphaComponent(0.45),
-                        ], range: sub)
+                        storage.addAttributes(linkAttrs, range: sub)
                     }
 
                 case .embed:

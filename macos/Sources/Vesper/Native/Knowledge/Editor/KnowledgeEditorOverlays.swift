@@ -113,7 +113,7 @@ struct KnowledgeEmbedPreviewCard: View {
                         .accessibilityLabel("Remove from Note")
                     }
                 }
-                Text(md)
+                Text(KnowledgePanelsLogic.unlinkWikiText(md))
                     .vesperText(.small, theme)
                     .foregroundStyle(p.secondaryText)
                     .lineLimit(4)
