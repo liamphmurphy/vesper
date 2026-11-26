@@ -45,16 +45,20 @@ func TestMicroVMGitUploadProxyUnit(t *testing.T) {
 		t.Fatalf("auth=%q path=%q", seenAuth, seenPath)
 	}
 
-	// Push (git-receive-pack) rejected.
+	// Push (git-receive-pack), duplicate service params, and path tricks rejected.
 	for _, r := range []*http.Request{
 		httptest.NewRequest(http.MethodGet, "http://"+microvm.InternalGitHost+"/github/org/repo.git/info/refs?service=git-receive-pack", nil),
+		httptest.NewRequest(http.MethodGet, "http://"+microvm.InternalGitHost+"/github/org/repo.git/info/refs?service=git-upload-pack&service=git-receive-pack", nil),
+		httptest.NewRequest(http.MethodGet, "http://"+microvm.InternalGitHost+"/github/org/repo.git/info/refs?service=git-upload-pack&service=git-upload-pack", nil),
 		httptest.NewRequest(http.MethodPost, "http://"+microvm.InternalGitHost+"/github/org/repo.git/git-receive-pack", nil),
+		httptest.NewRequest(http.MethodPost, "http://"+microvm.InternalGitHost+"/github/org/repo.git/git-upload-pack?service=git-receive-pack", nil),
+		httptest.NewRequest(http.MethodGet, "http://"+microvm.InternalGitHost+"/github/org/%2e%2e/repo.git/info/refs?service=git-upload-pack", nil),
 		httptest.NewRequest(http.MethodGet, "http://"+microvm.InternalGitHost+"/user", nil),
 	} {
 		w := httptest.NewRecorder()
 		h.ServeHTTP(w, r)
 		if w.Code != http.StatusForbidden {
-			t.Errorf("%s expected 403, got %d", r.URL.Path, w.Code)
+			t.Errorf("%s?%s expected 403, got %d", r.URL.Path, r.URL.RawQuery, w.Code)
 		}
 	}
 }

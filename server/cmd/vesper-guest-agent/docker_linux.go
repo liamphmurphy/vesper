@@ -169,9 +169,14 @@ func waitForFile(ctx context.Context, p string, d time.Duration) error {
 // listable, so a process can open only a socket whose name it was given.
 const dockerGuardDir = "/run/vesper-docker"
 
+type guardEntry struct {
+	srv   *http.Server
+	guard *dockerGuard
+}
+
 var (
 	guardsMu sync.Mutex
-	guards   = map[string]*http.Server{}
+	guards   = map[string]*guardEntry{}
 )
 
 func rawDockerTransport() http.RoundTripper {
@@ -210,8 +215,10 @@ func openDockerGuard(key string) (string, error) {
 		_ = ln.Close()
 		return "", err
 	}
-	srv := &http.Server{Handler: newDockerGuard(key, rawDockerTransport()), ReadHeaderTimeout: 30 * time.Second}
-	guards[key] = srv
+	guard := newDockerGuard(key, rawDockerTransport())
+	guard.bindRoot = filepath.Join(dockerBindDir, key)
+	srv := &http.Server{Handler: guard, ReadHeaderTimeout: 30 * time.Second}
+	guards[key] = &guardEntry{srv: srv, guard: guard}
 	go func() { _ = srv.Serve(ln) }()
 	return sock, nil
 }
@@ -222,17 +229,21 @@ func closeDockerGuard(ctx context.Context, key string) error {
 		return fmt.Errorf("invalid docker guard key %q", key)
 	}
 	guardsMu.Lock()
-	srv := guards[key]
+	entry := guards[key]
 	delete(guards, key)
 	guardsMu.Unlock()
-	if srv != nil {
-		_ = srv.Close()
+	if entry != nil && entry.srv != nil {
+		_ = entry.srv.Close()
 	}
 	_ = os.Remove(filepath.Join(dockerGuardDir, key+".sock"))
-	if !pingUnixSocketExists(dockerRawSock) {
-		return nil // dockerd never started: nothing to remove
+	var cleanupErr error
+	if pingUnixSocketExists(dockerRawSock) {
+		cleanupErr = cleanupDockerTurn(ctx, rawDockerTransport(), key)
 	}
-	return cleanupDockerTurn(ctx, rawDockerTransport(), key)
+	if entry != nil && entry.guard != nil {
+		entry.guard.unmountPinnedBinds()
+	}
+	return cleanupErr
 }
 
 func startDockerVSockBridge(log *slog.Logger) error {

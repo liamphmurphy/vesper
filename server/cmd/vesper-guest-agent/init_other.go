@@ -10,7 +10,24 @@ import (
 	"net"
 	"os"
 	"os/exec"
+	"path/filepath"
 )
+
+const openNoFollowFlag = 0
+
+func openFileNoFollowUnderRoot(rootDir, rel string, mode os.FileMode, uid, gid int) (*os.File, error) {
+	root, err := os.OpenRoot(rootDir)
+	if err != nil {
+		return nil, err
+	}
+	defer root.Close()
+	if dir := filepath.Dir(rel); dir != "." && dir != "" {
+		if err := root.MkdirAll(dir, 0o755); err != nil {
+			return nil, err
+		}
+	}
+	return root.OpenFile(rel, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
+}
 
 func bootstrapPID1() error { return nil }
 
@@ -36,7 +53,9 @@ func addPidToCgroup(string, int) error { return nil }
 
 func killAndCheckOOM(string) bool { return false }
 
-func setupChildSysProcAttr(*exec.Cmd, int, int, bool) {}
+func setupChildSysProcAttr(*exec.Cmd, int, int, bool, string) (func(), bool) {
+	return func() {}, false
+}
 
 func startPTY(*exec.Cmd, uint16, uint16) (*os.File, error) {
 	return nil, errors.New("PTY is only implemented on Linux guest agent")

@@ -1,6 +1,7 @@
 package microvm
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"crypto/tls"
@@ -9,6 +10,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -112,25 +114,34 @@ type SyntheticEntry struct {
 	ExpiresAt time.Time
 }
 
+const (
+	defaultMinSynthOffset uint32 = 16
+	defaultMaxSynthOffset uint32 = (2 << 16) - 2 // 198.18.0.16 .. 198.19.255.254
+
+	defaultDNSRatePerSec = 60.0
+	defaultDNSBurst      = 200
+)
+
 // SyntheticTable maps public hostnames queried by a microVM to per-VM synthetic
 // IPv4 addresses inside 198.18.0.0/15.
 type SyntheticTable struct {
-	mu      sync.RWMutex
-	now     func() time.Time
-	ttl     time.Duration
-	cursor  uint32 // offset within 198.18.0.0/15 starting at 16
-	byHost  map[string][4]byte
-	byIP    map[[4]byte]SyntheticEntry
-	ringIPs [][4]byte
+	mu        sync.RWMutex
+	now       func() time.Time
+	ttl       time.Duration
+	cursor    uint32 // offset within 198.18.0.0/15 starting at 16
+	maxOffset uint32
+	byHost    map[string][4]byte
+	byIP      map[[4]byte]SyntheticEntry
 }
 
 func NewSyntheticTable() *SyntheticTable {
 	return &SyntheticTable{
-		now:    time.Now,
-		ttl:    5 * time.Minute,
-		cursor: 16,
-		byHost: make(map[string][4]byte),
-		byIP:   make(map[[4]byte]SyntheticEntry),
+		now:       time.Now,
+		ttl:       5 * time.Minute,
+		cursor:    defaultMinSynthOffset,
+		maxOffset: defaultMaxSynthOffset,
+		byHost:    make(map[string][4]byte),
+		byIP:      make(map[[4]byte]SyntheticEntry),
 	}
 }
 
@@ -152,37 +163,61 @@ func (t *SyntheticTable) LookupHost(host string) ([4]byte, bool) {
 	return ip, true
 }
 
-func (t *SyntheticTable) Allocate(host string, realIPs []net.IP) [4]byte {
+// Allocate binds host to a synthetic 198.18.x.x IP. It refuses to evict
+// unexpired entries; if every slot is currently active, it returns false.
+func (t *SyntheticTable) Allocate(host string, realIPs []net.IP) ([4]byte, bool) {
 	norm := normalizeHostname(host)
 	if ip, ok := reservedHostToIP[norm]; ok {
-		return ip
+		return ip, true
 	}
 	pinned := make([]net.IP, len(realIPs))
 	for i, ip := range realIPs {
 		pinned[i] = append(net.IP(nil), ip...)
 	}
-	exp := t.now().Add(t.ttl)
+	now := t.now()
+	exp := now.Add(t.ttl)
 
 	t.mu.Lock()
 	defer t.mu.Unlock()
 	if existing, ok := t.byHost[norm]; ok {
-		t.byIP[existing] = SyntheticEntry{Hostname: norm, RealIPs: pinned, ExpiresAt: exp}
-		return existing
+		if ent, ok := t.byIP[existing]; ok && ent.Hostname == norm {
+			t.byIP[existing] = SyntheticEntry{Hostname: norm, RealIPs: pinned, ExpiresAt: exp}
+			return existing, true
+		}
+		delete(t.byHost, norm)
 	}
 
-	const maxOffset = (2 << 16) - 2 // 198.18.0.16 .. 198.19.255.254
+	maxOff := t.maxOffset
+	if maxOff < defaultMinSynthOffset {
+		maxOff = defaultMaxSynthOffset
+	}
+	totalSlots := maxOff - defaultMinSynthOffset + 1
 	off := t.cursor
-	t.cursor++
-	if t.cursor > maxOffset {
-		t.cursor = 16
+	if off < defaultMinSynthOffset || off > maxOff {
+		off = defaultMinSynthOffset
 	}
-	ip := [4]byte{198, byte(18 + (off >> 16)), byte((off >> 8) & 0xff), byte(off & 0xff)}
-	if old, occupied := t.byIP[ip]; occupied && old.Hostname != norm {
-		delete(t.byHost, old.Hostname)
+	for range totalSlots {
+		ip := [4]byte{198, byte(18 + (off >> 16)), byte((off >> 8) & 0xff), byte(off & 0xff)}
+		old, occupied := t.byIP[ip]
+		if !occupied || now.After(old.ExpiresAt) {
+			if occupied && old.Hostname != norm && t.byHost[old.Hostname] == ip {
+				delete(t.byHost, old.Hostname)
+			}
+			next := off + 1
+			if next > maxOff {
+				next = defaultMinSynthOffset
+			}
+			t.cursor = next
+			t.byHost[norm] = ip
+			t.byIP[ip] = SyntheticEntry{Hostname: norm, RealIPs: pinned, ExpiresAt: exp}
+			return ip, true
+		}
+		off++
+		if off > maxOff {
+			off = defaultMinSynthOffset
+		}
 	}
-	t.byHost[norm] = ip
-	t.byIP[ip] = SyntheticEntry{Hostname: norm, RealIPs: pinned, ExpiresAt: exp}
-	return ip
+	return [4]byte{}, false
 }
 
 func (t *SyntheticTable) LookupIP(ip [4]byte) (SyntheticEntry, bool) {
@@ -217,14 +252,63 @@ type EgressConfig struct {
 	// TCP dials. Reserved internal hosts (such as cache.vesper.internal) remain
 	// reachable even when public egress is denied.
 	AllowPublic func() bool
+	// AllowedPublicPorts restricts outbound public TCP ports; defaults to [80, 443].
+	AllowedPublicPorts []uint16
+	// DNSRatePerSec and DNSBurst throttle uncached public DNS lookups per VM
+	// to limit DNS subdomain exfiltration. Zero uses defaults (60/s, burst 200).
+	DNSRatePerSec float64
+	DNSBurst      int
+}
+
+type dnsRateLimiter struct {
+	mu     sync.Mutex
+	rate   float64
+	burst  float64
+	tokens float64
+	last   time.Time
+}
+
+func newDNSRateLimiter(rate float64, burst int) *dnsRateLimiter {
+	if rate <= 0 {
+		rate = defaultDNSRatePerSec
+	}
+	if burst <= 0 {
+		burst = defaultDNSBurst
+	}
+	return &dnsRateLimiter{
+		rate:   rate,
+		burst:  float64(burst),
+		tokens: float64(burst),
+	}
+}
+
+func (l *dnsRateLimiter) allow(now time.Time) bool {
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if l.last.IsZero() {
+		l.last = now
+	} else if dt := now.Sub(l.last).Seconds(); dt > 0 {
+		l.tokens += dt * l.rate
+		if l.tokens > l.burst {
+			l.tokens = l.burst
+		}
+		l.last = now
+	}
+	if l.tokens < 1.0 {
+		return false
+	}
+	l.tokens -= 1.0
+	return true
 }
 
 // Egress enforces hostname-pinned outbound TCP and internal service routing
 // for a NIC-less microVM over AF_VSOCK.
 type Egress struct {
-	cfg   EgressConfig
-	table *SyntheticTable
-	log   *slog.Logger
+	cfg          EgressConfig
+	table        *SyntheticTable
+	log          *slog.Logger
+	allowedPorts []uint16
+	dnsLimiter   *dnsRateLimiter
 
 	dynMu             sync.RWMutex
 	cacheHandler      http.Handler
@@ -251,10 +335,16 @@ func NewEgress(cfg EgressConfig) *Egress {
 	if cfg.DialTimeout <= 0 {
 		cfg.DialTimeout = 10 * time.Second
 	}
+	allowedPorts := cfg.AllowedPublicPorts
+	if len(allowedPorts) == 0 {
+		allowedPorts = []uint16{80, 443}
+	}
 	e := &Egress{
 		cfg:               cfg,
 		table:             NewSyntheticTable(),
 		log:               cfg.Log,
+		allowedPorts:      append([]uint16(nil), allowedPorts...),
+		dnsLimiter:        newDNSRateLimiter(cfg.DNSRatePerSec, cfg.DNSBurst),
 		cacheHandler:      cfg.CacheHandler,
 		gitHandler:        cfg.GitHandler,
 		playgroundHandler: cfg.PlaygroundHandler,
@@ -451,11 +541,32 @@ func (e *Egress) HandleDNSPacket(ctx context.Context, pkt []byte) ([]byte, error
 		return b.Finish()
 	}
 
+	// Return cached unexpired synthetic mappings without burning DNS rate budget.
+	if cached, ok := e.table.LookupHost(host); ok {
+		return buildDNSAResponse(respHdr, q, cached)
+	}
+
+	if !e.dnsLimiter.allow(e.table.now()) {
+		e.log.Debug("egress rate-limited DNS query", "host", host)
+		respHdr.RCode = dnsmessage.RCodeRefused
+		b := dnsmessage.NewBuilder(nil, respHdr)
+		_ = b.StartQuestions()
+		_ = b.Question(q)
+		return b.Finish()
+	}
+
 	var allowed []net.IP
 	if e.cfg.TestUpstreams != nil {
 		if _, ok := e.cfg.TestUpstreams[host]; ok {
 			// Still allocate synthetic entry while recording sentinel allowed marker; Dial uses TestUpstreams override.
-			synth := e.table.Allocate(host, nil)
+			synth, ok := e.table.Allocate(host, nil)
+			if !ok {
+				respHdr.RCode = dnsmessage.RCodeServerFailure
+				b := dnsmessage.NewBuilder(nil, respHdr)
+				_ = b.StartQuestions()
+				_ = b.Question(q)
+				return b.Finish()
+			}
 			return buildDNSAResponse(respHdr, q, synth)
 		}
 	}
@@ -479,7 +590,15 @@ func (e *Egress) HandleDNSPacket(ctx context.Context, pkt []byte) ([]byte, error
 		return b.Finish()
 	}
 
-	synth := e.table.Allocate(host, allowed)
+	synth, ok := e.table.Allocate(host, allowed)
+	if !ok {
+		e.log.Warn("egress synthetic DNS table exhausted", "host", host)
+		respHdr.RCode = dnsmessage.RCodeServerFailure
+		b := dnsmessage.NewBuilder(nil, respHdr)
+		_ = b.StartQuestions()
+		_ = b.Question(q)
+		return b.Finish()
+	}
 	return buildDNSAResponse(respHdr, q, synth)
 }
 
@@ -526,11 +645,24 @@ func (e *Egress) ServeTCPConn(conn net.Conn) {
 		return
 	}
 
+	if !slices.Contains(e.allowedPorts, dstPort) {
+		e.log.Debug("egress rejected disallowed public port", "host", ent.Hostname, "port", dstPort)
+		return
+	}
+
 	var clientConn net.Conn = conn
-	if dstPort == 443 {
+	switch dstPort {
+	case 443:
 		sni, wrapped, err := peekTLSSNI(conn)
-		if err != nil || sni == "" || !strings.EqualFold(sni, ent.Hostname) {
+		if err != nil || sni == "" || !strings.EqualFold(normalizeHostname(sni), ent.Hostname) {
 			e.log.Debug("egress rejected TLS SNI mismatch", "want", ent.Hostname, "got", sni, "err", err)
+			return
+		}
+		clientConn = wrapped
+	case 80:
+		hostHdr, wrapped, err := peekHTTPHost(conn, ent.Hostname)
+		if err != nil {
+			e.log.Debug("egress rejected HTTP Host mismatch", "want", ent.Hostname, "got", hostHdr, "err", err)
 			return
 		}
 		clientConn = wrapped
@@ -635,6 +767,90 @@ func peekTLSSNI(conn net.Conn) (string, net.Conn, error) {
 		return "", wrapped, errors.New("missing TLS ClientHello SNI")
 	}
 	return sni, wrapped, nil
+}
+
+// peekHTTPHost buffers the initial HTTP/1.x request head on port 80, verifies
+// there is exactly one Host header matching wantHost (optional :80 port), and
+// returns a wrapped conn that replays the captured bytes unmodified.
+func peekHTTPHost(conn net.Conn, wantHost string) (string, net.Conn, error) {
+	_ = conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	defer func() { _ = conn.SetReadDeadline(time.Time{}) }()
+
+	const maxHTTPHead = 16 << 10
+	var captured bytes.Buffer
+	tmp := make([]byte, 4096)
+	headerEnd := -1
+	for captured.Len() < maxHTTPHead {
+		n, err := conn.Read(tmp)
+		if n > 0 {
+			captured.Write(tmp[:n])
+			raw := captured.Bytes()
+			if idx := bytes.Index(raw, []byte("\r\n\r\n")); idx >= 0 {
+				headerEnd = idx + 4
+				break
+			}
+			if idx := bytes.Index(raw, []byte("\n\n")); idx >= 0 {
+				headerEnd = idx + 2
+				break
+			}
+		}
+		if err != nil {
+			break
+		}
+	}
+	wrapped := &prefixConn{
+		Reader: io.MultiReader(bytes.NewReader(captured.Bytes()), conn),
+		Conn:   conn,
+	}
+	if headerEnd < 0 {
+		return "", wrapped, errors.New("incomplete or non-HTTP request on port 80")
+	}
+	headBytes := captured.Bytes()[:headerEnd]
+
+	// Reject duplicate Host headers before http.ReadRequest collapses them.
+	lines := strings.Split(strings.ReplaceAll(string(headBytes), "\r\n", "\n"), "\n")
+	hostCount := 0
+	for _, line := range lines[1:] {
+		if line == "" {
+			break
+		}
+		if name, _, ok := strings.Cut(line, ":"); ok && strings.EqualFold(strings.TrimSpace(name), "host") {
+			hostCount++
+		}
+	}
+	if hostCount != 1 {
+		return "", wrapped, errors.New("expected exactly one HTTP Host header")
+	}
+
+	req, err := http.ReadRequest(bufio.NewReader(bytes.NewReader(headBytes)))
+	if err != nil {
+		return "", wrapped, err
+	}
+	hostOnly, ok := matchHTTPHost(req.Host, wantHost)
+	if !ok {
+		return req.Host, wrapped, errors.New("HTTP Host does not match resolved hostname")
+	}
+	if req.URL != nil && req.URL.Host != "" {
+		if _, ok := matchHTTPHost(req.URL.Host, wantHost); !ok {
+			return req.URL.Host, wrapped, errors.New("HTTP request URI host does not match resolved hostname")
+		}
+	}
+	return hostOnly, wrapped, nil
+}
+
+func matchHTTPHost(rawHost, wantHost string) (string, bool) {
+	h := strings.TrimSpace(rawHost)
+	if h == "" {
+		return "", false
+	}
+	if hostPart, portPart, err := net.SplitHostPort(h); err == nil {
+		if portPart != "80" {
+			return h, false
+		}
+		h = hostPart
+	}
+	norm := normalizeHostname(h)
+	return norm, norm != "" && strings.EqualFold(norm, wantHost)
 }
 
 type peekCaptureConn struct {

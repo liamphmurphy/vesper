@@ -61,15 +61,88 @@ func (b *MicroVM) hostWorkspacePath(runID string) (string, bool) {
 	return hostDir, true
 }
 
-// ensureSafeHostGitConfig disables repository-local git hooks inside shared
-// virtiofs workspaces so opening the folder on macOS cannot execute guest-written hooks.
+// ensureSafeHostGitConfig neutralizes repository-local git execution settings
+// inside shared virtiofs workspaces so opening the folder on macOS cannot run
+// guest-planted hooks, fsmonitor, sshCommand, diff.external, credential helpers,
+// or filter drivers. Both .git and .git/config are verified via os.Root + Lstat
+// so guest-created symlinks cannot direct host git config writes outside hostDir.
 func (b *MicroVM) ensureSafeHostGitConfig(hostDir string) {
-	gitDir := filepath.Join(hostDir, ".git")
-	info, err := os.Stat(gitDir)
-	if err != nil || !info.IsDir() {
+	root, err := os.OpenRoot(hostDir)
+	if err != nil {
 		return
 	}
-	if gitBin, gerr := exec.LookPath("git"); gerr == nil {
-		_ = exec.Command(gitBin, "-C", hostDir, "config", "--local", "core.hooksPath", "/dev/null").Run()
+	defer root.Close()
+
+	gitInfo, err := root.Lstat(".git")
+	if err != nil || gitInfo.Mode()&os.ModeSymlink != 0 || !gitInfo.IsDir() {
+		return
+	}
+	cfgInfo, err := root.Lstat(filepath.Join(".git", "config"))
+	if err != nil {
+		if !errors.Is(err, os.ErrNotExist) {
+			return
+		}
+	} else if cfgInfo.Mode()&os.ModeSymlink != 0 || !cfgInfo.Mode().IsRegular() {
+		return
+	}
+
+	realHost, err := filepath.EvalSymlinks(hostDir)
+	if err != nil {
+		return
+	}
+	gitDir := filepath.Join(hostDir, ".git")
+	realGit, err := filepath.EvalSymlinks(gitDir)
+	if err != nil || realGit != filepath.Join(realHost, ".git") {
+		return
+	}
+	cfgPath := filepath.Join(realGit, "config")
+	if cfgInfo != nil {
+		realCfg, cerr := filepath.EvalSymlinks(cfgPath)
+		if cerr != nil || realCfg != cfgPath {
+			return
+		}
+	}
+
+	gitBin, gerr := exec.LookPath("git")
+	if gerr != nil {
+		return
+	}
+	gitEnv := []string{
+		"PATH=" + os.Getenv("PATH"),
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_CONFIG_GLOBAL=/dev/null",
+	}
+	runGitConfig := func(args ...string) ([]byte, error) {
+		full := append([]string{"config", "--file", cfgPath}, args...)
+		cmd := exec.Command(gitBin, full...)
+		cmd.Env = gitEnv
+		return cmd.Output()
+	}
+
+	_, _ = runGitConfig("core.hooksPath", "/dev/null")
+	_, _ = runGitConfig("core.fsmonitor", "false")
+	for _, key := range []string{
+		"core.sshCommand",
+		"core.pager",
+		"core.editor",
+		"core.askPass",
+		"diff.external",
+		"credential.helper",
+	} {
+		_, _ = runGitConfig("--unset-all", key)
+	}
+	if out, err := runGitConfig("--name-only", "--get-regexp", `^filter\..*\.(clean|smudge|process)$`); err == nil {
+		seen := map[string]struct{}{}
+		for _, line := range strings.Split(string(out), "\n") {
+			key := strings.TrimSpace(line)
+			if key == "" {
+				continue
+			}
+			if _, ok := seen[key]; ok {
+				continue
+			}
+			seen[key] = struct{}{}
+			_, _ = runGitConfig("--unset-all", key)
+		}
 	}
 }

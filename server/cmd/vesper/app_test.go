@@ -91,6 +91,44 @@ func TestImageManagerResumeDownloadAndSHA256(t *testing.T) {
 	}
 }
 
+func TestImageResolutionPrefersBundledOverStaleDataDir(t *testing.T) {
+	t.Setenv("VESPER_ROOTFS_SHA256", "")
+	root := t.TempDir()
+	dataDir := filepath.Join(root, "data")
+	exeDir := filepath.Join(root, "bundle", "bin")
+	bundleImages := filepath.Join(root, "bundle", "images")
+	dataImages := filepath.Join(dataDir, "images")
+	for _, d := range []string{exeDir, bundleImages, dataImages} {
+		if err := os.MkdirAll(d, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	staleKernel := filepath.Join(dataImages, "vmlinux")
+	bundledKernel := filepath.Join(bundleImages, "vmlinux")
+	if err := os.WriteFile(staleKernel, []byte("old-kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(bundledKernel, []byte("new-kernel"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ResolveKernelPath("", dataDir, exeDir); got != bundledKernel {
+		t.Fatalf("ResolveKernelPath = %q, want bundled %q", got, bundledKernel)
+	}
+
+	staleSHA := strings.Repeat("a", 64)
+	bundledSHA := strings.Repeat("b", 64)
+	if err := os.WriteFile(filepath.Join(dataImages, "agent-base.erofs.sha256"), []byte(staleSHA+"  agent-base.erofs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(bundleImages, "agent-base.erofs.sha256"), []byte(bundledSHA+"  agent-base.erofs\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if got := ExpectedRootfsSHA256(exeDir, dataDir); got != bundledSHA {
+		t.Fatalf("ExpectedRootfsSHA256 = %q, want bundled %q", got, bundledSHA)
+	}
+}
+
 func TestAppBootsSealedAndRedeemsSignInCode(t *testing.T) {
 	repoRoot, err := filepath.Abs(filepath.Join("..", "..", ".."))
 	if err != nil {

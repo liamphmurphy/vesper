@@ -53,19 +53,21 @@ func (m *ImageManager) setStatus(fn func(*RootfsStatus)) {
 }
 
 // ResolveKernelPath finds the bundled or cached Linux arm64 vmlinux Image.
+// Explicit paths win first, then the app bundle next to the running binary so
+// rebuilt/upgraded app bundles replace stale images in <dataDir>/images/.
 func ResolveKernelPath(explicit, dataDir, exeDir string) string {
 	var candidates []string
 	if explicit != "" {
 		candidates = append(candidates, explicit)
-	}
-	if dataDir != "" {
-		candidates = append(candidates, filepath.Join(dataDir, "images", "vmlinux"))
 	}
 	if exeDir != "" {
 		candidates = append(candidates,
 			filepath.Join(exeDir, "..", "images", "vmlinux"),
 			filepath.Join(exeDir, "images", "vmlinux"),
 		)
+	}
+	if dataDir != "" {
+		candidates = append(candidates, filepath.Join(dataDir, "images", "vmlinux"))
 	}
 	if home, err := os.UserHomeDir(); err == nil {
 		candidates = append(candidates, filepath.Join(home, ".cache", "vesper", "images", "vmlinux"))
@@ -79,14 +81,23 @@ func ResolveKernelPath(explicit, dataDir, exeDir string) string {
 }
 
 // ExpectedRootfsSHA256 checks VESPER_ROOTFS_SHA256 or a bundled .sha256 sidecar.
+// Bundled sidecars next to the binary take precedence over <dataDir>/images/ so
+// upgrading the app updates the cached rootfs automatically.
 func ExpectedRootfsSHA256(exeDir, dataDir string) string {
 	if s := strings.TrimSpace(os.Getenv("VESPER_ROOTFS_SHA256")); s != "" {
 		return strings.ToLower(s)
 	}
-	for _, p := range []string{
-		filepath.Join(dataDir, "images", "agent-base.erofs.sha256"),
-		filepath.Join(exeDir, "..", "images", "agent-base.erofs.sha256"),
-	} {
+	var candidates []string
+	if exeDir != "" {
+		candidates = append(candidates,
+			filepath.Join(exeDir, "..", "images", "agent-base.erofs.sha256"),
+			filepath.Join(exeDir, "images", "agent-base.erofs.sha256"),
+		)
+	}
+	if dataDir != "" {
+		candidates = append(candidates, filepath.Join(dataDir, "images", "agent-base.erofs.sha256"))
+	}
+	for _, p := range candidates {
 		if raw, err := os.ReadFile(p); err == nil {
 			fields := strings.Fields(string(raw))
 			if len(fields) > 0 && len(fields[0]) == 64 {

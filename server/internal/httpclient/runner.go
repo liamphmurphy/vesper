@@ -38,6 +38,10 @@ var varPattern = regexp.MustCompile(`\{\{\s*([a-zA-Z0-9_.:-]+)\s*\}\}`)
 type RunOptions struct {
 	EnvironmentID *uuid.UUID    `json:"environment_id,omitempty"`
 	Override      *RequestInput `json:"override,omitempty"`
+	// DenySecrets refuses resolving {{secret:...}} placeholders and secret-backed
+	// environment variables. Agent MCP tools set this so user secrets stay gated
+	// behind vesper_secrets (grants, AllowedHosts, ask/off approvals, audit log).
+	DenySecrets bool `json:"-"`
 }
 
 // AdHocRunInput executes an unsaved request inside a workspace.
@@ -49,7 +53,53 @@ type AdHocRunInput struct {
 
 type resolvedVars struct {
 	values       map[string]string
+	secretVars   map[string]string
 	secretValues []string
+	denySecrets  bool
+}
+
+// ContainsSecretRef reports whether any field of in references an inline
+// {{secret:<handle>}} placeholder.
+func ContainsSecretRef(in RequestInput) bool {
+	has := func(raw string) bool {
+		if !strings.Contains(raw, "{{") {
+			return false
+		}
+		for _, m := range varPattern.FindAllStringSubmatch(raw, -1) {
+			if len(m) >= 2 && strings.HasPrefix(m[1], "secret:") {
+				return true
+			}
+		}
+		return false
+	}
+	if has(in.URL) || has(in.Body) {
+		return true
+	}
+	for _, kv := range in.Params {
+		if has(kv.Key) || has(kv.Value) {
+			return true
+		}
+	}
+	for _, kv := range in.Headers {
+		if has(kv.Key) || has(kv.Value) {
+			return true
+		}
+	}
+	for _, kv := range in.BodyForm {
+		if has(kv.Key) || has(kv.Value) {
+			return true
+		}
+	}
+	if has(in.Auth.Token) || has(in.Auth.Username) || has(in.Auth.Password) || has(in.Auth.APIKeyName) || has(in.Auth.APIKeyValue) {
+		return true
+	}
+	if in.Auth.OAuth2 != nil {
+		o := in.Auth.OAuth2
+		if has(o.TokenURL) || has(o.ClientID) || has(o.ClientSecret) || has(o.Scope) || has(o.Audience) {
+			return true
+		}
+	}
+	return false
 }
 
 // RunSavedRequest executes a saved request (optionally with unsaved UI overrides and a specific environment).
@@ -67,7 +117,7 @@ func (s *Service) RunSavedRequest(ctx context.Context, ws, user, reqID uuid.UUID
 		}
 		req = merged
 	}
-	return s.execute(ctx, ws, user, req.HTTPWorkspaceID, &req.ID, req, opts.EnvironmentID)
+	return s.execute(ctx, ws, user, req.HTTPWorkspaceID, &req.ID, req, opts.EnvironmentID, opts.DenySecrets)
 }
 
 // RunAdHocRequest executes an ad-hoc request inside a workspace.
@@ -104,7 +154,7 @@ func (s *Service) RunAdHocRequest(ctx context.Context, ws, user, httpWS uuid.UUI
 		TimeoutMS:       clampTimeout(in.Request.TimeoutMS),
 		FollowRedirects: follow,
 	}
-	return s.execute(ctx, ws, user, httpWS, in.RequestID, req, in.EnvironmentID)
+	return s.execute(ctx, ws, user, httpWS, in.RequestID, req, in.EnvironmentID, false)
 }
 
 func applyRequestOverride(base Request, in RequestInput) (Request, error) {
@@ -139,7 +189,7 @@ func applyRequestOverride(base Request, in RequestInput) (Request, error) {
 	return base, nil
 }
 
-func (s *Service) execute(ctx context.Context, ws, user, httpWS uuid.UUID, reqID *uuid.UUID, req Request, envOverrideID *uuid.UUID) (Execution, error) {
+func (s *Service) execute(ctx context.Context, ws, user, httpWS uuid.UUID, reqID *uuid.UUID, req Request, envOverrideID *uuid.UUID, denySecrets bool) (Execution, error) {
 	var out Execution
 	wsRow, err := s.Q.GetHTTPWorkspace(ctx, store.GetHTTPWorkspaceParams{ID: httpWS, WorkspaceID: ws})
 	if err != nil {
@@ -174,7 +224,7 @@ func (s *Service) execute(ctx context.Context, ws, user, httpWS uuid.UUID, reqID
 	}
 
 	effAuth, effHeaders := ResolveInheritance(hws, folderList, req)
-	vars, err := s.resolveVariables(ctx, ws, user, hws.DefaultVars, activeEnv)
+	vars, err := s.resolveVariables(ctx, ws, user, hws.DefaultVars, activeEnv, denySecrets)
 	if err != nil {
 		return out, err
 	}
@@ -471,8 +521,12 @@ func mergeHeaders(base []KeyValue, overlays ...KeyValue) []KeyValue {
 	return out
 }
 
-func (s *Service) resolveVariables(ctx context.Context, ws, user uuid.UUID, wsVars []EnvVar, env *Environment) (resolvedVars, error) {
-	rv := resolvedVars{values: map[string]string{}}
+func (s *Service) resolveVariables(ctx context.Context, ws, user uuid.UUID, wsVars []EnvVar, env *Environment, denySecrets bool) (resolvedVars, error) {
+	rv := resolvedVars{
+		values:      map[string]string{},
+		secretVars:  map[string]string{},
+		denySecrets: denySecrets,
+	}
 	applyList := func(list []EnvVar) error {
 		for _, v := range list {
 			if !v.Enabled || strings.TrimSpace(v.Key) == "" {
@@ -480,6 +534,11 @@ func (s *Service) resolveVariables(ctx context.Context, ws, user uuid.UUID, wsVa
 			}
 			key := strings.TrimSpace(v.Key)
 			if v.SecretHandle != "" {
+				if denySecrets {
+					rv.secretVars[key] = v.SecretHandle
+					delete(rv.values, key)
+					continue
+				}
 				val, err := s.lookupSecret(ctx, ws, user, v.SecretHandle)
 				if err != nil {
 					return err
@@ -490,6 +549,7 @@ func (s *Service) resolveVariables(ctx context.Context, ws, user uuid.UUID, wsVa
 				}
 			} else {
 				rv.values[key] = v.Value
+				delete(rv.secretVars, key)
 			}
 		}
 		return nil
@@ -542,6 +602,10 @@ func (s *Service) interpolateString(ctx context.Context, ws, user uuid.UUID, raw
 		}
 		name := sub[1]
 		if strings.HasPrefix(name, "secret:") {
+			if vars.denySecrets {
+				firstErr = apperr.Conflict("agent HTTP requests cannot resolve user secrets; use vesper_secrets http_request instead")
+				return match
+			}
 			handle := strings.TrimPrefix(name, "secret:")
 			val, err := s.lookupSecret(ctx, ws, user, handle)
 			if err != nil {
@@ -552,6 +616,12 @@ func (s *Service) interpolateString(ctx context.Context, ws, user uuid.UUID, raw
 				vars.secretValues = append(vars.secretValues, val)
 			}
 			return val
+		}
+		if vars.denySecrets {
+			if _, isSec := vars.secretVars[name]; isSec {
+				firstErr = apperr.Conflict("agent HTTP requests cannot resolve secret-backed variable %q; use vesper_secrets http_request instead", name)
+				return match
+			}
 		}
 		if v, ok := vars.values[name]; ok {
 			return v

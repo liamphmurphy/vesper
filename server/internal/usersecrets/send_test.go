@@ -175,6 +175,10 @@ func TestSendDoesNotFollowRedirectsElsewhere(t *testing.T) {
 			_, _ = io.WriteString(w, "auth="+r.Header.Get("Authorization"))
 			return
 		}
+		if r.URL.Path == "/other-port" {
+			http.Redirect(w, r, other.URL, http.StatusFound)
+			return
+		}
 		http.Redirect(w, r, strings.Replace(other.URL, "127.0.0.1", "localhost", 1), http.StatusFound)
 	}))
 	defer up.Close()
@@ -184,6 +188,11 @@ func TestSendDoesNotFollowRedirectsElsewhere(t *testing.T) {
 	res, err := s.Send(context.Background(), sec, "tok-1234567890", c, Request{})
 	if err != nil || res.Status != http.StatusFound || hit.Load() {
 		t.Fatalf("away: %d %v followed=%v", res.Status, err, hit.Load())
+	}
+	c, _ = s.Check(sec, Request{URL: up.URL + "/other-port"})
+	res, err = s.Send(context.Background(), sec, "tok-1234567890", c, Request{})
+	if err != nil || res.Status != http.StatusFound || hit.Load() {
+		t.Fatalf("same host different port: %d %v followed=%v", res.Status, err, hit.Load())
 	}
 	c, _ = s.Check(sec, Request{URL: up.URL + "/same"})
 	if res, err = s.Send(context.Background(), sec, "tok-1234567890", c, Request{}); err != nil || res.Body != "auth=Bearer ‹acme-jwt›" {

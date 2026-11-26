@@ -335,3 +335,81 @@ func TestServiceUpdatePreservesMountsWhenNil(t *testing.T) {
 		t.Fatalf("expected empty mounts after clearing, got %#v", updated.Mounts)
 	}
 }
+
+func TestPersonaCodeEditDowngradesPrivilegedCapabilities(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	if _, err := seed.Run(ctx, pool, seed.Options{}); err != nil {
+		t.Fatal(err)
+	}
+	u, err := store.New(pool).GetLocalUser(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	svc := &Service{Pool: pool}
+	_, err = svc.Create(ctx, u.WorkspaceID, u.ID, CreateInput{
+		Slug:     "cap-reset-test",
+		Name:     "Cap Reset Test",
+		Template: "blank",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	granted := Capabilities{
+		"app.sql:read":      agentdef.Allowed,
+		"app.sql:write":     agentdef.Allowed,
+		"vesper.api:write":  agentdef.Allowed,
+		"secret:stripe":     agentdef.Allowed,
+		"nix:ffmpeg":        agentdef.Allowed,
+		"app.http:outbound": agentdef.Allowed,
+	}
+	if _, err := svc.SetCapabilities(ctx, u.WorkspaceID, u.ID, "cap-reset-test", granted); err != nil {
+		t.Fatal(err)
+	}
+
+	// Metadata-only persona update preserves granted capabilities.
+	newDesc := "Renamed description"
+	metaUp, err := svc.Update(ctx, u.WorkspaceID, u.ID, "cap-reset-test", UpdateInput{
+		Description: &newDesc,
+		AuthorType:  "persona",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if metaUp.Capabilities["vesper.api:write"] != agentdef.Allowed || metaUp.Capabilities["secret:stripe"] != agentdef.Allowed {
+		t.Fatalf("metadata-only persona update downgraded caps: %+v", metaUp.Capabilities)
+	}
+
+	// User-authored code update preserves granted capabilities.
+	userUp, err := svc.Update(ctx, u.WorkspaceID, u.ID, "cap-reset-test", UpdateInput{
+		Files:      map[string]string{"app.tsx": "export default function App() { return <div>user edit</div>; }"},
+		AuthorType: "user",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if userUp.Capabilities["vesper.api:write"] != agentdef.Allowed || userUp.Capabilities["nix:ffmpeg"] != agentdef.Allowed {
+		t.Fatalf("user code edit downgraded caps: %+v", userUp.Capabilities)
+	}
+
+	// Persona-authored code edit downgrades all privileged capabilities to requires_approval
+	// while keeping local app.sql:read/write intact.
+	personaUp, err := svc.Update(ctx, u.WorkspaceID, u.ID, "cap-reset-test", UpdateInput{
+		Files:      map[string]string{"app.tsx": "export default function App() { return <div>persona edit</div>; }"},
+		AuthorType: "persona",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, priv := range []string{"vesper.api:write", "secret:stripe", "nix:ffmpeg", "app.http:outbound"} {
+		if got := personaUp.Capabilities[priv]; got != agentdef.RequiresApproval {
+			t.Errorf("capability %q after persona code edit = %q, want %q", priv, got, agentdef.RequiresApproval)
+		}
+	}
+	for _, local := range []string{"app.sql:read", "app.sql:write"} {
+		if got := personaUp.Capabilities[local]; got != agentdef.Allowed {
+			t.Errorf("local capability %q after persona code edit = %q, want %q", local, got, agentdef.Allowed)
+		}
+	}
+}

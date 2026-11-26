@@ -412,13 +412,17 @@ func (s *Service) Send(ctx context.Context, sec store.UserSecret, value string, 
 	out.Header.Set("User-Agent", "Vesper")
 	inject(out, sec, value)
 	host := c.URL.Hostname()
+	port := effectiveURLPort(c.URL)
 	t := s.transport(host)
 	defer t.CloseIdleConnections()
 	client := &http.Client{Transport: t, CheckRedirect: func(next *http.Request, via []*http.Request) error {
-		// Only reads, and only to the same host and scheme: anywhere else the run
-		// gets the 3xx and the secret stays where it was allowed. A write's 307
-		// would resend its body to a path the person didn't approve.
-		if c.Write || len(via) >= maxRedirects || !strings.EqualFold(next.URL.Hostname(), host) || next.URL.Scheme != c.URL.Scheme {
+		// Only reads, and only to the same host, port, and scheme: anywhere else
+		// the run gets the 3xx and the secret stays where it was allowed. A write's
+		// 307 would resend its body to a path the person didn't approve.
+		if c.Write || len(via) >= maxRedirects ||
+			!strings.EqualFold(next.URL.Hostname(), host) ||
+			next.URL.Scheme != c.URL.Scheme ||
+			effectiveURLPort(next.URL) != port {
 			return http.ErrUseLastResponse
 		}
 		if sec.Placement == PlacementQuery {
@@ -463,6 +467,16 @@ func (s *Service) Send(ctx context.Context, sec store.UserSecret, value string, 
 	}
 	resp.Redactions = mask.count
 	return resp, nil
+}
+
+func effectiveURLPort(u *url.URL) string {
+	if p := u.Port(); p != "" {
+		return p
+	}
+	if strings.EqualFold(u.Scheme, "https") {
+		return "443"
+	}
+	return "80"
 }
 
 func textual(contentType string, raw []byte) bool {

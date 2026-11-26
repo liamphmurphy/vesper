@@ -900,6 +900,40 @@ func (s *Server) fetchCustomAppImage(ctx context.Context, targetURL string) ([]b
 	}
 }
 
+// customAppAllowedAPIPrefixes is the explicit allowlist of Vesper API route
+// prefixes a Custom App may reach under vesper.api:read / vesper.api:write.
+// Security-sensitive endpoints (auth, sign-in, companion pairing, secrets,
+// push requests, repositories, connectors, approvals, instance export,
+// personas, agents, runs, chats, HTTP workspaces, custom-apps) are excluded
+// by default.
+var customAppAllowedAPIPrefixes = []string{
+	"/api/v1/projects",
+	"/api/v1/tickets",
+	"/api/v1/ticket-changes",
+	"/api/v1/epics",
+	"/api/v1/epic-criteria",
+	"/api/v1/criteria",
+	"/api/v1/knowledge",
+	"/api/v1/wiki",
+	"/api/v1/docs",
+	"/api/v1/canvases",
+	"/api/v1/designs",
+	"/api/v1/slides",
+	"/api/v1/slide-themes",
+	"/api/v1/slide-starters",
+	"/api/v1/library",
+	"/api/v1/highlights",
+	"/api/v1/inbox",
+	"/api/v1/saved-views",
+	"/api/v1/search",
+	"/api/v1/learn",
+	"/api/v1/dashboard",
+	"/api/v1/costs",
+	"/api/v1/artifacts",
+	"/api/v1/memories",
+	"/api/v1/health",
+}
+
 func validateCustomAppAPIRequest(method, rawURL string) (cleaned string, isRead bool, err error) {
 	switch method {
 	case http.MethodGet, http.MethodHead:
@@ -917,18 +951,15 @@ func validateCustomAppAPIRequest(method, rawURL string) (cleaned string, isRead 
 	if !strings.HasPrefix(cleanPath, "/api/v1/") && cleanPath != "/api/v1" {
 		return "", false, apperr.Invalid("path", "path must start with /api/v1/")
 	}
-	for _, blocked := range []string{
-		"/api/v1/auth",
-		"/api/v1/signin",
-		"/api/v1/agent",
-		"/api/v1/user-secrets",
-		"/api/v1/api-secrets",
-		"/api/v1/custom-apps",
-		"/api/v1/harness",
-	} {
-		if cleanPath == blocked || strings.HasPrefix(cleanPath, blocked+"/") {
-			return "", false, apperr.Invalid("path", "access to %s from custom apps is restricted", blocked)
+	allowed := false
+	for _, prefix := range customAppAllowedAPIPrefixes {
+		if cleanPath == prefix || strings.HasPrefix(cleanPath, prefix+"/") {
+			allowed = true
+			break
 		}
+	}
+	if !allowed {
+		return "", false, apperr.Invalid("path", "access to %s from custom apps is restricted", cleanPath)
 	}
 	target := cleanPath
 	if u.RawQuery != "" {

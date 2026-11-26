@@ -40,15 +40,31 @@ func ParseClaudeAuth(v string) (ClaudeAuth, bool) {
 
 // ClaudeAuthRefreshed reports whether next is a newer OAuth credential than
 // current. next comes from a container an agent could write to, so an
-// invalidated or older expiry is rejected.
+// invalidated, unrotated, malformed-prefix, or wildly future expiry is rejected.
 func ClaudeAuthRefreshed(current, next string) bool {
 	cur, ok := ParseClaudeAuth(current)
 	if !ok {
 		return false
 	}
 	n, ok := ParseClaudeAuth(next)
-	return ok && n.ClaudeAiOauth.ExpiresAt > cur.ClaudeAiOauth.ExpiresAt &&
-		n.ClaudeAiOauth.ExpiresAt < time.Now().Add(365*24*time.Hour).UnixMilli()
+	if !ok {
+		return false
+	}
+	if n.ClaudeAiOauth.ExpiresAt <= cur.ClaudeAiOauth.ExpiresAt ||
+		n.ClaudeAiOauth.ExpiresAt >= time.Now().Add(30*24*time.Hour).UnixMilli() {
+		return false
+	}
+	if n.ClaudeAiOauth.AccessToken == cur.ClaudeAiOauth.AccessToken &&
+		n.ClaudeAiOauth.RefreshToken == cur.ClaudeAiOauth.RefreshToken {
+		return false
+	}
+	if ClaudeOAuthToken(cur.ClaudeAiOauth.AccessToken) && !ClaudeOAuthToken(n.ClaudeAiOauth.AccessToken) {
+		return false
+	}
+	if strings.HasPrefix(cur.ClaudeAiOauth.RefreshToken, "sk-ant-ort") && !strings.HasPrefix(n.ClaudeAiOauth.RefreshToken, "sk-ant-ort") {
+		return false
+	}
+	return true
 }
 
 // ClaudePlanLogin reports whether a harness:anthropic value is any Claude
@@ -83,6 +99,26 @@ func ParseCodexAuth(v string) (CodexAuth, bool) {
 	return a, a.AuthMode == "chatgpt" && a.Tokens.RefreshToken != ""
 }
 
+// jwtSubject extracts the "sub" claim from a 3-segment JWT without verifying
+// its signature. Returns ("", false) if raw is not a JWT with a string sub.
+func jwtSubject(raw string) (string, bool) {
+	parts := strings.Split(raw, ".")
+	if len(parts) != 3 {
+		return "", false
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return "", false
+	}
+	var claims struct {
+		Sub string `json:"sub"`
+	}
+	if json.Unmarshal(payload, &claims) != nil || claims.Sub == "" {
+		return "", false
+	}
+	return claims.Sub, true
+}
+
 // CodexAuthRefreshed reports whether next is a later login for the same
 // account as current. next comes from a container an agent could write to.
 func CodexAuthRefreshed(current, next string) bool {
@@ -91,8 +127,22 @@ func CodexAuthRefreshed(current, next string) bool {
 		return false
 	}
 	n, ok := ParseCodexAuth(next)
-	return ok && n.Tokens.AccountID == cur.Tokens.AccountID && n.LastRefresh.After(cur.LastRefresh) &&
-		n.LastRefresh.Before(time.Now().Add(5*time.Minute))
+	if !ok {
+		return false
+	}
+	if cur.Tokens.AccountID == "" || n.Tokens.AccountID != cur.Tokens.AccountID {
+		return false
+	}
+	if cur.Tokens.AccessToken != "" && n.Tokens.AccessToken == "" {
+		return false
+	}
+	if curSub, hasSub := jwtSubject(cur.Tokens.IDToken); hasSub {
+		nextSub, ok := jwtSubject(n.Tokens.IDToken)
+		if !ok || nextSub != curSub {
+			return false
+		}
+	}
+	return n.LastRefresh.After(cur.LastRefresh) && n.LastRefresh.Before(time.Now().Add(5*time.Minute))
 }
 
 // AntigravityAuth is the serialized container login state produced by

