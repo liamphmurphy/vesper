@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import VesperCore
 import WebKit
 
 struct BrowserDownloadRecord: Identifiable, Equatable {
@@ -14,11 +15,13 @@ struct BrowserDownloadRecord: Identifiable, Equatable {
     var destinationURL: URL?
     var state: State
     var startedAt: Date
+    var isRisky: Bool = false
 }
 
 /// Saves WKDownloads to ~/Downloads (Chromium's default): suggested filename, " 2"/" 3" on a clash,
-/// the Downloads stack bounced when done, a small non-modal notice, errors shown, and an observable
-/// list of recent downloads for the internal Browser's Downloads popover.
+/// optional per-host confirmation for internal Browser tabs, explicit macOS Gatekeeper quarantine
+/// stamping (`com.apple.quarantine`), the Downloads stack bounced when done, a small non-modal
+/// notice, errors shown, and an observable list of recent downloads for the Browser's Downloads popover.
 @MainActor
 @Observable
 final class WebDownloads: NSObject, WKDownloadDelegate {
@@ -26,9 +29,14 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
 
     private(set) var recentDownloads: [BrowserDownloadRecord] = []
 
+    /// Optional per-download confirmation callback (used by internal Browser tabs for per-site
+    /// download prompts and executable/installer warnings). Returns `true` to proceed.
+    @ObservationIgnored private var confirmHandlers: [ObjectIdentifier: @MainActor (String, URL?, URL?) async -> Bool] = [:]
     @ObservationIgnored private var destinations: [ObjectIdentifier: URL] = [:]
     @ObservationIgnored private var windows: [ObjectIdentifier: NSWindow] = [:]
     @ObservationIgnored private var recordIDs: [ObjectIdentifier: UUID] = [:]
+    @ObservationIgnored private var originURLs: [ObjectIdentifier: URL] = [:]
+    @ObservationIgnored private var dataURLs: [ObjectIdentifier: URL] = [:]
 
     var hasActiveDownloads: Bool {
         recentDownloads.contains(where: { $0.state == .inProgress })
@@ -39,10 +47,17 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
     }
 
     /// Takes over a download WebKit started from `webView`'s navigation.
-    func adopt(_ download: WKDownload, in webView: WKWebView?) {
+    func adopt(
+        _ download: WKDownload,
+        in webView: WKWebView?,
+        confirmDownload: (@MainActor (String, URL?, URL?) async -> Bool)? = nil
+    ) {
         download.delegate = self
         let key = ObjectIdentifier(download)
         if let window = webView?.window { windows[key] = window }
+        if let origin = webView?.url { originURLs[key] = origin }
+        if let reqURL = download.originalRequest?.url { dataURLs[key] = reqURL }
+        if let confirmDownload { confirmHandlers[key] = confirmDownload }
         let recID = UUID()
         recordIDs[key] = recID
         recentDownloads.insert(
@@ -51,6 +66,35 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
         )
         if recentDownloads.count > 25 {
             recentDownloads = Array(recentDownloads.prefix(25))
+        }
+    }
+
+    /// Explicitly stamps macOS Gatekeeper web-download quarantine metadata (`com.apple.quarantine`)
+    /// onto a downloaded file so Gatekeeper always checks downloaded apps, scripts, and archives
+    /// without needing app-wide `LSFileQuarantineEnabled` (which would quarantine Postgres/data files).
+    @discardableResult
+    static func applyWebDownloadQuarantine(to fileURL: URL, dataURL: URL?, originURL: URL?) -> Bool {
+        var props: [String: Any] = [
+            kLSQuarantineTypeKey as String: kLSQuarantineTypeWebDownload as String,
+            kLSQuarantineAgentNameKey as String: "Vesper",
+            kLSQuarantineAgentBundleIdentifierKey as String: Bundle.main.bundleIdentifier ?? "com.vesper.mac",
+            kLSQuarantineTimeStampKey as String: Date(),
+        ]
+        if let dataURL {
+            props[kLSQuarantineDataURLKey as String] = dataURL
+        }
+        if let originURL {
+            props[kLSQuarantineOriginURLKey as String] = originURL
+        }
+        var mutableURL = fileURL
+        var values = URLResourceValues()
+        values.quarantineProperties = props
+        do {
+            try mutableURL.setResourceValues(values)
+            return true
+        } catch {
+            vlog("download: failed to stamp quarantine on \(fileURL.lastPathComponent): \(error)")
+            return false
         }
     }
 
@@ -82,25 +126,55 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
 
     func download(_ download: WKDownload, decideDestinationUsing response: URLResponse, suggestedFilename: String,
                   completionHandler: @escaping @MainActor @Sendable (URL?) -> Void) {
-        let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
-            ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        let dest = Self.uniqueURL(in: dir, name: Self.sanitizedName(suggestedFilename))
         let key = ObjectIdentifier(download)
-        destinations[key] = dest
-        if let recID = recordIDs[key], let idx = recentDownloads.firstIndex(where: { $0.id == recID }) {
-            recentDownloads[idx].filename = dest.lastPathComponent
-            recentDownloads[idx].destinationURL = dest
+        let safeName = Self.sanitizedName(suggestedFilename)
+        let dataURL = response.url ?? dataURLs[key] ?? download.originalRequest?.url
+        let originURL = originURLs[key] ?? dataURL
+        if let dataURL { dataURLs[key] = dataURL }
+        if let originURL { originURLs[key] = originURL }
+
+        let confirm = confirmHandlers.removeValue(forKey: key)
+        Task { @MainActor in
+            if let confirm {
+                let allowed = await confirm(safeName, dataURL, originURL)
+                guard allowed else {
+                    self.windows.removeValue(forKey: key)
+                    self.originURLs.removeValue(forKey: key)
+                    self.dataURLs.removeValue(forKey: key)
+                    if let recID = self.recordIDs.removeValue(forKey: key) {
+                        self.recentDownloads.removeAll { $0.id == recID }
+                    }
+                    completionHandler(nil)
+                    return
+                }
+            }
+
+            let dir = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+                ?? FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Downloads")
+            try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+            let dest = Self.uniqueURL(in: dir, name: safeName)
+            self.destinations[key] = dest
+            if let recID = self.recordIDs[key], let idx = self.recentDownloads.firstIndex(where: { $0.id == recID }) {
+                self.recentDownloads[idx].filename = dest.lastPathComponent
+                self.recentDownloads[idx].destinationURL = dest
+                self.recentDownloads[idx].isRisky = BrowserDownloadGuard.isRiskyFilename(dest.lastPathComponent)
+            }
+            vlog("download: -> \(dest.path)")
+            completionHandler(dest)
         }
-        vlog("download: -> \(dest.path)")
-        completionHandler(dest)
     }
 
     func downloadDidFinish(_ download: WKDownload) {
         let id = ObjectIdentifier(download)
         let window = windows.removeValue(forKey: id)
         let recID = recordIDs.removeValue(forKey: id)
+        let originURL = originURLs.removeValue(forKey: id)
+        let dataURL = dataURLs.removeValue(forKey: id)
+        confirmHandlers.removeValue(forKey: id)
         guard let dest = destinations.removeValue(forKey: id) else { return }
+
+        Self.applyWebDownloadQuarantine(to: dest, dataURL: dataURL, originURL: originURL)
+
         if let recID, let idx = recentDownloads.firstIndex(where: { $0.id == recID }) {
             recentDownloads[idx].state = .finished
             recentDownloads[idx].destinationURL = dest
@@ -115,6 +189,9 @@ final class WebDownloads: NSObject, WKDownloadDelegate {
         let id = ObjectIdentifier(download)
         let window = windows.removeValue(forKey: id)
         let recID = recordIDs.removeValue(forKey: id)
+        originURLs.removeValue(forKey: id)
+        dataURLs.removeValue(forKey: id)
+        confirmHandlers.removeValue(forKey: id)
         let dest = destinations.removeValue(forKey: id)
         if let dest { try? FileManager.default.removeItem(at: dest) }
         let ns = error as NSError

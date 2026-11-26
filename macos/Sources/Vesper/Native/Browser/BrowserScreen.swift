@@ -17,6 +17,7 @@ struct BrowserScreen: View {
 
     @State private var sharePopoverOpen = false
     @State private var shieldPopoverOpen = false
+    @State private var siteSecurityPopoverOpen = false
     @State private var autofillPopoverOpen = false
     @State private var extensionsPopoverOpen = false
     @State private var downloadsPopoverOpen = false
@@ -73,6 +74,11 @@ struct BrowserScreen: View {
 
             if let tab = activeTab, let pending = tab.pendingCredentialSave {
                 savePasswordBanner(store: store, tab: tab, pending: pending)
+                Divider().opacity(0.4)
+            }
+
+            if let tab = activeTab, tab.passkeyFallbackSuggested {
+                passkeyFallbackBanner(store: store, tab: tab)
                 Divider().opacity(0.4)
             }
 
@@ -185,7 +191,11 @@ struct BrowserScreen: View {
                     BrowserWebViewContainer(webView: tab.webView)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .overlay {
-                            if let error = tab.loadError {
+                            if let fallbackURL = tab.pendingHTTPSFallbackURL {
+                                httpsFallbackOverlay(fallbackURL: fallbackURL, store: store, tab: tab)
+                            } else if let tlsError = tab.tlsErrorMessage {
+                                tlsErrorOverlay(error: tlsError, tab: tab)
+                            } else if let error = tab.loadError {
                                 loadErrorOverlay(error: error, tab: tab)
                             }
                         }
@@ -314,12 +324,103 @@ struct BrowserScreen: View {
         .background(theme.palette.surface)
     }
 
+    private func passkeyFallbackBanner(store: BrowserStore, tab: BrowserTabSession) -> some View {
+        HStack(spacing: 10) {
+            Image(systemName: "person.badge.key.fill")
+                .font(.system(size: 12))
+                .foregroundStyle(.orange)
+            Text("This site requested a **Passkey**, which requires Safari on macOS.")
+                .font(.system(size: 11.5))
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            Button("Dismiss") {
+                tab.passkeyFallbackSuggested = false
+            }
+            .controlSize(.small)
+            Button("Open in Safari") {
+                tab.passkeyFallbackSuggested = false
+                if let url = URL(string: tab.urlString) {
+                    NSWorkspace.shared.open(url)
+                }
+            }
+            .buttonStyle(.borderedProminent)
+            .controlSize(.small)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(Color.orange.opacity(0.08))
+    }
+
+    private func httpsFallbackOverlay(fallbackURL: URL, store: BrowserStore, tab: BrowserTabSession) -> some View {
+        let host = fallbackURL.host ?? fallbackURL.absoluteString
+        return VStack(spacing: 12) {
+            Image(systemName: "lock.trianglebadge.exclamationmark.fill")
+                .font(.system(size: 32))
+                .foregroundStyle(.orange)
+            Text("Secure Connection Unavailable")
+                .font(.system(size: 16, weight: .semibold))
+            Text("HTTPS-Only Mode couldn't connect securely to **\(host)**. Continuing over plain HTTP exposes traffic on this network.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            HStack(spacing: 10) {
+                Button("Go Back") {
+                    tab.pendingHTTPSFallbackURL = nil
+                    if tab.canGoBack { tab.goBack() }
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Continue to HTTP for \(host)") {
+                    store.allowHTTPFallback(for: tab)
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.palette.background)
+    }
+
+    private func tlsErrorOverlay(error: String, tab: BrowserTabSession) -> some View {
+        VStack(spacing: 12) {
+            Image(systemName: "exclamationmark.shield.fill")
+                .font(.system(size: 34))
+                .foregroundStyle(.red)
+            Text("Connection Is Not Private")
+                .font(.system(size: 16, weight: .semibold))
+            Text("WebKit rejected the TLS certificate for **\(tab.displayHost.isEmpty ? "this site" : tab.displayHost)**.")
+                .font(.system(size: 12.5))
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 420)
+            Text(error)
+                .font(.system(size: 11.5).monospaced())
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .frame(maxWidth: 440)
+            HStack(spacing: 10) {
+                Button("Go Back") {
+                    tab.tlsErrorMessage = nil
+                    if tab.canGoBack { tab.goBack() }
+                }
+                .buttonStyle(.borderedProminent)
+                Button("Reload") {
+                    tab.reload()
+                }
+            }
+        }
+        .padding(28)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .background(theme.palette.background)
+    }
+
     // MARK: Slim Single-Row Omnibox Bar
 
     private func omniboxBar(store: BrowserStore, tab: BrowserTabSession?) -> some View {
         let downloads = WebDownloads.shared
         let matchingCreds = tab.map { store.autofill.matchingCredentials(for: $0.urlString) } ?? []
-        let canAutofill = tab.map { BrowserAutofillLogic.isSecureAutofillOrigin($0.urlString) } ?? false
+        let canAutofill = tab.map {
+            BrowserAutofillLogic.canAutofill(urlString: $0.urlString, hasOnlySecureContent: $0.hasOnlySecureContent)
+        } ?? false
         let loadedExtensions = store.extensionHost.toolbarItems.filter { $0.isEnabled && $0.isLoaded }
 
         return HStack(spacing: 6) {
@@ -371,10 +472,27 @@ struct BrowserScreen: View {
                     BrowserShieldPopover(store: store, tab: tab, isPresented: $shieldPopoverOpen)
                 }
 
-                if tab?.hasOnlySecureContent == true, !isEditingOmnibox {
-                    Image(systemName: "lock.fill")
-                        .font(.system(size: 9.5))
-                        .foregroundStyle(theme.palette.tertiaryText)
+                if let tab, tab.hasLoadedPage, !isEditingOmnibox {
+                    siteSecurityButton(store: store, tab: tab)
+                }
+
+                if let tab, tab.isCapturingMedia, !isEditingOmnibox {
+                    Button {
+                        tab.stopMediaCapture()
+                        store.showToast("Stopped camera & microphone access", tone: .neutral)
+                    } label: {
+                        HStack(spacing: 3) {
+                            Circle().fill(Color.red).frame(width: 6, height: 6)
+                            Image(systemName: tab.cameraCaptureState == .active ? "video.fill" : "mic.fill")
+                                .font(.system(size: 9.5))
+                                .foregroundStyle(.red)
+                        }
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1.5)
+                        .background(Capsule().fill(Color.red.opacity(0.14)))
+                    }
+                    .buttonStyle(.plain)
+                    .hoverTooltip("Camera or microphone active — click to stop")
                 }
 
                 TextField("Search \(store.searchEngine.label) or enter website", text: $omniboxText)
@@ -1268,12 +1386,83 @@ struct BrowserScreen: View {
         }
     }
 
+    private func siteSecurityButton(store: BrowserStore, tab: BrowserTabSession) -> some View {
+        let sec = tab.connectionSecurity
+        let idn = tab.hostSecurityDisplay
+        let isLockdown = store.isLockdownActive(for: tab.urlString)
+        return Button {
+            tab.refreshCertificateSummary()
+            siteSecurityPopoverOpen.toggle()
+        } label: {
+            HStack(spacing: 3) {
+                if idn.isSuspiciousIDN {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 10))
+                        .foregroundStyle(.orange)
+                    Text("IDN")
+                        .font(.system(size: 9.5, weight: .semibold))
+                        .foregroundStyle(.orange)
+                } else {
+                    switch sec {
+                    case .secure:
+                        Image(systemName: isLockdown ? "lock.shield.fill" : "lock.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(isLockdown ? Color.orange : theme.palette.tertiaryText)
+                    case .mixedContent:
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.orange)
+                    case .insecureHTTP:
+                        Image(systemName: "lock.open.fill")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(.red)
+                        Text("Not Secure")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.red)
+                    case .tlsError:
+                        Image(systemName: "exclamationmark.shield.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.red)
+                        Text("Cert Error")
+                            .font(.system(size: 9.5, weight: .semibold))
+                            .foregroundStyle(.red)
+                    case .localHTTP, .internalPage:
+                        Image(systemName: "info.circle")
+                            .font(.system(size: 9.5))
+                            .foregroundStyle(theme.palette.tertiaryText)
+                    }
+                }
+            }
+            .padding(.horizontal, (sec.isWarning || idn.isSuspiciousIDN) ? 5 : 2)
+            .padding(.vertical, (sec.isWarning || idn.isSuspiciousIDN) ? 1.5 : 0)
+            .background(
+                Group {
+                    if sec == .insecureHTTP || (sec.isWarning && !idn.isSuspiciousIDN && sec != .mixedContent) {
+                        Capsule().fill(Color.red.opacity(0.12))
+                    } else if sec == .mixedContent || idn.isSuspiciousIDN {
+                        Capsule().fill(Color.orange.opacity(0.14))
+                    }
+                }
+            )
+        }
+        .buttonStyle(.plain)
+        .hoverTooltip("Connection Security, Certificate & Site Permissions")
+        .popover(isPresented: $siteSecurityPopoverOpen, arrowEdge: .bottom) {
+            BrowserSiteSecurityPopover(store: store, tab: tab, isPresented: $siteSecurityPopoverOpen)
+        }
+    }
+
     private func syncOmniboxDisplay(store: BrowserStore) {
         guard let tab = store.activeTab, tab.hasLoadedPage else {
             omniboxText = ""
             return
         }
-        omniboxText = BrowserURLResolver.displayAddress(for: tab.urlString)
+        let idn = tab.hostSecurityDisplay
+        if idn.isSuspiciousIDN, !idn.displayHost.isEmpty {
+            omniboxText = idn.displayHost
+        } else {
+            omniboxText = BrowserURLResolver.displayAddress(for: tab.urlString)
+        }
     }
 
     private func focusOmnibox(store: BrowserStore) {
@@ -1299,7 +1488,10 @@ private struct BrowserAutofillPopoverView: View {
 
     var body: some View {
         let host = BrowserPageGuard.normalizeHost(tab.urlString) ?? ""
-        let secureOrigin = BrowserAutofillLogic.isSecureAutofillOrigin(tab.urlString)
+        let secureOrigin = BrowserAutofillLogic.canAutofill(
+            urlString: tab.urlString,
+            hasOnlySecureContent: tab.hasOnlySecureContent
+        )
         let matching = store.autofill.matchingCredentials(for: tab.urlString)
         let allCreds = store.autofill.credentials.filter {
             let needle = search.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
@@ -1323,7 +1515,7 @@ private struct BrowserAutofillPopoverView: View {
                 }
 
                 if !secureOrigin {
-                    Text("AutoFill is restricted to HTTPS and localhost pages.")
+                    Text("AutoFill is restricted to secure HTTPS (no mixed content) and localhost pages.")
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)
                 } else if !matching.isEmpty {
@@ -1447,10 +1639,7 @@ private struct BrowserAutofillPopoverView: View {
                             }
                             Spacer()
                             Button {
-                                let pb = NSPasteboard.general
-                                pb.clearContents()
-                                pb.setString(cred.password, forType: .string)
-                                store.showToast("Copied password for \(cred.host)", tone: .neutral)
+                                Task { await store.copyCredentialPassword(cred) }
                             } label: {
                                 Image(systemName: "doc.on.doc")
                                     .font(.system(size: 10.5))
@@ -1471,6 +1660,31 @@ private struct BrowserAutofillPopoverView: View {
                         .padding(.vertical, 2)
                     }
                 }
+
+                Divider()
+
+                Toggle("Require Touch ID to fill or copy passwords", isOn: Binding(
+                    get: { store.securityConfig.requireTouchIDForAutofill },
+                    set: {
+                        store.securityConfig.requireTouchIDForAutofill = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 11))
+
+                Button {
+                    let panel = NSOpenPanel()
+                    panel.allowedContentTypes = [.commaSeparatedText, .plainText]
+                    panel.allowsMultipleSelection = false
+                    panel.canChooseDirectories = false
+                    if panel.runModal() == .OK, let url = panel.url {
+                        store.importApplePasswordsCSV(from: url)
+                    }
+                } label: {
+                    Label("Import Apple Passwords CSV…", systemImage: "square.and.arrow.down")
+                        .frame(maxWidth: .infinity)
+                }
+                .controlSize(.small)
             }
             .padding(14)
         }
@@ -1663,13 +1877,145 @@ private struct BrowserExtensionsPopoverView: View {
     }
 }
 
+// MARK: - Site Security, Certificate Inspector & Per-Site Permissions Popover
+
+private struct BrowserSiteSecurityPopover: View {
+    let store: BrowserStore
+    let tab: BrowserTabSession
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        let host = BrowserPageGuard.normalizeHost(tab.urlString) ?? ""
+        let sec = tab.connectionSecurity
+        let idn = tab.hostSecurityDisplay
+
+        ScrollView {
+            VStack(alignment: .leading, spacing: 10) {
+                HStack(spacing: 8) {
+                    Image(systemName: sec.isWarning || idn.isSuspiciousIDN ? "exclamationmark.triangle.fill" : "lock.fill")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(sec.isWarning || idn.isSuspiciousIDN ? .orange : .green)
+                    VStack(alignment: .leading, spacing: 1) {
+                        Text(sec.label)
+                            .font(.system(size: 12.5, weight: .semibold))
+                        if !host.isEmpty {
+                            Text(idn.isSuspiciousIDN ? idn.displayHost : host)
+                                .font(.system(size: 10.5).monospaced())
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                    }
+                    Spacer()
+                }
+
+                if let warning = idn.warningReason {
+                    HStack(alignment: .top, spacing: 6) {
+                        Image(systemName: "exclamationmark.triangle.fill")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.orange)
+                        Text(warning)
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(.orange)
+                    }
+                    .padding(7)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(Color.orange.opacity(0.12)))
+                }
+
+                if let cert = tab.certificateSummary {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("TLS Certificate")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        Text("Issued to: \(cert.subject)")
+                            .font(.system(size: 11))
+                            .lineLimit(1)
+                        if !cert.issuer.isEmpty {
+                            Text("Issued by: \(cert.issuer)")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                        }
+                        if let until = cert.validUntil {
+                            Text("Expires \(until.formatted(date: .abbreviated, time: .omitted)) · \(cert.chainCount) cert\(cert.chainCount == 1 ? "" : "s") in chain")
+                                .font(.system(size: 10))
+                                .foregroundStyle(.secondary)
+                        }
+                        Button("Show System Certificate…") {
+                            isPresented = false
+                            tab.showSystemCertificatePanel()
+                        }
+                        .controlSize(.small)
+                        .padding(.top, 2)
+                    }
+                    .padding(8)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 7).fill(Color.primary.opacity(0.04)))
+                }
+
+                if !host.isEmpty {
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Site Controls (\(host))")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        Toggle("Lockdown Mode for this site", isOn: Binding(
+                            get: { store.isLockdownActive(for: tab.urlString) },
+                            set: { _ in store.toggleLockdown(forHost: host) }
+                        ))
+                        .font(.system(size: 11.5))
+
+                        Toggle("Allow JavaScript", isOn: Binding(
+                            get: { store.isJavaScriptAllowed(for: tab.urlString) },
+                            set: { _ in store.toggleJavaScript(forHost: host) }
+                        ))
+                        .font(.system(size: 11.5))
+                    }
+
+                    Divider()
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Permissions")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+
+                        ForEach(BrowserPermissionKind.allCases) { kind in
+                            HStack {
+                                Label(kind.label, systemImage: kind.icon)
+                                    .font(.system(size: 11.5))
+                                Spacer()
+                                Picker("", selection: Binding(
+                                    get: { store.sitePermission(forHost: host, kind: kind) },
+                                    set: { store.setSitePermission(host: host, kind: kind, setting: $0) }
+                                )) {
+                                    ForEach(BrowserPermissionSetting.allCases) { opt in
+                                        Text(opt.label).tag(opt)
+                                    }
+                                }
+                                .labelsHidden()
+                                .frame(width: 82)
+                                .controlSize(.small)
+                            }
+                        }
+                    }
+                }
+            }
+            .padding(14)
+        }
+        .frame(width: 316)
+        .frame(maxHeight: 430)
+    }
+}
+
 // MARK: - Wipr / uBlock-Grade Shield, Filter Lists & Browser Controls Popover
 
 private struct BrowserShieldPopover: View {
     enum Tab: String, CaseIterable, Identifiable {
         case overview = "Protection"
-        case lists = "Filter Lists"
-        case custom = "Custom Rules"
+        case security = "Security"
+        case lists = "Lists"
+        case custom = "Custom"
         var id: String { rawValue }
     }
 
@@ -1684,6 +2030,10 @@ private struct BrowserShieldPopover: View {
     @State private var addListError: String?
     @State private var customRulesDraft = ""
     @State private var didSeedDraft = false
+    @State private var proxyMode: BrowserProxyMode = .none
+    @State private var proxyHost = ""
+    @State private var proxyPort = "1080"
+    @State private var proxyApplyPrivate = true
 
     private var currentHost: String? {
         tab.flatMap { BrowserPageGuard.normalizeHost($0.urlString) }
@@ -1734,6 +2084,8 @@ private struct BrowserShieldPopover: View {
             switch selectedTab {
             case .overview:
                 overviewSection(engine: engine)
+            case .security:
+                securitySection()
             case .lists:
                 filterListsSection(engine: engine)
             case .custom:
@@ -1745,9 +2097,130 @@ private struct BrowserShieldPopover: View {
         .onAppear {
             if !didSeedDraft {
                 customRulesDraft = store.adBlockConfig.customRules
+                let p = store.currentRuntime.proxyConfig
+                proxyMode = p.mode
+                proxyHost = p.host
+                proxyPort = String(p.port)
+                proxyApplyPrivate = p.applyToPrivateTabs
                 didSeedDraft = true
             }
         }
+    }
+
+    @ViewBuilder
+    private func securitySection() -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 9) {
+                Text("WebKit Hardening")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                Text("Known-host HTTPS upgrades and Fraudulent Website Warnings are always on.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                Toggle("Strict HTTPS-Only Mode", isOn: Binding(
+                    get: { store.securityConfig.httpsOnlyMode },
+                    set: {
+                        store.securityConfig.httpsOnlyMode = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 11.5))
+
+                Toggle("Lockdown Mode (Global Default)", isOn: Binding(
+                    get: { store.securityConfig.lockdownModeEnabled },
+                    set: {
+                        store.securityConfig.lockdownModeEnabled = $0
+                        store.scheduleSave()
+                        tab?.reload()
+                    }
+                ))
+                .font(.system(size: 11.5))
+
+                Toggle("Strip URL Tracking Parameters", isOn: Binding(
+                    get: { store.securityConfig.stripTrackingParameters },
+                    set: {
+                        store.securityConfig.stripTrackingParameters = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 11.5))
+
+                Toggle("Confirm Downloads & Warn on Installers", isOn: Binding(
+                    get: { store.securityConfig.confirmDownloads },
+                    set: {
+                        store.securityConfig.confirmDownloads = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 11.5))
+
+                Toggle("Block Top-Level data: Pages", isOn: Binding(
+                    get: { store.securityConfig.blockTopLevelDataNavigations },
+                    set: {
+                        store.securityConfig.blockTopLevelDataNavigations = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 11.5))
+
+                Toggle("Require Touch ID for Keychain AutoFill", isOn: Binding(
+                    get: { store.securityConfig.requireTouchIDForAutofill },
+                    set: {
+                        store.securityConfig.requireTouchIDForAutofill = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 11.5))
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Profile Proxy (\(store.currentRuntime.name))")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    Picker("Proxy Type", selection: $proxyMode) {
+                        ForEach(BrowserProxyMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .controlSize(.small)
+
+                    if proxyMode != .none {
+                        HStack(spacing: 6) {
+                            TextField("Host (e.g. 127.0.0.1)", text: $proxyHost)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11))
+                            TextField("Port", text: $proxyPort)
+                                .textFieldStyle(.roundedBorder)
+                                .font(.system(size: 11))
+                                .frame(width: 68)
+                        }
+                        Toggle("Also route Private Tabs through this proxy", isOn: $proxyApplyPrivate)
+                            .font(.system(size: 10.5))
+                    }
+
+                    HStack {
+                        Spacer()
+                        Button("Apply Proxy") {
+                            let port = Int(proxyPort.trimmingCharacters(in: .whitespacesAndNewlines)) ?? 1080
+                            let cfg = BrowserProxyConfig(
+                                mode: proxyMode,
+                                host: proxyHost.trimmingCharacters(in: .whitespacesAndNewlines),
+                                port: min(65535, max(1, port)),
+                                applyToPrivateTabs: proxyApplyPrivate
+                            )
+                            store.updateProxyConfig(cfg)
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                    }
+                }
+            }
+        }
+        .frame(maxHeight: 420)
     }
 
     private var statusTitle: String {

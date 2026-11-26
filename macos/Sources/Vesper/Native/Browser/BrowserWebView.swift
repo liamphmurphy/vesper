@@ -1,4 +1,5 @@
 import AppKit
+import Network
 import SwiftUI
 import VesperCore
 import WebKit
@@ -12,12 +13,14 @@ import WebKit
 ///   completely separate from `WKWebsiteDataStore.default()` (which carries Vesper's session
 ///   cookie), `playgroundStore`, and every other profile.
 /// - Private tabs use `WKWebsiteDataStore.nonPersistent()`.
-/// - Uses a standard Safari User-Agent (no `VesperMac/1` suffix) so OAuth providers and sites do
-///   not reject it as an embedded webview.
+/// - Uses a standard Safari User-Agent aligned with the host macOS WebKit version so OAuth
+///   providers accept it without introducing a stale UA fingerprint mismatch.
+/// - Enables `upgradeKnownHostsToHTTPS`, `isFraudulentWebsiteWarningEnabled`, optional Lockdown
+///   Mode, and optional per-profile `proxyConfigurations`.
 @MainActor
 enum BrowserWebViewFactory {
     static let browsingStoreID = BrowserProfile.defaultDataStoreID
-    static let safariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15"
+    static var safariUserAgent: String { BrowserUserAgent.safariUserAgent() }
 
     private static var profileStores: [UUID: WKWebsiteDataStore] = [:]
 
@@ -36,6 +39,29 @@ enum BrowserWebViewFactory {
         store(forProfileID: browsingStoreID)
     }
 
+    /// Converts a `BrowserProxyConfig` into WebKit/Network `ProxyConfiguration` entries.
+    static func makeProxyConfigurations(for config: BrowserProxyConfig) -> [ProxyConfiguration] {
+        guard config.isConfigured,
+              let port = NWEndpoint.Port(rawValue: UInt16(config.port))
+        else { return [] }
+        let trimmedHost = config.host.trimmingCharacters(in: .whitespacesAndNewlines)
+        let endpoint = NWEndpoint.hostPort(host: NWEndpoint.Host(trimmedHost), port: port)
+        switch config.mode {
+        case .none:
+            return []
+        case .httpConnect:
+            return [ProxyConfiguration(httpCONNECTProxy: endpoint)]
+        case .socks5:
+            return [ProxyConfiguration(socksv5Proxy: endpoint)]
+        }
+    }
+
+    /// Applies (or clears) per-profile proxy routing on the profile's `WKWebsiteDataStore`.
+    static func applyProxy(_ config: BrowserProxyConfig, toProfileID id: UUID) {
+        let dataStore = store(forProfileID: id)
+        dataStore.proxyConfigurations = makeProxyConfigurations(for: config)
+    }
+
     static func makeWebView(
         isPrivate: Bool,
         profileDataStoreID: UUID = browsingStoreID,
@@ -43,14 +69,31 @@ enum BrowserWebViewFactory {
         adBlockPageScript: WKUserScript? = nil,
         webExtensionController: WKWebExtensionController? = nil,
         autofillMessageHandler: (any WKScriptMessageHandler)? = nil,
-        adBlockMetricsHandler: (any WKScriptMessageHandler)? = nil
+        adBlockMetricsHandler: (any WKScriptMessageHandler)? = nil,
+        passkeyMessageHandler: (any WKScriptMessageHandler)? = nil,
+        lockdownModeEnabled: Bool = false,
+        proxyConfig: BrowserProxyConfig = .none
     ) -> BrowserWKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = isPrivate ? WKWebsiteDataStore.nonPersistent() : store(forProfileID: profileDataStoreID)
+        if isPrivate {
+            let ephemeral = WKWebsiteDataStore.nonPersistent()
+            if proxyConfig.applyToPrivateTabs {
+                ephemeral.proxyConfigurations = makeProxyConfigurations(for: proxyConfig)
+            }
+            config.websiteDataStore = ephemeral
+        } else {
+            let persistent = store(forProfileID: profileDataStoreID)
+            if proxyConfig.isConfigured {
+                persistent.proxyConfigurations = makeProxyConfigurations(for: proxyConfig)
+            }
+            config.websiteDataStore = persistent
+        }
+        config.upgradeKnownHostsToHTTPS = true
         config.preferences.isElementFullscreenEnabled = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
         config.preferences.isFraudulentWebsiteWarningEnabled = true
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        config.defaultWebpagePreferences.isLockdownModeEnabled = lockdownModeEnabled
         if let webExtensionController {
             config.webExtensionController = webExtensionController
         }
@@ -69,6 +112,25 @@ enum BrowserWebViewFactory {
                 adBlockMetricsHandler,
                 contentWorld: .defaultClient,
                 name: BrowserAdBlockScripts.metricsHandlerName
+            )
+        }
+        if let passkeyMessageHandler {
+            config.userContentController.addUserScript(WKUserScript(
+                source: BrowserPasskeyBridgeScripts.bridgeScriptSource,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+                in: .defaultClient
+            ))
+            config.userContentController.addUserScript(WKUserScript(
+                source: BrowserPasskeyBridgeScripts.pageObserverScriptSource,
+                injectionTime: .atDocumentStart,
+                forMainFrameOnly: true,
+                in: .page
+            ))
+            config.userContentController.add(
+                passkeyMessageHandler,
+                contentWorld: .defaultClient,
+                name: BrowserPasskeyBridgeScripts.handlerName
             )
         }
         if let adBlockPageScript {
@@ -95,6 +157,51 @@ enum BrowserWebViewFactory {
         webView.isInspectable = true
         return webView
     }
+}
+
+/// Detects WebAuthn / Passkey ceremonies that fail inside embedded `WKWebView` so the tab can offer
+/// a one-click "Open in Safari" handoff, without exposing `webkit.messageHandlers` to page scripts.
+enum BrowserPasskeyBridgeScripts {
+    static let handlerName = "vesperPasskey"
+
+    static let bridgeScriptSource = """
+    (() => {
+      if (window.__vesperPasskeyBridgeInstalled) return;
+      window.__vesperPasskeyBridgeInstalled = true;
+      window.addEventListener("__vesper_passkey_failed__", () => {
+        try {
+          window.webkit?.messageHandlers?.vesperPasskey?.postMessage({ type: "passkeyFailed" });
+        } catch (_) {}
+      }, true);
+    })();
+    """
+
+    static let pageObserverScriptSource = """
+    (() => {
+      if (window.__vesperPasskeyObserverInstalled) return;
+      window.__vesperPasskeyObserverInstalled = true;
+      try {
+        const creds = navigator.credentials;
+        if (!creds) return;
+        for (const method of ["get", "create"]) {
+          const orig = creds[method];
+          if (typeof orig !== "function") continue;
+          creds[method] = function(options) {
+            const p = orig.apply(this, arguments);
+            if (options && options.publicKey && p && typeof p.catch === "function") {
+              p.catch((err) => {
+                const name = err && err.name ? String(err.name) : "";
+                if (name === "NotAllowedError" || name === "SecurityError" || name === "NotSupportedError") {
+                  try { window.dispatchEvent(new Event("__vesper_passkey_failed__")); } catch (_) {}
+                }
+              });
+            }
+            return p;
+          };
+        }
+      } catch (_) {}
+    })();
+    """
 }
 
 // MARK: - Weak Script Message Proxy (Prevents WKUserContentController Retain Cycles)
@@ -206,20 +313,76 @@ final class BrowserWKWebView: WKWebView {
 // MARK: - OAuth / JS Popup Window Controller
 
 /// Hosts small JavaScript popups (e.g. Google/GitHub OAuth sign-in flows) using the exact
-/// `WKWebViewConfiguration` WebKit provides so cookies and `window.opener` stay intact.
+/// `WKWebViewConfiguration` WebKit provides so cookies and `window.opener` stay intact,
+/// while displaying a read-only origin + TLS security header bar so popups cannot spoof their host.
 @MainActor
 final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate, WKUIDelegate, WKNavigationDelegate {
     let webView: WKWebView
     private let onClose: () -> Void
+    private let securityIconView = NSImageView()
+    private let originLabel = NSTextField(labelWithString: "")
+    private var observations: [NSKeyValueObservation] = []
 
     init(configuration: WKWebViewConfiguration, windowFeatures: WKWindowFeatures, onClose: @escaping () -> Void) {
         self.onClose = onClose
+        configuration.upgradeKnownHostsToHTTPS = true
         let width = max(420, min(960, CGFloat(windowFeatures.width?.doubleValue ?? 560)))
         let height = max(480, min(840, CGFloat(windowFeatures.height?.doubleValue ?? 680)))
-        let wv = WKWebView(frame: NSRect(x: 0, y: 0, width: width, height: height), configuration: configuration)
+        let wv = WKWebView(frame: .zero, configuration: configuration)
         wv.customUserAgent = BrowserWebViewFactory.safariUserAgent
         wv.isInspectable = true
+        wv.translatesAutoresizingMaskIntoConstraints = false
         self.webView = wv
+
+        let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+
+        let originBar = NSVisualEffectView()
+        originBar.material = .titlebar
+        originBar.state = .active
+        originBar.translatesAutoresizingMaskIntoConstraints = false
+
+        securityIconView.translatesAutoresizingMaskIntoConstraints = false
+        securityIconView.imageScaling = .scaleProportionallyDown
+
+        originLabel.translatesAutoresizingMaskIntoConstraints = false
+        originLabel.font = .systemFont(ofSize: 11.5, weight: .medium)
+        originLabel.textColor = .secondaryLabelColor
+        originLabel.lineBreakMode = .byTruncatingMiddle
+
+        let divider = NSBox()
+        divider.boxType = .separator
+        divider.translatesAutoresizingMaskIntoConstraints = false
+
+        originBar.addSubview(securityIconView)
+        originBar.addSubview(originLabel)
+        originBar.addSubview(divider)
+        container.addSubview(originBar)
+        container.addSubview(wv)
+
+        NSLayoutConstraint.activate([
+            originBar.topAnchor.constraint(equalTo: container.topAnchor),
+            originBar.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            originBar.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            originBar.heightAnchor.constraint(equalToConstant: 28),
+
+            securityIconView.leadingAnchor.constraint(equalTo: originBar.leadingAnchor, constant: 10),
+            securityIconView.centerYAnchor.constraint(equalTo: originBar.centerYAnchor),
+            securityIconView.widthAnchor.constraint(equalToConstant: 13),
+            securityIconView.heightAnchor.constraint(equalToConstant: 13),
+
+            originLabel.leadingAnchor.constraint(equalTo: securityIconView.trailingAnchor, constant: 6),
+            originLabel.trailingAnchor.constraint(lessThanOrEqualTo: originBar.trailingAnchor, constant: -10),
+            originLabel.centerYAnchor.constraint(equalTo: originBar.centerYAnchor),
+
+            divider.leadingAnchor.constraint(equalTo: originBar.leadingAnchor),
+            divider.trailingAnchor.constraint(equalTo: originBar.trailingAnchor),
+            divider.bottomAnchor.constraint(equalTo: originBar.bottomAnchor),
+
+            wv.topAnchor.constraint(equalTo: originBar.bottomAnchor),
+            wv.leadingAnchor.constraint(equalTo: container.leadingAnchor),
+            wv.trailingAnchor.constraint(equalTo: container.trailingAnchor),
+            wv.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        ])
 
         let panel = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: width, height: height),
@@ -229,17 +392,56 @@ final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate, 
         )
         panel.title = "Sign In"
         panel.isReleasedWhenClosed = false
-        panel.contentView = wv
+        panel.contentView = container
         panel.center()
         super.init(window: panel)
         panel.delegate = self
         wv.uiDelegate = self
         wv.navigationDelegate = self
+
+        observations = [
+            wv.observe(\.url, options: [.initial, .new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.updateOriginBar() }
+            },
+            wv.observe(\.hasOnlySecureContent, options: [.initial, .new]) { [weak self] _, _ in
+                MainActor.assumeIsolated { self?.updateOriginBar() }
+            },
+        ]
     }
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    private func updateOriginBar() {
+        let urlString = webView.url?.absoluteString ?? ""
+        let idn = BrowserIDNGuard.inspect(urlString: urlString)
+        let sec = BrowserHTTPSGuard.connectionSecurity(
+            urlString: urlString,
+            hasOnlySecureContent: webView.hasOnlySecureContent,
+            tlsError: nil
+        )
+        let scheme = webView.url?.scheme?.lowercased() ?? ""
+        if idn.displayHost.isEmpty {
+            originLabel.stringValue = urlString.isEmpty ? "Loading…" : urlString
+        } else {
+            originLabel.stringValue = scheme.isEmpty ? idn.displayHost : "\(scheme)://\(idn.displayHost)"
+        }
+        if idn.isSuspiciousIDN || sec.isWarning {
+            securityIconView.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: "Security Warning")
+            securityIconView.contentTintColor = .systemOrange
+            originLabel.textColor = .systemOrange
+        } else if sec == .secure {
+            securityIconView.image = NSImage(systemSymbolName: "lock.fill", accessibilityDescription: "Secure Connection")
+            securityIconView.contentTintColor = .secondaryLabelColor
+            originLabel.textColor = .secondaryLabelColor
+        } else {
+            securityIconView.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+            securityIconView.contentTintColor = .tertiaryLabelColor
+            originLabel.textColor = .secondaryLabelColor
+        }
+    }
+
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
+        updateOriginBar()
         if let title = webView.title, !title.isEmpty {
             window?.title = title
         }
@@ -250,6 +452,7 @@ final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate, 
     }
 
     func windowWillClose(_ notification: Notification) {
+        observations.removeAll()
         webView.uiDelegate = nil
         webView.navigationDelegate = nil
         webView.stopLoading()

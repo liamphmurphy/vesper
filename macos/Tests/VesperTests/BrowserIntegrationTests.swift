@@ -222,16 +222,16 @@ struct BrowserIntegrationTests {
             )
         }
 
-        // Attached initially: metrics bridge + autofill + adblock page script = 3 user scripts.
-        #expect(session.webView.configuration.userContentController.userScripts.count == 3)
+        // Attached initially: metrics bridge + passkey bridge + passkey observer + autofill + adblock page script = 5 user scripts.
+        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
 
-        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill & metrics bridge.
+        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill, passkey & metrics scripts.
         session.syncAdBlockForURL("https://trusted.example/page")
-        #expect(session.webView.configuration.userContentController.userScripts.count == 2)
+        #expect(session.webView.configuration.userContentController.userScripts.count == 4)
 
         // Navigating back to a protected host reattaches the adblock page script instantaneously.
         session.syncAdBlockForURL("https://news.example/article")
-        #expect(session.webView.configuration.userContentController.userScripts.count == 3)
+        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
     }
 
     @Test("BrowserAdBlockEngine downloads, caches, handles 304 ETag, and compiles upstream filter lists")
@@ -501,6 +501,85 @@ struct BrowserIntegrationTests {
         #expect((dict["attrAdOpacity"] as? String) == "0")
         #expect((dict["hijackTarget"] as? String) == "")
         #expect((dict["normalTarget"] as? String) == "_blank")
+    }
+
+    @Test("BrowserWebViewFactory enables upgradeKnownHostsToHTTPS, Lockdown Mode, aligned UA, and per-profile proxyConfigurations")
+    func webViewSecurityHardeningConfiguration() {
+        let proxy = BrowserProxyConfig(mode: .socks5, host: "127.0.0.1", port: 1080, applyToPrivateTabs: true)
+        let webView = BrowserWebViewFactory.makeWebView(
+            isPrivate: true,
+            lockdownModeEnabled: true,
+            proxyConfig: proxy
+        )
+        #expect(webView.configuration.upgradeKnownHostsToHTTPS == true)
+        #expect(webView.configuration.preferences.isFraudulentWebsiteWarningEnabled == true)
+        #expect(webView.configuration.defaultWebpagePreferences.isLockdownModeEnabled == true)
+        #expect(webView.configuration.websiteDataStore.proxyConfigurations.count == 1)
+        #expect(webView.customUserAgent?.contains("Version/18.4") == false)
+    }
+
+    @Test("WebDownloads stamps macOS Gatekeeper web-download quarantine metadata on downloaded files")
+    func downloadsStampQuarantineMetadata() throws {
+        let tempDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("vesper-quarantine-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: tempDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tempDir) }
+
+        let fileURL = tempDir.appendingPathComponent("sample.txt")
+        try Data("hello".utf8).write(to: fileURL)
+
+        let dataURL = try #require(URL(string: "https://downloads.example.com/sample.txt"))
+        let originURL = try #require(URL(string: "https://example.com/releases"))
+        let stamped = WebDownloads.applyWebDownloadQuarantine(to: fileURL, dataURL: dataURL, originURL: originURL)
+        #expect(stamped == true)
+
+        let values = try fileURL.resourceValues(forKeys: [.quarantinePropertiesKey])
+        let props = try #require(values.quarantineProperties)
+        #expect((props[kLSQuarantineTypeKey as String] as? String) == (kLSQuarantineTypeWebDownload as String))
+        #expect((props[kLSQuarantineAgentNameKey as String] as? String) == "Vesper")
+    }
+
+    @Test("BrowserAutofillManager enforces biometric Touch ID gate and Apple Passwords CSV import")
+    func autofillBiometricGateAndCSVImport() async {
+        let store = InMemoryBrowserCredentialStore()
+        let denyingAuth = StubBiometricAuthenticator(shouldSucceed: false)
+        let manager = BrowserAutofillManager(
+            profileID: UUID(),
+            store: store,
+            authenticator: denyingAuth
+        )
+
+        let imported = manager.importApplePasswordsCSV("Title,URL,Username,Password\nExample,https://example.com,alice,secret123\n")
+        #expect(imported == 1)
+        #expect(manager.credentials.count == 1)
+
+        let allowedWithoutGate = await manager.authenticateIfRequired(requireTouchID: false, reason: "test")
+        #expect(allowedWithoutGate == true)
+        #expect(denyingAuth.callCount == 0)
+
+        let deniedWithGate = await manager.authenticateIfRequired(requireTouchID: true, reason: "test")
+        #expect(deniedWithGate == false)
+        #expect(denyingAuth.callCount == 1)
+
+        denyingAuth.shouldSucceed = true
+        let grantedWithGate = await manager.authenticateIfRequired(requireTouchID: true, reason: "test")
+        #expect(grantedWithGate == true)
+        #expect(denyingAuth.callCount == 2)
+    }
+}
+
+@MainActor
+private final class StubBiometricAuthenticator: BrowserBiometricAuthenticator {
+    var shouldSucceed: Bool
+    var callCount: Int = 0
+
+    init(shouldSucceed: Bool) {
+        self.shouldSucceed = shouldSucceed
+    }
+
+    func authenticate(reason: String) async -> Bool {
+        callCount += 1
+        return shouldSucceed
     }
 }
 

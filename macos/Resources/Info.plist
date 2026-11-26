@@ -40,10 +40,13 @@
 		<key>NSAllowsLocalNetworking</key>
 		<true/>
 	</dict>
-	<!-- Live Voice: the person talks with a persona out loud, transcribed on the Mac by SpeechAnalyzer.
-	     It asks only for the microphone; the speech string covers the framework asking on its own. -->
+	<!-- Live Voice and Browser media permissions -->
 	<key>NSMicrophoneUsageDescription</key>
-	<string>Vesper listens while Live Voice is on so you can talk with your persona.</string>
+	<string>Vesper listens while Live Voice is on or when you allow a website in the internal Browser to use your microphone.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>Vesper uses the camera only when you explicitly grant a website permission in the internal Browser.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>Vesper shares your location only when you explicitly grant a website permission in the internal Browser.</string>
 	<key>NSSpeechRecognitionUsageDescription</key>
 	<string>Vesper turns what you say in Live Voice into chat messages, on your Mac.</string>
 	<!-- "Open in editor" opens a terminal command through Terminal. -->
