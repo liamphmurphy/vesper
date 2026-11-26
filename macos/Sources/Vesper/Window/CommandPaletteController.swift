@@ -147,6 +147,10 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
         model.browserTabsProvider = { [weak self] in
             self?.aux?.app?.browser.orderedTabs.map(\.record) ?? []
         }
+        model.browserProfilesProvider = { [weak self] in
+            guard let browser = self?.aux?.app?.browser else { return [] }
+            return browser.profiles.map { (id: $0.id, name: $0.name, isActive: $0.id == browser.activeProfileId) }
+        }
         model.onSelectBrowserTab = { [weak self] tabId in
             guard let self, let app = self.aux?.app else { return }
             app.browser.selectTab(tabId)
@@ -169,6 +173,34 @@ final class CommandPaletteController: NSObject, NSWindowDelegate {
                 app.browser.openURL(url, inNewTab: true)
                 app.openVesperTab(path: "/browser", nextTo: nil)
             }
+        }
+        model.onSwitchBrowserProfile = { [weak self] profileId in
+            guard let self, let app = self.aux?.app else { return }
+            app.browser.switchProfile(to: profileId)
+            if let target = self.targetController, !target.isBrowserActive {
+                target.content.navigate(path: "/browser")
+            }
+        }
+        model.onToggleBrowserSplitView = { [weak self] in
+            guard let self, let app = self.aux?.app else { return }
+            if let target = self.targetController, !target.isBrowserActive {
+                target.content.navigate(path: "/browser")
+            }
+            app.browser.toggleSplitView()
+        }
+        model.onOpenBrowserExtensions = { [weak self] in
+            guard let self, let app = self.aux?.app else { return }
+            if let target = self.targetController, !target.isBrowserActive {
+                target.content.navigate(path: "/browser")
+            }
+            app.browser.triggerExtensionsPopover()
+        }
+        model.onOpenBrowserAutofill = { [weak self] in
+            guard let self, let app = self.aux?.app else { return }
+            if let target = self.targetController, !target.isBrowserActive {
+                target.content.navigate(path: "/browser")
+            }
+            app.browser.triggerAutofillPopover()
         }
         model.onClose = { [weak self] restoreFocus in
             self?.close(restoreFocus: restoreFocus)

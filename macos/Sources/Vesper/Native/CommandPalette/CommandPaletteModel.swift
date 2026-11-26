@@ -112,8 +112,13 @@ final class CommandPaletteModel {
     @ObservationIgnored var storeProvider: (() -> QueryStore?)?
     @ObservationIgnored var clientProvider: (() -> APIClient?)?
     @ObservationIgnored var browserTabsProvider: (() -> [BrowserTabRecord])?
+    @ObservationIgnored var browserProfilesProvider: (() -> [(id: UUID, name: String, isActive: Bool)])?
     @ObservationIgnored var onSelectBrowserTab: ((_ tabId: UUID) -> Void)?
     @ObservationIgnored var onOpenInBrowser: ((_ queryOrURL: String) -> Void)?
+    @ObservationIgnored var onSwitchBrowserProfile: ((_ profileId: UUID) -> Void)?
+    @ObservationIgnored var onToggleBrowserSplitView: (() -> Void)?
+    @ObservationIgnored var onOpenBrowserExtensions: (() -> Void)?
+    @ObservationIgnored var onOpenBrowserAutofill: (() -> Void)?
 
     // Theme & focus trigger
     var theme: ThemeTokens = ThemeTokens(mode: .dark)
@@ -1586,6 +1591,66 @@ final class CommandPaletteModel {
                 }
             ),
             PaletteRow(
+                id: "cmd-browser-split",
+                title: "Browser: Toggle Split View",
+                subtitle: "View two web pages side-by-side inside Vesper Browser",
+                shortcut: "⌘⌃\\",
+                sfSymbol: "rectangle.split.2x1",
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Command · Browser",
+                    title: "Toggle Browser Split View",
+                    description: "Splits the internal Browser pane side-by-side or closes Split View.",
+                    shortcut: "⌘⌃\\",
+                    contextLabel: "Scope",
+                    contextValue: "Browser"
+                )),
+                perform: { [weak self] in
+                    self?.close(restoreFocus: false)
+                    self?.onToggleBrowserSplitView?()
+                }
+            ),
+            PaletteRow(
+                id: "cmd-browser-extensions",
+                title: "Browser: Manage WebExtensions",
+                subtitle: "Install, enable, or inspect WebExtensions for the active profile",
+                shortcut: "⌘⌃E",
+                sfSymbol: "puzzlepiece.extension",
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Command · Browser",
+                    title: "Manage WebExtensions",
+                    description: "Opens the WebExtensions manager in Vesper Browser.",
+                    shortcut: "⌘⌃E",
+                    contextLabel: "Scope",
+                    contextValue: "Browser"
+                )),
+                perform: { [weak self] in
+                    self?.close(restoreFocus: false)
+                    self?.onOpenBrowserExtensions?()
+                }
+            ),
+            PaletteRow(
+                id: "cmd-browser-autofill",
+                title: "Browser: AutoFill & Password Generator",
+                subtitle: "Fill a Keychain login or generate a strong password",
+                shortcut: "⌘⇧A",
+                sfSymbol: "key.fill",
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Command · Browser",
+                    title: "Keychain AutoFill",
+                    description: "Opens Keychain AutoFill and the Strong Password Generator in Browser.",
+                    shortcut: "⌘⇧A",
+                    contextLabel: "Scope",
+                    contextValue: "Browser"
+                )),
+                perform: { [weak self] in
+                    self?.close(restoreFocus: false)
+                    self?.onOpenBrowserAutofill?()
+                }
+            ),
+            PaletteRow(
                 id: "cmd-appearance",
                 title: "Appearance & Theme Settings",
                 subtitle: "Palette, text size, dark or light mode",
@@ -1645,6 +1710,27 @@ final class CommandPaletteModel {
                 )),
                 customAppSlug: app.customAppSlug
             )
+        }
+        for profile in browserProfilesProvider?() ?? [] where !profile.isActive {
+            goToRows.append(PaletteRow(
+                id: "cmd-browser-profile-\(profile.id.uuidString)",
+                title: "Browser: Switch to \(profile.name) Profile",
+                subtitle: "Isolated tabs, cookies, extensions, and Keychain passwords",
+                sfSymbol: "person.crop.circle",
+                highlightTitle: true,
+                preview: .command(PaletteCommandPreview(
+                    category: "Command · Browser",
+                    title: "Switch Browser Profile",
+                    description: "Switches Vesper Browser to the \(profile.name) profile.",
+                    shortcut: "↵",
+                    contextLabel: "Profile",
+                    contextValue: profile.name
+                )),
+                perform: { [weak self] in
+                    self?.close(restoreFocus: false)
+                    self?.onSwitchBrowserProfile?(profile.id)
+                }
+            ))
         }
         for app in customApps {
             goToRows.append(PaletteRow(

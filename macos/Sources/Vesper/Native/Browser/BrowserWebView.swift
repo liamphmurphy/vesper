@@ -8,31 +8,66 @@ import WebKit
 /// Builds isolated `WKWebView` instances for the internal Browser.
 ///
 /// Security boundary:
-/// - Regular browser tabs use a dedicated persistent `WKWebsiteDataStore(forIdentifier:)` that is
-///   completely separate from `WKWebsiteDataStore.default()` and `playgroundStore`, so Vesper's
-///   `vesper_session` cookie (installed by `WebViewFactory.installSessionCookie`) never touches
-///   arbitrary websites.
+/// - Each Browser profile uses its own dedicated persistent `WKWebsiteDataStore(forIdentifier:)`,
+///   completely separate from `WKWebsiteDataStore.default()` (which carries Vesper's session
+///   cookie), `playgroundStore`, and every other profile.
 /// - Private tabs use `WKWebsiteDataStore.nonPersistent()`.
 /// - Uses a standard Safari User-Agent (no `VesperMac/1` suffix) so OAuth providers and sites do
 ///   not reject it as an embedded webview.
 @MainActor
 enum BrowserWebViewFactory {
-    static let browsingStoreID = UUID(uuidString: "9E6F2D4A-8B7C-4D3E-A1F2-5C8B9E0A4F11")!
+    static let browsingStoreID = BrowserProfile.defaultDataStoreID
     static let safariUserAgent = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.4 Safari/605.1.15"
 
-    static let persistentStore: WKWebsiteDataStore = WKWebsiteDataStore(forIdentifier: browsingStoreID)
+    private static var profileStores: [UUID: WKWebsiteDataStore] = [:]
+
+    /// Returns the cached persistent `WKWebsiteDataStore` isolated to a specific profile UUID.
+    static func store(forProfileID id: UUID) -> WKWebsiteDataStore {
+        if let existing = profileStores[id] {
+            return existing
+        }
+        let created = WKWebsiteDataStore(forIdentifier: id)
+        profileStores[id] = created
+        return created
+    }
+
+    /// Default ("Personal") profile persistent store.
+    static var persistentStore: WKWebsiteDataStore {
+        store(forProfileID: browsingStoreID)
+    }
 
     static func makeWebView(
         isPrivate: Bool,
-        contentRuleList: WKContentRuleList?
+        profileDataStoreID: UUID = browsingStoreID,
+        contentRuleList: WKContentRuleList?,
+        webExtensionController: WKWebExtensionController? = nil,
+        autofillMessageHandler: (any WKScriptMessageHandler)? = nil
     ) -> BrowserWKWebView {
         let config = WKWebViewConfiguration()
-        config.websiteDataStore = isPrivate ? WKWebsiteDataStore.nonPersistent() : persistentStore
+        config.websiteDataStore = isPrivate ? WKWebsiteDataStore.nonPersistent() : store(forProfileID: profileDataStoreID)
         config.preferences.isElementFullscreenEnabled = true
         config.preferences.javaScriptCanOpenWindowsAutomatically = false
+        config.preferences.isFraudulentWebsiteWarningEnabled = true
         config.defaultWebpagePreferences.allowsContentJavaScript = true
+        if let webExtensionController {
+            config.webExtensionController = webExtensionController
+        }
         if let contentRuleList {
             config.userContentController.add(contentRuleList)
+        }
+        if let autofillMessageHandler {
+            let script = WKUserScript(
+                source: BrowserAutofillScripts.detectorScriptSource,
+                injectionTime: .atDocumentEnd,
+                forMainFrameOnly: false,
+                in: .defaultClient
+            )
+            config.userContentController.addUserScript(script)
+            config.userContentController.add(
+                autofillMessageHandler,
+                contentWorld: .defaultClient,
+                name: BrowserAutofillScripts.messageHandlerName
+            )
         }
         let webView = BrowserWKWebView(frame: .zero, configuration: config)
         webView.customUserAgent = safariUserAgent
@@ -46,9 +81,13 @@ enum BrowserWebViewFactory {
 /// Compiles and caches the native WebKit `WKContentRuleList` for ad & tracker blocking.
 @MainActor
 final class BrowserContentBlockerManager {
-    private static let ruleListIdentifier = "com.vesper.mac.browser.adblock.v1"
+    private let ruleListIdentifier: String
     private(set) var compiledRuleList: WKContentRuleList?
     private var lastJSON: String?
+
+    init(profileID: UUID = BrowserProfile.defaultProfileID) {
+        self.ruleListIdentifier = "com.vesper.mac.browser.adblock.v1.\(profileID.uuidString.lowercased())"
+    }
 
     func compile(enabled: Bool, disabledHosts: [String]) async -> WKContentRuleList? {
         guard enabled else {
@@ -62,7 +101,7 @@ final class BrowserContentBlockerManager {
         }
         do {
             let list = try await WKContentRuleListStore.default().compileContentRuleList(
-                forIdentifier: Self.ruleListIdentifier,
+                forIdentifier: ruleListIdentifier,
                 encodedContentRuleList: json
             )
             compiledRuleList = list
@@ -72,6 +111,22 @@ final class BrowserContentBlockerManager {
             vlog("browser adblock compile failed: \(error)")
             return compiledRuleList
         }
+    }
+}
+
+// MARK: - Weak Script Message Proxy (Prevents WKUserContentController Retain Cycles)
+
+@MainActor
+final class BrowserScriptMessageProxy: NSObject, WKScriptMessageHandler {
+    private let handler: @MainActor (WKScriptMessage) -> Void
+
+    init(handler: @escaping @MainActor (WKScriptMessage) -> Void) {
+        self.handler = handler
+        super.init()
+    }
+
+    func userContentController(_ userContentController: WKUserContentController, didReceive message: WKScriptMessage) {
+        handler(message)
     }
 }
 
@@ -85,6 +140,10 @@ final class BrowserWKWebView: WKWebView {
         var onSaveLink: () -> Void
         var onCopyMarkdownQuote: () -> Void
         var onScreenshotToNotes: () -> Void
+        var onCaptureRegionScreenshot: () -> Void
+        var onAutofillKeychain: () -> Void
+        var onGeneratePassword: () -> Void
+        var onOpenInSplitView: () -> Void
         var onOpenInSafari: () -> Void
     }
 
@@ -111,6 +170,11 @@ final class BrowserWKWebView: WKWebView {
         shotItem.image = NSImage(systemSymbolName: "camera", accessibilityDescription: nil)
         menu.addItem(shotItem)
 
+        let regionItem = NSMenuItem(title: "Capture Region Screenshot…", action: #selector(handleCaptureRegion), keyEquivalent: "")
+        regionItem.target = self
+        regionItem.image = NSImage(systemSymbolName: "crop", accessibilityDescription: nil)
+        menu.addItem(regionItem)
+
         let quoteItem = NSMenuItem(title: "Copy Markdown Quote", action: #selector(handleCopyMarkdownQuote), keyEquivalent: "")
         quoteItem.target = self
         quoteItem.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: nil)
@@ -121,6 +185,23 @@ final class BrowserWKWebView: WKWebView {
         saveLinkItem.image = NSImage(systemSymbolName: "bookmark", accessibilityDescription: nil)
         menu.addItem(saveLinkItem)
 
+        menu.addItem(.separator())
+
+        let autofillItem = NSMenuItem(title: "AutoFill from Keychain…", action: #selector(handleAutofill), keyEquivalent: "")
+        autofillItem.target = self
+        autofillItem.image = NSImage(systemSymbolName: "key.fill", accessibilityDescription: nil)
+        menu.addItem(autofillItem)
+
+        let genPwItem = NSMenuItem(title: "Generate Strong Password", action: #selector(handleGeneratePassword), keyEquivalent: "")
+        genPwItem.target = self
+        genPwItem.image = NSImage(systemSymbolName: "wand.and.stars", accessibilityDescription: nil)
+        menu.addItem(genPwItem)
+
+        let splitItem = NSMenuItem(title: "Open in Split View", action: #selector(handleOpenInSplit), keyEquivalent: "")
+        splitItem.target = self
+        splitItem.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: nil)
+        menu.addItem(splitItem)
+
         let safariItem = NSMenuItem(title: "Open Page in Safari", action: #selector(handleOpenInSafari), keyEquivalent: "")
         safariItem.target = self
         safariItem.image = NSImage(systemSymbolName: "safari", accessibilityDescription: nil)
@@ -130,8 +211,12 @@ final class BrowserWKWebView: WKWebView {
     @objc private func handleAskPersona() { contextCallbacks?.onAskPersona() }
     @objc private func handleClipToKnowledge() { contextCallbacks?.onClipToKnowledge() }
     @objc private func handleScreenshotToNotes() { contextCallbacks?.onScreenshotToNotes() }
+    @objc private func handleCaptureRegion() { contextCallbacks?.onCaptureRegionScreenshot() }
     @objc private func handleCopyMarkdownQuote() { contextCallbacks?.onCopyMarkdownQuote() }
     @objc private func handleSaveLink() { contextCallbacks?.onSaveLink() }
+    @objc private func handleAutofill() { contextCallbacks?.onAutofillKeychain() }
+    @objc private func handleGeneratePassword() { contextCallbacks?.onGeneratePassword() }
+    @objc private func handleOpenInSplit() { contextCallbacks?.onOpenInSplitView() }
     @objc private func handleOpenInSafari() { contextCallbacks?.onOpenInSafari() }
 }
 
@@ -189,7 +274,89 @@ final class BrowserPopupWindowController: NSWindowController, NSWindowDelegate, 
     }
 }
 
-// MARK: - Page Extraction & Reader Mode Scripts
+// MARK: - Ephemeral In-Memory Favicon Cache
+
+/// Fetches site favicons over an ephemeral cookie-free `URLSession` and caches decoded `NSImage`s
+/// per host in memory so tabs, bookmarks, and the Start Page show crisp site icons.
+@MainActor
+final class BrowserFaviconCache {
+    static let shared = BrowserFaviconCache()
+
+    private var cache: [String: NSImage] = [:]
+    private var order: [String] = []
+    private var inFlight: Set<String> = []
+    private let maxEntries = 180
+
+    private lazy var session: URLSession = {
+        let cfg = URLSessionConfiguration.ephemeral
+        cfg.timeoutIntervalForRequest = 6
+        cfg.timeoutIntervalForResource = 8
+        cfg.httpCookieStorage = nil
+        cfg.urlCache = nil
+        return URLSession(configuration: cfg)
+    }()
+
+    func cachedIcon(for urlString: String) -> NSImage? {
+        guard let host = BrowserPageGuard.normalizeHost(urlString) else { return nil }
+        return cache[host]
+    }
+
+    func fetch(iconURLString: String?, pageURLString: String) async -> NSImage? {
+        guard let host = BrowserPageGuard.normalizeHost(pageURLString) else { return nil }
+        if let existing = cache[host] { return existing }
+        guard !inFlight.contains(host) else { return nil }
+
+        guard let pageURL = URL(string: pageURLString), BrowserURLResolver.isWebURL(pageURL) else { return nil }
+        var candidates: [URL] = []
+        if let iconURLString, !iconURLString.isEmpty,
+           let parsed = URL(string: iconURLString, relativeTo: pageURL)?.absoluteURL,
+           BrowserURLResolver.isWebURL(parsed)
+        {
+            candidates.append(parsed)
+        }
+        if var comps = URLComponents(url: pageURL, resolvingAgainstBaseURL: false) {
+            comps.path = "/favicon.ico"
+            comps.query = nil
+            comps.fragment = nil
+            if let fallback = comps.url, !candidates.contains(fallback) {
+                candidates.append(fallback)
+            }
+        }
+        guard !candidates.isEmpty else { return nil }
+
+        inFlight.insert(host)
+        defer { inFlight.remove(host) }
+
+        for candidate in candidates {
+            var req = URLRequest(url: candidate)
+            req.setValue(BrowserWebViewFactory.safariUserAgent, forHTTPHeaderField: "User-Agent")
+            guard let (data, resp) = try? await session.data(for: req),
+                  let http = resp as? HTTPURLResponse,
+                  (200..<300).contains(http.statusCode),
+                  !data.isEmpty, data.count <= 262_144,
+                  let image = NSImage(data: data),
+                  image.size.width > 0, image.size.height > 0
+            else { continue }
+
+            store(image, for: host)
+            return image
+        }
+        return nil
+    }
+
+    private func store(_ image: NSImage, for host: String) {
+        if cache[host] == nil {
+            order.append(host)
+            if order.count > maxEntries {
+                let oldest = order.removeFirst()
+                cache.removeValue(forKey: oldest)
+            }
+        }
+        cache[host] = image
+    }
+}
+
+// MARK: - Page Extraction, Media Mute, Favicon & Reader Mode Scripts
 
 enum BrowserPageScripts {
     /// Extracts visible page text and selection without reading form inputs, passwords,
@@ -236,6 +403,53 @@ enum BrowserPageScripts {
     """
 
     static let selectionOnlyJS = "String(window.getSelection() || '').slice(0, 20000)"
+
+    /// Extracts the highest-priority favicon URL declared in `<head>`.
+    static let faviconURLJS = """
+    (() => {
+      const links = Array.from(document.querySelectorAll('link[rel*="icon"]'));
+      if (!links.length) return "";
+      const scored = links
+        .filter((l) => l.href)
+        .sort((a, b) => {
+          const score = (el) => {
+            const rel = (el.rel || "").toLowerCase();
+            if (rel.includes("apple-touch-icon")) return 2;
+            if (rel === "icon" || rel === "shortcut icon") return 3;
+            return 1;
+          };
+          return score(b) - score(a);
+        });
+      return scored[0] ? scored[0].href : "";
+    })();
+    """
+
+    /// Mutes or unmutes all `<audio>` and `<video>` elements in the document and watches for new
+    /// media elements while muted.
+    static func muteMediaJS(muted: Bool) -> String {
+        let flag = muted ? "true" : "false"
+        return """
+        (() => {
+          window.__vesperTabMuted = \(flag);
+          const apply = () => {
+            document.querySelectorAll("audio, video").forEach((el) => {
+              el.muted = window.__vesperTabMuted;
+            });
+          };
+          apply();
+          if (window.__vesperTabMuted && !window.__vesperMuteObserver && document.documentElement) {
+            window.__vesperMuteObserver = new MutationObserver(() => {
+              if (window.__vesperTabMuted) apply();
+            });
+            window.__vesperMuteObserver.observe(document.documentElement, { childList: true, subtree: true });
+          } else if (!window.__vesperTabMuted && window.__vesperMuteObserver) {
+            window.__vesperMuteObserver.disconnect();
+            window.__vesperMuteObserver = null;
+          }
+          return true;
+        })();
+        """
+    }
 
     /// Toggles a clean, Vesper-themed Reader Mode overlay inside the active page.
     /// Returns true when Reader Mode is now active, false when dismissed.
@@ -316,9 +530,9 @@ enum BrowserPageScripts {
     }
 }
 
-// MARK: - SwiftUI WebView Host Container
+// MARK: - SwiftUI WebView Host & Extension Popup Anchor
 
-/// Hosts the active `BrowserWKWebView` without recreating or tearing down background tabs.
+/// Hosts a `BrowserWKWebView` without recreating or tearing down background tabs.
 struct BrowserWebViewContainer: NSViewRepresentable {
     let webView: BrowserWKWebView
 
@@ -348,5 +562,148 @@ struct BrowserWebViewContainer: NSViewRepresentable {
             wv.trailingAnchor.constraint(equalTo: host.trailingAnchor),
             wv.bottomAnchor.constraint(equalTo: host.bottomAnchor),
         ])
+    }
+}
+
+/// Invisible NSView bridge used to anchor `WKWebExtension.Action.popupPopover` to the omnibox bar.
+struct BrowserExtensionPopupAnchor: NSViewRepresentable {
+    let onAttach: (NSView) -> Void
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView()
+        DispatchQueue.main.async { onAttach(view) }
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        DispatchQueue.main.async { onAttach(nsView) }
+    }
+}
+
+// MARK: - Permission-Free Region-Crop Screenshot Overlay
+
+enum BrowserRegionCaptureDestination {
+    case knowledge
+    case chat
+    case clipboard
+}
+
+/// Interactive drag-to-crop overlay placed directly over the active `WKWebView` to capture a
+/// cropped region via `WKSnapshotConfiguration.rect` without macOS Screen Recording permissions.
+struct BrowserRegionCaptureOverlay: View {
+    let onCapture: (CGRect, BrowserRegionCaptureDestination) -> Void
+    let onCancel: () -> Void
+
+    @State private var dragStart: CGPoint?
+    @State private var dragCurrent: CGPoint?
+    @State private var finalizedRect: CGRect?
+
+    private var activeRect: CGRect? {
+        if let finalizedRect { return finalizedRect }
+        guard let start = dragStart, let current = dragCurrent else { return nil }
+        let rect = CGRect(
+            x: min(start.x, current.x),
+            y: min(start.y, current.y),
+            width: abs(current.x - start.x),
+            height: abs(current.y - start.y)
+        )
+        return (rect.width >= 12 && rect.height >= 12) ? rect : nil
+    }
+
+    var body: some View {
+        GeometryReader { geo in
+            ZStack(alignment: .topLeading) {
+                // Dimmed scrim with cutout around the selected region.
+                Canvas { ctx, size in
+                    ctx.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.black.opacity(0.42)))
+                    if let rect = activeRect {
+                        ctx.blendMode = .destinationOut
+                        ctx.fill(Path(rect), with: .color(.white))
+                    }
+                }
+                .compositingGroup()
+                .allowsHitTesting(false)
+
+                if let rect = activeRect {
+                    Rectangle()
+                        .stroke(Color.white, lineWidth: 1.5)
+                        .background(Rectangle().stroke(Color.accentColor, style: StrokeStyle(lineWidth: 1, dash: [4, 3])))
+                        .frame(width: rect.width, height: rect.height)
+                        .offset(x: rect.minX, y: rect.minY)
+                        .allowsHitTesting(false)
+
+                    Text("\(Int(rect.width)) × \(Int(rect.height))")
+                        .font(.system(size: 10.5, weight: .semibold).monospacedDigit())
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Capsule().fill(Color.black.opacity(0.75)))
+                        .offset(x: rect.minX, y: max(8, rect.minY - 24))
+                        .allowsHitTesting(false)
+                }
+
+                // Instruction banner at top center.
+                HStack(spacing: 10) {
+                    Image(systemName: "crop")
+                        .font(.system(size: 12))
+                    Text(finalizedRect == nil ? "Drag to select a region to capture" : "Choose where to send this capture")
+                        .font(.system(size: 12, weight: .medium))
+                    if let rect = finalizedRect {
+                        Button("To Knowledge") { onCapture(rect, .knowledge) }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        Button("To Chat") { onCapture(rect, .chat) }
+                            .controlSize(.small)
+                        Button("Copy") { onCapture(rect, .clipboard) }
+                            .controlSize(.small)
+                        Button("Retake") {
+                            finalizedRect = nil
+                            dragStart = nil
+                            dragCurrent = nil
+                        }
+                        .controlSize(.small)
+                    }
+                    Button("Cancel") { onCancel() }
+                        .controlSize(.small)
+                }
+                .padding(.horizontal, 14)
+                .padding(.vertical, 8)
+                .background(.ultraThinMaterial, in: Capsule())
+                .overlay(Capsule().stroke(Color.white.opacity(0.18), lineWidth: 1))
+                .shadow(color: .black.opacity(0.3), radius: 10, y: 4)
+                .frame(maxWidth: .infinity)
+                .padding(.top, 14)
+            }
+            .contentShape(Rectangle())
+            .gesture(
+                DragGesture(minimumDistance: 4)
+                    .onChanged { value in
+                        if finalizedRect != nil { finalizedRect = nil }
+                        dragStart = clampPoint(value.startLocation, in: geo.size)
+                        dragCurrent = clampPoint(value.location, in: geo.size)
+                    }
+                    .onEnded { value in
+                        let start = clampPoint(value.startLocation, in: geo.size)
+                        let end = clampPoint(value.location, in: geo.size)
+                        let rect = CGRect(
+                            x: min(start.x, end.x),
+                            y: min(start.y, end.y),
+                            width: abs(end.x - start.x),
+                            height: abs(end.y - start.y)
+                        )
+                        if rect.width >= 12 && rect.height >= 12 {
+                            finalizedRect = rect
+                        } else {
+                            dragStart = nil
+                            dragCurrent = nil
+                        }
+                    }
+            )
+        }
+        .onExitCommand(perform: onCancel)
+    }
+
+    private func clampPoint(_ p: CGPoint, in size: CGSize) -> CGPoint {
+        CGPoint(x: min(max(0, p.x), size.width), y: min(max(0, p.y), size.height))
     }
 }

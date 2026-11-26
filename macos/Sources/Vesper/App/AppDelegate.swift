@@ -303,6 +303,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         _ = app.browser.newTab(isPrivate: true, select: true)
     }
 
+    @objc func newBrowserTabGroup(_ sender: Any?) {
+        guard let c = app.keyController, c.isBrowserActive else { return }
+        let n = app.browser.tabGroups.count + 1
+        _ = app.browser.createTabGroup(name: "Group \(n)", initialTabId: app.browser.activeTab?.id)
+    }
+
+    @objc func toggleBrowserSplitView(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.toggleSplitView()
+    }
+
+    @objc func swapBrowserSplitPanes(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.swapSplitPanes()
+    }
+
+    @objc func toggleBrowserTabMute(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.toggleMute()
+    }
+
+    @objc func captureBrowserRegionScreenshot(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.beginRegionCapture()
+    }
+
+    @objc func openBrowserAutofill(_ sender: Any?) {
+        guard let c = app.keyController else { return }
+        if !c.isBrowserActive {
+            c.content.navigate(path: "/browser")
+        }
+        app.browser.triggerAutofillPopover()
+    }
+
+    @objc func openBrowserExtensions(_ sender: Any?) {
+        guard let c = app.keyController else { return }
+        if !c.isBrowserActive {
+            c.content.navigate(path: "/browser")
+        }
+        app.browser.triggerExtensionsPopover()
+    }
+
     @objc func toggleBrowserReaderMode(_ sender: Any?) {
         guard let c = app.keyController, c.isBrowserActive, let tab = app.browser.activeTab else { return }
         let isDark = (c.state.pageMode ?? c.state.theme?.mode) == .dark
@@ -430,9 +472,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
                 return true
             }
             return app.keyController?.content.canGoForward ?? false
-        case #selector(focusBrowserAddressBar(_:)), #selector(newPrivateBrowserTab(_:)):
+        case #selector(focusBrowserAddressBar(_:)), #selector(newPrivateBrowserTab(_:)),
+             #selector(openBrowserAutofill(_:)), #selector(openBrowserExtensions(_:)):
             return app.keyController?.kind == .vesper
-        case #selector(toggleBrowserReaderMode(_:)), #selector(toggleBrowserBookmark(_:)), #selector(openBrowserPageInSafari(_:)):
+        case #selector(newBrowserTabGroup(_:)), #selector(toggleBrowserSplitView(_:)):
+            return app.keyController?.isBrowserActive == true
+        case #selector(swapBrowserSplitPanes(_:)):
+            return app.keyController?.isBrowserActive == true && app.browser.isSplitViewActive
+        case #selector(toggleBrowserTabMute(_:)):
+            guard app.keyController?.isBrowserActive == true, let tab = app.browser.activeTab else { return false }
+            item.title = tab.isMuted ? "Unmute Tab" : "Mute Tab"
+            return tab.hasLoadedPage
+        case #selector(toggleBrowserReaderMode(_:)), #selector(toggleBrowserBookmark(_:)),
+             #selector(openBrowserPageInSafari(_:)), #selector(captureBrowserRegionScreenshot(_:)):
             return app.keyController?.isBrowserActive == true && app.browser.activeTab?.hasLoadedPage == true
         case #selector(nextBrowserTab(_:)), #selector(previousBrowserTab(_:)):
             return app.keyController?.isBrowserActive == true && app.browser.tabs.count > 1

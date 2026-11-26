@@ -8,8 +8,11 @@ import WebKit
 @Observable
 final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKUIDelegate {
     let id: UUID
+    let profileID: UUID
     let isPrivate: Bool
     var isPinned: Bool
+    var groupId: UUID?
+    var isMuted: Bool
     var urlString: String
     var title: String
     var isLoading: Bool = false
@@ -21,6 +24,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     var isAudioPlaying: Bool = false
     var loadError: String?
     var zoom: Double = 1.0
+    var favicon: NSImage?
+    var hasLoginForm: Bool = false
+    var pendingCredentialSave: BrowserPendingCredentialSave?
 
     /// Active live share for this tab (backed by `/api/v1/browser-extension/shares`).
     var activeShare: BrowserShare?
@@ -31,6 +37,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored private var observations: [NSKeyValueObservation] = []
     @ObservationIgnored private var popups: [BrowserPopupWindowController] = []
     @ObservationIgnored private var snapshotDebounceTask: Task<Void, Never>?
+    @ObservationIgnored private var faviconTask: Task<Void, Never>?
 
     @ObservationIgnored var onOpenNewTab: ((URL, Bool) -> Void)?
     @ObservationIgnored var onPageCommitted: ((BrowserTabSession) -> Void)?
@@ -39,6 +46,8 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored var onTabShouldClose: ((BrowserTabSession) -> Void)?
     @ObservationIgnored var onSnapshotDue: ((BrowserTabSession) -> Void)?
     @ObservationIgnored var onStopShare: ((BrowserTabSession, String) -> Void)?
+    @ObservationIgnored var onCredentialsSubmitted: ((BrowserTabSession, String, String, String) -> Void)?
+    @ObservationIgnored var onExtensionPropertiesChanged: ((BrowserTabSession, WKWebExtension.TabChangedProperties) -> Void)?
     @ObservationIgnored var neverShareProvider: (() -> BrowserNeverShareLists)?
     @ObservationIgnored var hostZoomProvider: ((String) -> Double?)?
 
@@ -52,7 +61,14 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     }
 
     var displayHost: String {
-        BrowserURLResolver.displayHost(for: urlString)
+        if urlString.lowercased().hasPrefix("webkit-extension://") {
+            return "Extension"
+        }
+        return BrowserURLResolver.displayHost(for: urlString)
+    }
+
+    private static func isLoadableTabURL(_ url: URL) -> Bool {
+        BrowserURLResolver.isWebURL(url) || url.scheme?.lowercased() == "webkit-extension"
     }
 
     var record: BrowserTabRecord {
@@ -62,19 +78,45 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             title: displayTitle,
             isPinned: isPinned,
             isPrivate: isPrivate,
-            zoom: zoom
+            zoom: zoom,
+            groupId: groupId,
+            isMuted: isMuted
         )
     }
 
-    init(record: BrowserTabRecord, contentRuleList: WKContentRuleList?) {
+    init(
+        record: BrowserTabRecord,
+        profileID: UUID = BrowserProfile.defaultProfileID,
+        profileDataStoreID: UUID = BrowserProfile.defaultDataStoreID,
+        contentRuleList: WKContentRuleList?,
+        webExtensionController: WKWebExtensionController? = nil
+    ) {
         self.id = record.id
+        self.profileID = profileID
         self.isPrivate = record.isPrivate
         self.isPinned = record.isPinned
+        self.groupId = record.groupId
+        self.isMuted = record.isMuted
         self.urlString = record.url
         self.title = record.title
         self.zoom = record.zoom
-        self.webView = BrowserWebViewFactory.makeWebView(isPrivate: record.isPrivate, contentRuleList: contentRuleList)
+        self.favicon = BrowserFaviconCache.shared.cachedIcon(for: record.url)
+
+        var weakSessionBox: WeakTabSessionBox?
+        let box = WeakTabSessionBox()
+        weakSessionBox = box
+        let proxy = BrowserScriptMessageProxy { message in
+            weakSessionBox?.session?.handleAutofillMessage(message.body)
+        }
+        self.webView = BrowserWebViewFactory.makeWebView(
+            isPrivate: record.isPrivate,
+            profileDataStoreID: profileDataStoreID,
+            contentRuleList: contentRuleList,
+            webExtensionController: webExtensionController,
+            autofillMessageHandler: proxy
+        )
         super.init()
+        box.session = self
 
         webView.navigationDelegate = self
         webView.uiDelegate = self
@@ -86,7 +128,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
                     guard let self else { return }
                     if let next = wv.url?.absoluteString, next != "about:blank" {
                         self.urlString = next
+                        self.favicon = BrowserFaviconCache.shared.cachedIcon(for: next)
                         self.handleURLChanged(next)
+                        self.onExtensionPropertiesChanged?(self, [.URL])
                     }
                 }
             },
@@ -96,11 +140,16 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
                     if let next = wv.title, !next.isEmpty {
                         self.title = next
                         self.onStateChanged?()
+                        self.onExtensionPropertiesChanged?(self, [.title])
                     }
                 }
             },
             webView.observe(\.isLoading, options: [.initial, .new]) { [weak self] wv, _ in
-                MainActor.assumeIsolated { self?.isLoading = wv.isLoading }
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.isLoading = wv.isLoading
+                    self.onExtensionPropertiesChanged?(self, [.loading])
+                }
             },
             webView.observe(\.estimatedProgress, options: [.initial, .new]) { [weak self] wv, _ in
                 MainActor.assumeIsolated { self?.estimatedProgress = wv.estimatedProgress }
@@ -116,7 +165,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             },
         ]
 
-        if let initialURL = URL(string: record.url), BrowserURLResolver.isWebURL(initialURL) {
+        if let initialURL = URL(string: record.url), Self.isLoadableTabURL(initialURL) {
             webView.load(URLRequest(url: initialURL))
         }
     }
@@ -126,7 +175,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     func load(_ url: URL) {
         loadError = nil
         isReaderMode = false
+        hasLoginForm = false
         urlString = url.absoluteString
+        favicon = BrowserFaviconCache.shared.cachedIcon(for: url.absoluteString)
         if let host = url.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom
@@ -140,7 +191,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         isReaderMode = false
         if webView.url != nil {
             if fromOrigin { webView.reloadFromOrigin() } else { webView.reload() }
-        } else if let url = URL(string: urlString), BrowserURLResolver.isWebURL(url) {
+        } else if let url = URL(string: urlString), Self.isLoadableTabURL(url) {
             webView.load(URLRequest(url: url))
         }
     }
@@ -168,6 +219,20 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         zoom = clamped
         webView.pageZoom = clamped
         onStateChanged?()
+        onExtensionPropertiesChanged?(self, [.zoomFactor])
+    }
+
+    func setMuted(_ muted: Bool) {
+        isMuted = muted
+        applyMuteToPage()
+        onStateChanged?()
+        onExtensionPropertiesChanged?(self, [.muted])
+    }
+
+    private func applyMuteToPage() {
+        guard hasLoadedPage else { return }
+        let js = BrowserPageScripts.muteMediaJS(muted: isMuted)
+        webView.evaluateJavaScript(js, completionHandler: nil)
     }
 
     func applyContentRuleList(_ ruleList: WKContentRuleList?) {
@@ -182,23 +247,66 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         let js = BrowserPageScripts.toggleReaderModeJS(darkMode: darkMode)
         if let active = (try? await webView.evaluateJavaScript(js)) as? Bool {
             isReaderMode = active
+            onExtensionPropertiesChanged?(self, [.readerMode])
         }
     }
 
     func refreshMediaState() {
         webView.requestMediaPlaybackState { [weak self] state in
             MainActor.assumeIsolated {
-                self?.isAudioPlaying = (state == .playing)
+                guard let self else { return }
+                let playing = (state == .playing)
+                if self.isAudioPlaying != playing {
+                    self.isAudioPlaying = playing
+                    self.onExtensionPropertiesChanged?(self, [.playingAudio])
+                }
             }
+        }
+    }
+
+    private func refreshFavicon() {
+        guard hasLoadedPage else { return }
+        let pageURL = urlString
+        faviconTask?.cancel()
+        faviconTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            let rawIcon = (try? await self.webView.evaluateJavaScript(BrowserPageScripts.faviconURLJS)) as? String
+            guard !Task.isCancelled, self.urlString == pageURL else { return }
+            if let img = await BrowserFaviconCache.shared.fetch(iconURLString: rawIcon, pageURLString: pageURL) {
+                guard !Task.isCancelled, self.urlString == pageURL else { return }
+                self.favicon = img
+            }
+        }
+    }
+
+    private func handleAutofillMessage(_ body: Any) {
+        guard let dict = body as? [String: Any], let type = dict["type"] as? String else { return }
+        switch type {
+        case "formState":
+            hasLoginForm = (dict["hasLoginForm"] as? Bool) ?? false
+        case "credentialsSubmitted":
+            let url = (dict["url"] as? String) ?? urlString
+            let username = (dict["username"] as? String) ?? ""
+            let password = (dict["password"] as? String) ?? ""
+            guard !username.isEmpty, !password.isEmpty else { return }
+            onCredentialsSubmitted?(self, url, username, password)
+        default:
+            break
         }
     }
 
     func teardown() {
         snapshotDebounceTask?.cancel()
         snapshotDebounceTask = nil
+        faviconTask?.cancel()
+        faviconTask = nil
         for popup in popups { popup.window?.close() }
         popups.removeAll()
         observations.removeAll()
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: BrowserAutofillScripts.messageHandlerName,
+            contentWorld: .defaultClient
+        )
         webView.contextCallbacks = nil
         webView.navigationDelegate = nil
         webView.uiDelegate = nil
@@ -237,10 +345,13 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         return BrowserPageGuard.redactCardNumbers(raw)
     }
 
-    /// Captures the visible viewport as a PNG using `WKWebView.takeSnapshot` (requires zero macOS
-    /// Screen Recording permissions).
-    func captureScreenshotPNG() async -> Data? {
+    /// Captures the visible viewport (or a cropped sub-rect) as a PNG using `WKWebView.takeSnapshot`
+    /// (requires zero macOS Screen Recording permissions).
+    func captureScreenshotPNG(rect: CGRect? = nil) async -> Data? {
         let config = WKSnapshotConfiguration()
+        if let rect, rect.width > 1, rect.height > 1 {
+            config.rect = rect
+        }
         guard let image = try? await webView.takeSnapshot(configuration: config) else { return nil }
         guard let tiff = image.tiffRepresentation,
               let rep = NSBitmapImageRep(data: tiff)
@@ -313,7 +424,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             NSWorkspace.shared.open(url)
             return .cancel
         }
-        if scheme == "about" || scheme == "blob" || scheme == "data" {
+        if scheme == "about" || scheme == "blob" || scheme == "data" || scheme == "webkit-extension" {
             return .allow
         }
         guard scheme == "http" || scheme == "https" else {
@@ -348,6 +459,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     func webView(_ webView: WKWebView, didCommit navigation: WKNavigation!) {
         loadError = nil
         isReaderMode = false
+        hasLoginForm = false
         if let host = webView.url?.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom
@@ -357,7 +469,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
 
     func webView(_ webView: WKWebView, didFinish navigation: WKNavigation!) {
         loadError = nil
+        if isMuted { applyMuteToPage() }
         refreshMediaState()
+        refreshFavicon()
         onPageFinished?(self)
         scheduleSnapshotUpdate()
     }
@@ -404,7 +518,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
                 return controller.webView
             }
         }
-        if let url = navigationAction.request.url, BrowserURLResolver.isWebURL(url) {
+        if let url = navigationAction.request.url, Self.isLoadableTabURL(url) {
             onOpenNewTab?(url, isPrivate)
         }
         return nil
@@ -490,4 +604,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         }
         return alert.runModal()
     }
+}
+
+@MainActor
+private final class WeakTabSessionBox {
+    weak var session: BrowserTabSession?
 }
