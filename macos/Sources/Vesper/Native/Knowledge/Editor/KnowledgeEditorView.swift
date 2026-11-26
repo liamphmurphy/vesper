@@ -82,6 +82,8 @@ struct KnowledgeEditorView: View {
     @State private var activeFindIndex: Int?
     @FocusState private var findFieldFocused: Bool
     @State private var findBridge = KnowledgeEditorFindBridge()
+    @State private var isFileDropTargeted = false
+    @State private var uploadingFileCount = 0
 
     init(
         page: KnowledgePage,
@@ -176,8 +178,22 @@ struct KnowledgeEditorView: View {
                     .padding(.bottom, 16)
                     .transition(.opacity)
                 }
+
+                if isFileDropTargeted {
+                    fileDropOverlay
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .dropDestination(for: URL.self) { urls, _ in
+                let fileURLs = urls.filter(\.isFileURL)
+                guard !fileURLs.isEmpty else { return false }
+                handleDroppedFiles(fileURLs, segmentIndex: nil, utf16Offset: nil)
+                return true
+            } isTargeted: { targeted in
+                isFileDropTargeted = targeted
+            }
         }
         .background(p.background)
         .task(id: page.id) {
@@ -375,21 +391,28 @@ struct KnowledgeEditorView: View {
     private var saveIndicator: some View {
         let p = theme.palette
         HStack(spacing: 6) {
-            switch saveStatus {
-            case .saved:
-                Circle().fill(theme.swiftUIColor("pill-done-fg", fallback: .green)).frame(width: 6, height: 6)
-                Text("Saved").vesperText(.small, theme).foregroundStyle(p.tertiaryText)
-            case .dirty:
-                Circle().fill(p.accent).frame(width: 6, height: 6)
-                Text("Unsaved changes").vesperText(.small, theme).foregroundStyle(p.secondaryText)
-            case .saving:
+            if uploadingFileCount > 0 {
                 ProgressView().controlSize(.mini)
-                Text("Saving\u{2026}").vesperText(.small, theme).foregroundStyle(p.secondaryText)
-            case .error(let msg):
-                Image(systemName: "exclamationmark.triangle.fill")
-                    .font(.system(size: 11))
-                    .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
-                Text(msg).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red)).lineLimit(1)
+                Text(uploadingFileCount == 1 ? "Attaching file\u{2026}" : "Attaching \(uploadingFileCount) files\u{2026}")
+                    .vesperText(.small, theme)
+                    .foregroundStyle(p.accent)
+            } else {
+                switch saveStatus {
+                case .saved:
+                    Circle().fill(theme.swiftUIColor("pill-done-fg", fallback: .green)).frame(width: 6, height: 6)
+                    Text("Saved").vesperText(.small, theme).foregroundStyle(p.tertiaryText)
+                case .dirty:
+                    Circle().fill(p.accent).frame(width: 6, height: 6)
+                    Text("Unsaved changes").vesperText(.small, theme).foregroundStyle(p.secondaryText)
+                case .saving:
+                    ProgressView().controlSize(.mini)
+                    Text("Saving\u{2026}").vesperText(.small, theme).foregroundStyle(p.secondaryText)
+                case .error(let msg):
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 11))
+                        .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+                    Text(msg).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red)).lineLimit(1)
+                }
             }
         }
     }
@@ -490,7 +513,13 @@ struct KnowledgeEditorView: View {
             onSelectionChange: { range, isFocused in handleProseSelection(range, isFocused: isFocused, at: index) },
             onOpenLink: { target in openWikiLink(target) },
             onCompletionKey: { action in handleCompletionKey(action) },
-            onEmbedLayoutChange: { embedLayoutVersion &+= 1 }
+            onEmbedLayoutChange: { embedLayoutVersion &+= 1 },
+            onDropFiles: { urls, offset in
+                handleDroppedFiles(urls, segmentIndex: index, utf16Offset: offset)
+            },
+            onFileDragActiveChange: { active in
+                isFileDropTargeted = active
+            }
         )
         .frame(maxWidth: .infinity, alignment: .leading)
     }
@@ -766,7 +795,16 @@ struct KnowledgeEditorView: View {
             }
         }
 
-        if let assets = try? await client.send(KnowledgeAPI.listAssets()) {
+        if let attachments = try? await client.send(KnowledgeAPI.listAttachments()) {
+            for att in attachments.attachments {
+                candidates.append(KnowledgeCompletionCandidate(
+                    kind: .embed,
+                    title: att.filename.isEmpty ? att.ref : att.filename,
+                    insertRef: att.ref,
+                    detail: att.path
+                ))
+            }
+        } else if let assets = try? await client.send(KnowledgeAPI.listAssets()) {
             for asset in assets.images {
                 candidates.append(KnowledgeCompletionCandidate(
                     kind: .embed,
@@ -777,6 +815,162 @@ struct KnowledgeEditorView: View {
             }
         }
         remoteCandidates = candidates
+    }
+
+    // MARK: - Finder File Drag & Drop
+
+    private var fileDropOverlay: some View {
+        let p = theme.palette
+        return ZStack {
+            p.background.opacity(0.75)
+            VStack(spacing: 8) {
+                Image(systemName: "paperclip.circle.fill")
+                    .font(.system(size: 34))
+                    .foregroundStyle(p.accent)
+                Text("Drop files to attach")
+                    .vesperText(.heading, theme)
+                    .foregroundStyle(p.text)
+                Text("Saved in attachments/ and displayed inline")
+                    .vesperText(.small, theme)
+                    .foregroundStyle(p.secondaryText)
+            }
+            .padding(.horizontal, 24)
+            .padding(.vertical, 18)
+            .background(p.surface, in: RoundedRectangle(cornerRadius: 12))
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(p.accent, style: StrokeStyle(lineWidth: 1.5, dash: [6, 4]))
+            )
+            .shadow(color: .black.opacity(0.16), radius: 14, y: 6)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func handleDroppedFiles(_ urls: [URL], segmentIndex: Int?, utf16Offset: Int?) {
+        guard let client = context.store.client else { return }
+        let maxBytes = 512 * 1024 * 1024
+        var validFiles: [URL] = []
+        var skippedReasons: [String] = []
+        var seen = Set<String>()
+
+        for url in urls where url.isFileURL {
+            let path = url.path
+            guard seen.insert(path).inserted else { continue }
+            var isDir: ObjCBool = false
+            guard FileManager.default.fileExists(atPath: path, isDirectory: &isDir) else { continue }
+            if isDir.boolValue {
+                skippedReasons.append("\(url.lastPathComponent) (folders can\u{2019}t be attached)")
+                continue
+            }
+            let size = ((try? FileManager.default.attributesOfItem(atPath: path))?[.size] as? NSNumber)?.intValue ?? 0
+            if size <= 0 {
+                skippedReasons.append("\(url.lastPathComponent) (empty file)")
+                continue
+            }
+            if size > maxBytes {
+                skippedReasons.append("\(url.lastPathComponent) (over 512 MB limit)")
+                continue
+            }
+            validFiles.append(url)
+        }
+
+        if !skippedReasons.isEmpty {
+            context.showToast(ToastItemModel(
+                id: "knowledge.drop.skipped",
+                title: "Skipped \(skippedReasons.count) item(s)",
+                description: skippedReasons.prefix(3).joined(separator: ", "),
+                tone: .error
+            ))
+        }
+
+        guard !validFiles.isEmpty else { return }
+        uploadingFileCount += validFiles.count
+
+        Task { @MainActor in
+            defer { uploadingFileCount = max(0, uploadingFileCount - validFiles.count) }
+            var uploadedRefs: [String] = []
+            var newEmbeds: [KnowledgeEmbed] = []
+            var failedNames: [String] = []
+
+            for fileURL in validFiles {
+                let filename = fileURL.lastPathComponent
+                do {
+                    let data = try await Task.detached(priority: .userInitiated) {
+                        try Data(contentsOf: fileURL)
+                    }.value
+                    let uploaded = try await client.send(KnowledgeAPI.uploadAsset(data: data, filename: filename))
+                    uploadedRefs.append(uploaded.ref)
+                    newEmbeds.append(uploaded.asKnowledgeEmbed())
+                } catch {
+                    failedNames.append(filename)
+                }
+            }
+
+            if !failedNames.isEmpty {
+                context.showToast(ToastItemModel(
+                    id: "knowledge.drop.failed",
+                    title: "Couldn\u{2019}t attach \(failedNames.count) file(s)",
+                    description: failedNames.prefix(3).joined(separator: ", "),
+                    tone: .error
+                ))
+            }
+
+            guard !uploadedRefs.isEmpty else { return }
+
+            for embed in newEmbeds where !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+                resolvedEmbeds.append(embed)
+            }
+
+            let block = KnowledgeShellLogic.markdownEmbedBlock(for: uploadedRefs)
+            insertDroppedEmbedBlock(block, preferredSegmentIndex: segmentIndex, preferredUTF16Offset: utf16Offset)
+            embedLayoutVersion &+= 1
+            noteDocumentEdited()
+            await saveNow()
+            context.store.invalidate(KnowledgeAPI.invalidation)
+            await loadCompletionCandidates()
+
+            context.showToast(ToastItemModel(
+                id: "knowledge.drop.ok",
+                title: uploadedRefs.count == 1
+                    ? "Attached to attachments/"
+                    : "Attached \(uploadedRefs.count) files to attachments/",
+                tone: .success
+            ))
+        }
+    }
+
+    private func insertDroppedEmbedBlock(_ block: String, preferredSegmentIndex: Int?, preferredUTF16Offset: Int?) {
+        let targetSeg = preferredSegmentIndex ?? min(activeSelectionSegment, max(0, document.segments.count - 1))
+        if let text = document.proseText(at: targetSeg) {
+            let ns = text as NSString
+            let offset: Int
+            if let preferredUTF16Offset {
+                offset = max(0, min(preferredUTF16Offset, ns.length))
+            } else if targetSeg == activeSelectionSegment {
+                offset = max(0, min(activeSelectionRange.location + activeSelectionRange.length, ns.length))
+            } else {
+                offset = ns.length
+            }
+            let prefix = (offset > 0 && ns.substring(with: NSRange(location: offset - 1, length: 1)) != "\n") ? "\n" : ""
+            let suffix = (offset < ns.length && ns.substring(with: NSRange(location: offset, length: 1)) != "\n") ? "\n" : "\n"
+            let inserted = "\(prefix)\(block)\(suffix)"
+            let caretAfter = offset + (inserted as NSString).length
+            let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: targetSeg, utf16Offset: caretAfter))
+            if document.replaceProse(in: targetSeg, range: NSRange(location: offset, length: 0), with: inserted, newSelection: newSel) {
+                activeSelectionSegment = targetSeg
+                activeSelectionRange = NSRange(location: caretAfter, length: 0)
+                selectionToken += 1
+                selectionRequest = KnowledgeTextSelectionRequest(
+                    token: selectionToken,
+                    segmentIndex: targetSeg,
+                    range: NSRange(location: caretAfter, length: 0)
+                )
+            }
+        } else {
+            let existing = document.serialize()
+            let sep = existing.isEmpty || existing.hasSuffix("\n") ? "" : "\n"
+            document = KnowledgeEditorDocument(markdown: "\(existing)\(sep)\(block)\n")
+        }
     }
 
     private func performUndo() {

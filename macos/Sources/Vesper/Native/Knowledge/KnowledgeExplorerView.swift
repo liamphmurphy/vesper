@@ -27,8 +27,10 @@ struct KnowledgeExplorerView: View {
     var body: some View {
         let p = theme.palette
         let allRows = controller.rows(in: context)
+        let allAttachments = controller.viewMode == .yours ? controller.attachments(in: context) : []
         let filteredRows = KnowledgeShellLogic.filterRows(allRows, matching: controller.treeFilter)
-        let tree = KnowledgeShellLogic.buildTree(from: filteredRows, prioritizeInbox: true)
+        let filteredAttachments = KnowledgeShellLogic.filterAttachments(allAttachments, matching: controller.treeFilter)
+        let tree = KnowledgeShellLogic.buildTree(from: filteredRows, attachments: filteredAttachments, prioritizeInbox: true)
         let isFiltering = !controller.treeFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
         let effectiveExpanded = isFiltering
             ? Set(KnowledgeShellLogic.folderPaths(in: tree))
@@ -37,12 +39,13 @@ struct KnowledgeExplorerView: View {
             tree,
             expanded: effectiveExpanded,
             showAll: controller.showAllFolders,
-            activePageId: controller.activeDestination.activePageId
+            activePageId: controller.activeDestination.activePageId,
+            activeAttachmentId: controller.activeDestination.activeAttachmentId
         )
         let selectableRowIds = flatRows.compactMap { row -> String? in
             switch row.kind {
             case .folder, .page: return row.id
-            case .showMore: return nil
+            case .attachment, .showMore: return nil
             }
         }
         let pinnedPages = controller.pinnedPages(from: allRows)
@@ -478,6 +481,8 @@ struct KnowledgeExplorerView: View {
                 selectableIds: selectableIds,
                 tree: tree
             )
+        case .attachment(let attachment):
+            attachmentRow(attachment, depth: row.depth)
         case .showMore(let folderPath, let hiddenCount):
             showMoreRow(folderPath: folderPath, hiddenCount: hiddenCount, depth: row.depth)
         }
@@ -494,6 +499,7 @@ struct KnowledgeExplorerView: View {
     ) -> some View {
         let p = theme.palette
         let isInbox = depth == 0 && folder.name == "Inbox"
+        let isAttachments = depth == 0 && folder.name == KnowledgeShellLogic.attachmentsFolderName
         let isSelected = controller.selection.selected.contains(rowId)
         let isDropTarget = targetedFolderDropPath == folder.path
         let isRenaming = controller.inlineRenameRowId == rowId
@@ -515,9 +521,9 @@ struct KnowledgeExplorerView: View {
             }
             .buttonStyle(.plain)
 
-            Image(systemName: isInbox ? "tray" : "folder")
+            Image(systemName: isInbox ? "tray" : (isAttachments ? "paperclip" : "folder"))
                 .font(.system(size: 12))
-                .foregroundStyle(isInbox ? p.accent : p.secondaryText)
+                .foregroundStyle((isInbox || isAttachments) ? p.accent : p.secondaryText)
                 .frame(width: 14)
 
             if isRenaming {
@@ -537,7 +543,7 @@ struct KnowledgeExplorerView: View {
 
             Spacer(minLength: 4)
 
-            if !isRenaming && (isInbox || folder.name == "Proposed") {
+            if !isRenaming && (isInbox || isAttachments || folder.name == "Proposed") {
                 Text("\(folder.count)")
                     .font(.system(size: theme.pointSize(.micro), weight: .semibold))
                     .foregroundStyle(p.accent)
@@ -570,6 +576,16 @@ struct KnowledgeExplorerView: View {
             guard let payload = items.first else { return false }
             return controller.handleDrop(payload, ontoFolder: folder.path, in: context)
         } isTargeted: { targeted in
+            targetedFolderDropPath = targeted ? folder.path : (targetedFolderDropPath == folder.path ? nil : targetedFolderDropPath)
+        }
+        .dropDestination(for: URL.self) { urls, _ in
+            guard isAttachments else { return false }
+            let fileURLs = urls.filter(\.isFileURL)
+            guard !fileURLs.isEmpty else { return false }
+            controller.uploadDroppedFilesToAttachments(fileURLs, in: context)
+            return true
+        } isTargeted: { targeted in
+            guard isAttachments else { return }
             targetedFolderDropPath = targeted ? folder.path : (targetedFolderDropPath == folder.path ? nil : targetedFolderDropPath)
         }
         .contextMenu {
@@ -656,6 +672,68 @@ struct KnowledgeExplorerView: View {
         }
         .contextMenu {
             pageContextMenu(page: page, rowId: rowId, selectableIds: selectableIds, allRows: allRows, tree: tree)
+        }
+    }
+
+    private func attachmentRow(_ attachment: KnowledgeAttachment, depth: Int) -> some View {
+        let p = theme.palette
+        let active = controller.activeDestination.activeAttachmentId == attachment.id
+        let symbol = KnowledgeAttachmentActions.sfSymbol(for: attachment.contentType, filename: attachment.filename)
+
+        return Button {
+            let newTab = context.currentEventModifiers.contains(.command)
+            controller.openAttachment(attachment, in: context, newTab: newTab)
+        } label: {
+            HStack(spacing: 5) {
+                Image(systemName: symbol)
+                    .font(.system(size: 11))
+                    .foregroundStyle(active ? p.accent : p.secondaryText)
+                    .frame(width: 14)
+
+                Text(attachment.filename)
+                    .font(.system(size: theme.pointSize(.small), weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? p.text : p.secondaryText)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+            }
+            .padding(.leading, CGFloat(18 + depth * 12))
+            .padding(.trailing, 6)
+            .frame(height: 22)
+            .background(active ? p.selected : .clear, in: RoundedRectangle(cornerRadius: 5))
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button("Open Fullscreen (Quick Look)") {
+                KnowledgeAttachmentActions.openFullscreen(
+                    url: attachment.url,
+                    title: attachment.filename,
+                    contentType: attachment.contentType,
+                    context: context
+                )
+            }
+            Button("Open in Another App") {
+                KnowledgeAttachmentActions.openInExternalApp(
+                    url: attachment.url,
+                    filename: attachment.filename,
+                    contentType: attachment.contentType,
+                    context: context
+                )
+            }
+            Divider()
+            Button("Copy Embed Link") {
+                context.copyToClipboard("![[\(attachment.ref)]]")
+                context.showToast(ToastItemModel(id: "knowledge.att.copy.\(attachment.id)", title: "Copied embed link", tone: .success))
+            }
+            Button("Save Copy\u{2026}") {
+                KnowledgeAttachmentActions.saveCopy(
+                    url: attachment.url,
+                    filename: attachment.filename,
+                    contentType: attachment.contentType,
+                    context: context
+                )
+            }
         }
     }
 

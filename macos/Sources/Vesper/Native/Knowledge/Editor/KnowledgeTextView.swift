@@ -46,6 +46,8 @@ struct KnowledgeTextView: NSViewRepresentable {
     let onOpenLink: (KnowledgeWikiTarget) -> Void
     let onCompletionKey: (KnowledgeTextKeyAction) -> Bool
     var onEmbedLayoutChange: () -> Void = {}
+    var onDropFiles: ([URL], Int) -> Void = { _, _ in }
+    var onFileDragActiveChange: (Bool) -> Void = { _ in }
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -65,6 +67,12 @@ struct KnowledgeTextView: NSViewRepresentable {
             guard let coordinator, let view else { return }
             coordinator.handleEmbedSizeChange(in: view)
         }
+        view.onDropFiles = { [weak coordinator = context.coordinator] urls, offset in
+            coordinator?.parent.onDropFiles(urls, offset)
+        }
+        view.onFileDragActiveChange = { [weak coordinator = context.coordinator] active in
+            coordinator?.parent.onFileDragActiveChange(active)
+        }
         view.string = text
         context.coordinator.applyStyling(to: view)
         return view
@@ -83,6 +91,12 @@ struct KnowledgeTextView: NSViewRepresentable {
         view.onEmbedSizeChange = { [weak coordinator, weak view] in
             guard let coordinator, let view else { return }
             coordinator.handleEmbedSizeChange(in: view)
+        }
+        view.onDropFiles = { [weak coordinator] urls, offset in
+            coordinator?.parent.onDropFiles(urls, offset)
+        }
+        view.onFileDragActiveChange = { [weak coordinator] active in
+            coordinator?.parent.onFileDragActiveChange(active)
         }
 
         coordinator.isUpdatingFromSwiftUI = true
@@ -535,6 +549,8 @@ final class LivePreviewNSTextView: NSTextView {
     var onCommandClickLink: ((KnowledgeWikiTarget) -> Void)?
     var onFocusChange: ((Bool) -> Void)?
     var onEmbedSizeChange: (() -> Void)?
+    var onDropFiles: (([URL], Int) -> Void)?
+    var onFileDragActiveChange: ((Bool) -> Void)?
     private(set) var isFocusedEditor = false
 
     private var embedHosts: [String: MountedEmbedHost] = [:]
@@ -575,6 +591,7 @@ final class LivePreviewNSTextView: NSTextView {
         isVerticallyResizable = false
         isHorizontallyResizable = false
         autoresizingMask = [.width]
+        registerForDraggedTypes([.fileURL])
     }
 
     @available(*, unavailable)
@@ -600,6 +617,59 @@ final class LivePreviewNSTextView: NSTextView {
 
     override func paste(_ sender: Any?) {
         pasteAsPlainText(sender)
+    }
+
+    // MARK: - Finder File Drag & Drop
+
+    private func draggedFileURLs(from sender: NSDraggingInfo) -> [URL] {
+        let options: [NSPasteboard.ReadingOptionKey: Any] = [.urlReadingFileURLsOnly: true]
+        guard let objs = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: options) as? [URL] else {
+            return []
+        }
+        return objs.filter(\.isFileURL)
+    }
+
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let urls = draggedFileURLs(from: sender)
+        if !urls.isEmpty {
+            onFileDragActiveChange?(true)
+            return .copy
+        }
+        return super.draggingEntered(sender)
+    }
+
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        let urls = draggedFileURLs(from: sender)
+        if !urls.isEmpty {
+            return .copy
+        }
+        return super.draggingUpdated(sender)
+    }
+
+    override func draggingExited(_ sender: NSDraggingInfo?) {
+        onFileDragActiveChange?(false)
+        super.draggingExited(sender)
+    }
+
+    override func prepareForDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        if !draggedFileURLs(from: sender).isEmpty {
+            return true
+        }
+        return super.prepareForDragOperation(sender)
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = draggedFileURLs(from: sender)
+        if !urls.isEmpty {
+            onFileDragActiveChange?(false)
+            let point = convert(sender.draggingLocation, from: nil)
+            let rawOffset = characterIndexForInsertion(at: point)
+            let maxLen = (string as NSString).length
+            let clampedOffset = rawOffset == NSNotFound ? maxLen : max(0, min(rawOffset, maxLen))
+            onDropFiles?(urls, clampedOffset)
+            return true
+        }
+        return super.performDragOperation(sender)
     }
 
     override func layout() {

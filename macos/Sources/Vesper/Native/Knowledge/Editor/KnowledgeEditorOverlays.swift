@@ -3,7 +3,7 @@ import VesperCore
 
 // MARK: - Inline Embed Preview Card
 
-/// Pure SwiftUI inline preview card for an embedded image, PDF, or linked note inside a prose segment.
+/// Pure SwiftUI inline preview card for an embedded image, video, audio, PDF, file, or linked note inside a prose segment.
 struct KnowledgeEmbedPreviewCard: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -17,67 +17,42 @@ struct KnowledgeEmbedPreviewCard: View {
         let label = (embed.title?.isEmpty == false ? embed.title : nil) ?? embed.ref
 
         if embed.isImageEmbed, let rawURL = embed.url, !rawURL.isEmpty {
-            Button {
-                context.showQuickLook([QuickLookItem(url: rawURL, title: label, contentType: embed.contentType)], index: 0)
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    AuthenticatedImageView(source: rawURL, maxPixel: 920) { img, naturalSize in
-                        let fitted = KnowledgeMarkdownSyntax.fittedInlineImageSize(
-                            naturalSize: naturalSize,
-                            maxWidth: maxImageWidth,
-                            maxHeight: maxImageHeight
-                        )
-                        img.resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: fitted.width, height: fitted.height)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } placeholder: {
-                        ProgressView().controlSize(.small).padding(16)
-                    } failure: {
-                        Label(label, systemImage: "photo")
-                            .vesperText(.small, theme)
-                            .foregroundStyle(p.secondaryText)
-                            .padding(10)
-                    }
-                    Text(label)
-                        .font(.system(size: theme.pointSize(.micro) + 1))
-                        .foregroundStyle(p.tertiaryText)
-                        .lineLimit(1)
-                        .frame(maxWidth: maxImageWidth, alignment: .leading)
-                }
-            }
-            .buttonStyle(.plain)
-        } else if embed.isPDFEmbed, let rawURL = embed.url {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.richtext")
-                    .font(.system(size: 16))
-                    .foregroundStyle(p.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(label)
-                        .font(.system(size: theme.pointSize(.small), weight: .medium))
-                        .foregroundStyle(p.text)
-                        .lineLimit(1)
-                    Text("PDF Attachment")
-                        .font(.system(size: theme.pointSize(.micro) + 1))
-                        .foregroundStyle(p.tertiaryText)
-                }
-                Spacer()
-                Button("Quick Look") {
-                    context.showQuickLook([QuickLookItem(url: rawURL, title: label, contentType: embed.contentType)], index: 0)
-                }
-                .buttonStyle(.vesper())
-                Button("Open PDF") {
-                    let encoded = APIQuery.encode([
-                        URLQueryItem(name: "src", value: rawURL),
-                        URLQueryItem(name: "title", value: label),
-                    ])
-                    context.navigate("/pdf?\(encoded)")
-                }
-                .buttonStyle(.vesper(.primary))
-            }
-            .padding(10)
-            .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+            KnowledgeInlineImageCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: embed.ref,
+                maxImageWidth: maxImageWidth,
+                maxImageHeight: maxImageHeight
+            )
+        } else if embed.isVideoEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlineVideoCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: embed.ref
+            )
+        } else if embed.isAudioEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlineAudioCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: embed.ref
+            )
+        } else if embed.isPDFEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlinePDFCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: embed.ref
+            )
+        } else if embed.isFileEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlineFileCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: embed.ref
+            )
         } else if let md = embed.markdown, !md.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Text(label)

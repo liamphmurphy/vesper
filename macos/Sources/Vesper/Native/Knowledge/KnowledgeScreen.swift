@@ -131,6 +131,7 @@ final class KnowledgeShellController {
     static let templatesRequest = KnowledgeAPI.getTemplates()
     static let slideStartersRequest = API.listSlideStarters()
     static let bootstrapRequest = API.getBootstrap()
+    static let attachmentsRequest = KnowledgeAPI.listAttachments()
 
     init() {
         let savedPins = UserDefaults.standard.stringArray(forKey: Self.pinnedDefaultsKey) ?? []
@@ -179,6 +180,55 @@ final class KnowledgeShellController {
             return allPagesCache
         }
         return entry.data?.rows ?? []
+    }
+
+    func attachments(in context: NativeScreenContext) -> [KnowledgeAttachment] {
+        context.store.entry(Self.attachmentsRequest).data?.attachments ?? []
+    }
+
+    func openAttachment(_ attachment: KnowledgeAttachment, in context: NativeScreenContext, newTab: Bool = false) {
+        let href = KnowledgeShellLogic.attachmentRoute(id: attachment.id)
+        if newTab {
+            context.openInNewTab(href)
+        } else {
+            context.navigate(href)
+        }
+    }
+
+    func uploadDroppedFilesToAttachments(_ urls: [URL], in context: NativeScreenContext) {
+        guard let client = context.store.client else { return }
+        let fileURLs = urls.filter { url in
+            guard url.isFileURL else { return false }
+            var isDir: ObjCBool = false
+            return FileManager.default.fileExists(atPath: url.path, isDirectory: &isDir) && !isDir.boolValue
+        }
+        guard !fileURLs.isEmpty else { return }
+        Task { @MainActor in
+            var uploadedCount = 0
+            for url in fileURLs {
+                let filename = url.lastPathComponent
+                do {
+                    let data = try await Task.detached(priority: .userInitiated) {
+                        try Data(contentsOf: url)
+                    }.value
+                    guard !data.isEmpty else { continue }
+                    _ = try await client.send(KnowledgeAPI.uploadAsset(data: data, filename: filename))
+                    uploadedCount += 1
+                } catch {
+                    showErrorToast(id: "knowledge.att.upload.\(filename)", title: "Couldn\u{2019}t upload \(filename)", error: error, in: context)
+                }
+            }
+            if uploadedCount > 0 {
+                reveal(folder: KnowledgeShellLogic.attachmentsFolderName)
+                context.store.invalidate(KnowledgeAPI.invalidation)
+                _ = await context.store.refetch(Self.attachmentsRequest)
+                context.showToast(ToastItemModel(
+                    id: "knowledge.att.upload.ok",
+                    title: uploadedCount == 1 ? "Added to attachments/" : "Added \(uploadedCount) files to attachments/",
+                    tone: .success
+                ))
+            }
+        }
     }
 
     func loadFullTreeIfNeeded(in context: NativeScreenContext) async {
@@ -264,6 +314,9 @@ final class KnowledgeShellController {
                 reveal(folder: KnowledgeShellLogic.parentOf(matchRow.path))
                 syncViewModeIfNeeded(pageId: id, audience: matchRow.audience)
             }
+        case .attachment:
+            reveal(folder: KnowledgeShellLogic.attachmentsFolderName)
+            syncedAudiencePageId = nil
         default:
             syncedAudiencePageId = nil
         }
@@ -748,6 +801,7 @@ final class KnowledgeShellController {
     func refreshAll(in context: NativeScreenContext) {
         Task {
             _ = await context.store.refetch(treeListRequest)
+            _ = await context.store.refetch(Self.attachmentsRequest)
             await loadFullTreeIfNeeded(in: context)
             if case .page(let id) = activeDestination {
                 _ = await context.store.refetch(KnowledgeAPI.getPage(id: id))
@@ -901,6 +955,17 @@ final class KnowledgeShellController {
                 toolbarItems: [
                     ShellToolbarItem(id: "kn.home", label: "Home", icon: "home", kind: .button),
                     ShellToolbarItem(id: "kn.connect", label: "Connect", icon: "link", kind: .button),
+                    ShellToolbarItem(id: "kn.search", label: "Search", icon: "search", kind: .button),
+                ],
+                inspector: inspector
+            )
+        case .attachment(let id):
+            let att = attachments(in: context).first { $0.id == id }
+            context.chrome = NativeChrome(
+                title: att?.filename ?? "Attachment",
+                subtitle: "attachments/",
+                toolbarItems: [
+                    ShellToolbarItem(id: "kn.home", label: "Home", icon: "home", kind: .button),
                     ShellToolbarItem(id: "kn.search", label: "Search", icon: "search", kind: .button),
                 ],
                 inspector: inspector
@@ -1093,6 +1158,9 @@ struct KnowledgeScreen: View {
             case .page(let pageId):
                 KnowledgePageView(controller: controller, pageId: pageId)
                     .id(pageId)
+            case .attachment(let attachmentId):
+                attachmentDestinationView(id: attachmentId)
+                    .id(attachmentId)
             case .legacyWiki(let wikiPath):
                 legacyResolutionView(path: wikiPath)
             }
@@ -1109,6 +1177,7 @@ struct KnowledgeScreen: View {
         }
         .task(id: controller.treeListRequest.key) {
             context.store.load(controller.treeListRequest)
+            context.store.load(KnowledgeShellController.attachmentsRequest)
             context.store.load(KnowledgeShellController.slideStartersRequest)
         }
         .task(id: "\(controller.viewMode.rawValue)|\(treeEntry.updatedAt?.timeIntervalSince1970 ?? 0)") {
@@ -1130,6 +1199,7 @@ struct KnowledgeScreen: View {
             controller.theme = theme
             controller.colorScheme = colorScheme
             context.store.observe(controller.treeListRequest)
+            context.store.observe(KnowledgeShellController.attachmentsRequest)
             context.sidebarView = AnyView(KnowledgeSidebarHost(context: context, controller: controller))
             context.inspectorView = { tabId in
                 if tabId == KnowledgeInspectorLogic.chatTabId {
@@ -1158,6 +1228,7 @@ struct KnowledgeScreen: View {
         }
         .onDisappear {
             context.store.stopObserving(controller.treeListRequest.key)
+            context.store.stopObserving(KnowledgeShellController.attachmentsRequest.key)
             context.sidebarView = nil
             context.inspectorView = nil
             context.onCommand = nil
@@ -1167,6 +1238,29 @@ struct KnowledgeScreen: View {
                 .environment(context)
                 .environment(\.vesperTheme, theme)
                 .environment(\.colorScheme, colorScheme)
+        }
+    }
+
+    @ViewBuilder
+    private func attachmentDestinationView(id: String) -> some View {
+        let entry = context.store.entry(KnowledgeShellController.attachmentsRequest)
+        if let attachment = entry.data?.attachments.first(where: { $0.id == id }) {
+            KnowledgeAttachmentDetailView(attachment: attachment)
+                .onAppear {
+                    controller.publishChrome(for: context)
+                }
+        } else if entry.data == nil && entry.error == nil {
+            VStack(spacing: 10) {
+                ProgressView().controlSize(.small)
+                Text("Loading attachment\u{2026}")
+                    .vesperText(.small, theme)
+                    .foregroundStyle(theme.palette.secondaryText)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            QueryErrorView(message: "This attachment isn\u{2019}t available.") {
+                controller.refreshAll(in: context)
+            }
         }
     }
 
