@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -555,5 +556,160 @@ func TestDockerGuardLabelsBuildsAndImports(t *testing.T) {
 	// Re-pulling it from the registry is fine.
 	if code, _ := c.do(http.MethodPost, "/images/create?fromImage=postgres&tag=17-alpine", nil); code >= 400 {
 		t.Errorf("re-pull of a registry image: %d", code)
+	}
+}
+
+func (c *guardClient) doRaw(method, path, rawBody string) (int, map[string]any) {
+	c.t.Helper()
+	req, err := http.NewRequest(method, c.srv.URL+"/v1.47"+path, strings.NewReader(rawBody))
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	res, err := http.DefaultClient.Do(req)
+	if err != nil {
+		c.t.Fatal(err)
+	}
+	defer res.Body.Close()
+	raw, _ := io.ReadAll(res.Body)
+	var out map[string]any
+	_ = json.Unmarshal(raw, &out)
+	return res.StatusCode, out
+}
+
+func TestDockerGuardBlocksCaseInsensitiveJSONSmuggling(t *testing.T) {
+	engine := newFakeEngine()
+	c, _, _ := sandboxGuard(t, engine)
+	_, mine := c.do(http.MethodPost, "/containers/create", map[string]any{"Image": "alpine"})
+	myID := mine["Id"].(string)
+	c.do(http.MethodPost, "/networks/create", map[string]any{"Name": "appnet"})
+	engine.containers["svc"] = map[string]any{"Image": "postgres"}
+
+	// Duplicate keys differing only in case must be rejected with 400.
+	for name, raw := range map[string]string{
+		"dup HostConfig/hostconfig": `{"Image":"alpine","HostConfig":{},"hostconfig":{"Privileged":true}}`,
+		"dup Labels/labels":         `{"Image":"alpine","Labels":{"a":"1"},"labels":{"b":"2"}}`,
+		"dup nested Privileged":     `{"Image":"alpine","HostConfig":{"Privileged":false,"privileged":true}}`,
+	} {
+		if code, out := c.doRaw(http.MethodPost, "/containers/create", raw); code != http.StatusBadRequest {
+			t.Errorf("%s: got %d %v, want 400", name, code, out)
+		}
+	}
+
+	// Single differently-cased keys must still be enforced (403), never smuggled past the guard.
+	for name, raw := range map[string]string{
+		"lowercase hostconfig privileged": `{"Image":"alpine","hostconfig":{"privileged":true}}`,
+		"lowercase hostconfig binds":      `{"Image":"alpine","hostconfig":{"binds":["/:/host"]}}`,
+		"lowercase networkingconfig":      `{"Image":"alpine","networkingconfig":{"endpointsconfig":{"lazyagents-svc-run-1":{}}}}`,
+		"lowercase mount volumeoptions":   `{"Image":"alpine","hostconfig":{"mounts":[{"type":"volume","target":"/h","volumeoptions":{"driverconfig":{"name":"local","options":{"type":"none","o":"bind","device":"/"}}}}]}}`,
+	} {
+		if code, out := c.doRaw(http.MethodPost, "/containers/create", raw); code != http.StatusForbidden {
+			t.Errorf("%s: got %d %v, want 403", name, code, out)
+		}
+	}
+
+	// Lowercase exec privileged, network connect container, and volume driveropts.
+	if code, out := c.doRaw(http.MethodPost, "/containers/"+myID+"/exec", `{"Cmd":["sh"],"privileged":true}`); code != http.StatusForbidden {
+		t.Errorf("lowercase exec privileged: got %d %v, want 403", code, out)
+	}
+	if code, out := c.doRaw(http.MethodPost, "/networks/appnet/connect", `{"container":"svc"}`); code != http.StatusNotFound {
+		t.Errorf("lowercase network connect to unowned container: got %d %v, want 404", code, out)
+	}
+	if code, out := c.doRaw(http.MethodPost, "/volumes/create", `{"Name":"v","driveropts":{"type":"none","o":"bind","device":"/"}}`); code != http.StatusForbidden {
+		t.Errorf("lowercase volume driveropts: got %d %v, want 403", code, out)
+	}
+
+	// Unknown top-level keys must never be copied into the forwarded request.
+	code, created := c.doRaw(http.MethodPost, "/containers/create", `{"Image":"alpine","UnknownTopLevel":{"Privileged":true}}`)
+	if code != http.StatusCreated {
+		t.Fatalf("create with benign unknown key: %d %v", code, created)
+	}
+	if _, leaked := engine.containers[created["Id"].(string)]["UnknownTopLevel"]; leaked {
+		t.Fatalf("unknown top-level key was forwarded to dockerd: %v", engine.containers[created["Id"].(string)])
+	}
+}
+
+func TestDockerGuardRejectsDuplicateQueryParamsAndUnsafeHostConfig(t *testing.T) {
+	engine := newFakeEngine()
+	c, _, _ := sandboxGuard(t, engine)
+
+	for _, p := range []string{
+		"/build?networkmode=bridge&networkmode=host",
+		"/build?version=1&version=2",
+		"/images/create?fromSrc=-&fromSrc=http://evil.example/a.tar",
+		"/containers/json?filters=%7B%7D&filters=%7B%7D",
+	} {
+		if code, out := c.do(http.MethodPost, p, nil); strings.HasPrefix(p, "/containers/json") {
+			if code, out = c.do(http.MethodGet, p, nil); code != http.StatusBadRequest {
+				t.Errorf("GET %s: got %d %v, want 400", p, code, out)
+			}
+		} else if code != http.StatusBadRequest {
+			t.Errorf("POST %s: got %d %v, want 400", p, code, out)
+		}
+	}
+
+	// Negative OomScoreAdj and non-allowlisted Sysctls must be refused.
+	for name, hc := range map[string]map[string]any{
+		"negative OomScoreAdj": {"OomScoreAdj": -500},
+		"huge OomScoreAdj":     {"OomScoreAdj": 2000},
+		"unsafe sysctl":        {"Sysctls": map[string]any{"kernel.core_pattern": "|/bin/sh"}},
+	} {
+		if code, out := c.do(http.MethodPost, "/containers/create", map[string]any{"Image": "alpine", "HostConfig": hc}); code != http.StatusForbidden {
+			t.Errorf("%s: got %d %v, want 403", name, code, out)
+		}
+	}
+
+	// Safe OomScoreAdj and allowlisted Sysctl succeed.
+	if code, out := c.do(http.MethodPost, "/containers/create", map[string]any{
+		"Image": "alpine",
+		"HostConfig": map[string]any{
+			"OomScoreAdj": 200,
+			"Sysctls":     map[string]any{"net.core.somaxconn": "1024"},
+		},
+	}); code != http.StatusCreated {
+		t.Fatalf("safe OomScoreAdj + Sysctl: got %d %v, want 201", code, out)
+	}
+}
+
+func TestDockerGuardPinsBindMountsViaFD(t *testing.T) {
+	if runtime.GOOS != "linux" {
+		t.Skip("openat2/fd bind pinning is Linux-only")
+	}
+	engine := newFakeEngine()
+	ws, err := filepath.EvalSymlinks(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	srcDir := filepath.Join(ws, "app")
+	if err := os.MkdirAll(srcDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	g := newDockerGuard("run-pin", engine)
+	g.binds = bindPolicy{workspace: ws, scratch: t.TempDir(), uid: os.Getuid()}
+	var pinnedCalls int
+	g.pinBindFD = func(fd int, isDir bool) (string, error) {
+		pinnedCalls++
+		if fd < 0 || !isDir {
+			return "", fmt.Errorf("unexpected fd=%d isDir=%v", fd, isDir)
+		}
+		return "/run/vesper-binds/run-pin/1", nil
+	}
+	srv := httptest.NewServer(g)
+	defer srv.Close()
+	c := &guardClient{t: t, srv: srv}
+
+	code, out := c.do(http.MethodPost, "/containers/create", map[string]any{
+		"Image":      "alpine",
+		"HostConfig": map[string]any{"Binds": []any{srcDir + ":/work:ro"}},
+	})
+	if code != http.StatusCreated {
+		t.Fatalf("create with pinned bind: %d %v", code, out)
+	}
+	if pinnedCalls != 1 {
+		t.Fatalf("pinBindFD calls = %d, want 1", pinnedCalls)
+	}
+	hc := asMap(engine.containers[out["Id"].(string)]["HostConfig"])
+	mounts := asList(hc["Mounts"])
+	if len(mounts) != 1 || asMap(mounts[0])["Source"] != "/run/vesper-binds/run-pin/1" {
+		t.Fatalf("expected pinned mount source, got %v", mounts)
 	}
 }
