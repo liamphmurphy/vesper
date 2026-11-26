@@ -44,6 +44,22 @@ struct KnowledgeEditorView: View {
         case error(String)
     }
 
+    private struct LinksRefreshKey: Equatable {
+        var pageId: String
+        var title: String
+        var aliases: JSONValue?
+        var networkUpdatedAt: Date?
+        var mentionsUpdatedAt: Date?
+    }
+
+    /// Non-observable box for hot-path caret tracking so arrow-key navigation and typing don't
+    /// trigger SwiftUI view invalidations for state that `body` never reads.
+    @MainActor
+    private final class LiveSelectionState {
+        var segmentIndex = 0
+        var range = NSRange(location: 0, length: 0)
+    }
+
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
     @Environment(\.colorScheme) private var colorScheme
@@ -64,15 +80,21 @@ struct KnowledgeEditorView: View {
     @State private var resolvedEmbeds: [KnowledgeEmbed]
     @State private var embedLayoutVersion = 0
     @State private var saveStatus: SaveStatus = .saved
+    @State private var hasUnsavedChanges = false
     @State private var autosaveTask: Task<Void, Never>?
+    @State private var headingsDebounceTask: Task<Void, Never>?
+
+    @State private var cachedHeadings: [KnowledgeOutlineHeading]
+    @State private var cachedBacklinks: [KnowledgeBacklinkItem] = []
+    @State private var cachedOutgoingLinks: (resolved: [KnowledgeBacklinkItem], unresolved: [String]) = ([], [])
+    @State private var cachedUnlinkedMentions: [KnowledgeUnlinkedMention] = []
 
     @State private var completionSession = KnowledgeCompletionSession()
     @State private var completionSegmentIndex: Int?
     @State private var remoteCandidates: [KnowledgeCompletionCandidate] = []
     @State private var selectionRequest: KnowledgeTextSelectionRequest?
     @State private var selectionToken = 0
-    @State private var activeSelectionSegment = 0
-    @State private var activeSelectionRange = NSRange(location: 0, length: 0)
+    @State private var liveSelection = LiveSelectionState()
     @State private var showLinkPopover = false
     @State private var linkURLDraft = "https://"
     @State private var requestedTableFocus: (segmentIndex: Int, coord: TableCellCoordinate)?
@@ -112,7 +134,9 @@ struct KnowledgeEditorView: View {
         self.onMoveToPersonal = onMoveToPersonal
         self.onSelectedEmbedChange = onSelectedEmbedChange
         let initial = page.bodyMd ?? ""
-        _document = State(initialValue: KnowledgeEditorDocument(markdown: initial))
+        let initialDoc = KnowledgeEditorDocument(markdown: initial)
+        _document = State(initialValue: initialDoc)
+        _cachedHeadings = State(initialValue: KnowledgeInspectorLogic.extractHeadings(from: initialDoc.segments))
         _lastSavedMarkdown = State(initialValue: initial)
         _currentVersionId = State(initialValue: page.versionId)
         _resolvedEmbeds = State(initialValue: page.embeds)
@@ -126,33 +150,6 @@ struct KnowledgeEditorView: View {
         KnowledgeAPI.listPages(includeAgent: page.audience == .agent, limit: 200)
     }
 
-    private var currentHeadings: [KnowledgeOutlineHeading] {
-        KnowledgeInspectorLogic.extractHeadings(from: document.segments)
-    }
-
-    private var currentBacklinks: [KnowledgeBacklinkItem] {
-        let network = context.store.entry(networkRequest).data ?? KnowledgeNetwork()
-        return KnowledgePanelsLogic.backlinks(for: page.id, in: network)
-    }
-
-    private var currentOutgoingLinks: (resolved: [KnowledgeBacklinkItem], unresolved: [String]) {
-        let network = context.store.entry(networkRequest).data ?? KnowledgeNetwork()
-        return KnowledgePanelsLogic.outgoingLinks(for: page.id, in: network)
-    }
-
-    private var currentUnlinkedMentions: [KnowledgeUnlinkedMention] {
-        let candidates = context.store.entry(mentionCandidatesRequest).data?.rows ?? []
-        return KnowledgePanelsLogic.findUnlinkedMentions(
-            of: page,
-            in: candidates,
-            linkedSourceIds: Set(currentBacklinks.map(\.id))
-        )
-    }
-
-    private var hasUnsavedChanges: Bool {
-        document.isDirty && document.serialize() != lastSavedMarkdown
-    }
-
     private var activeFindMatch: DocumentFindMatch? {
         guard let idx = activeFindIndex, idx >= 0, idx < findMatches.count else { return nil }
         return findMatches[idx]
@@ -160,6 +157,13 @@ struct KnowledgeEditorView: View {
 
     var body: some View {
         let p = theme.palette
+        let linksRefreshKey = LinksRefreshKey(
+            pageId: page.id,
+            title: page.title,
+            aliases: page.properties["aliases"],
+            networkUpdatedAt: context.store.entry(networkRequest).updatedAt,
+            mentionsUpdatedAt: context.store.entry(mentionCandidatesRequest).updatedAt
+        )
         VStack(spacing: 0) {
             editorToolbar
                 .zIndex(20)
@@ -236,11 +240,11 @@ struct KnowledgeEditorView: View {
                     KnowledgeInlineDrawerView(
                         page: page,
                         mode: $inlineDrawerMode,
-                        headings: currentHeadings,
-                        backlinks: currentBacklinks,
-                        outgoingResolved: currentOutgoingLinks.resolved,
-                        outgoingUnresolved: currentOutgoingLinks.unresolved,
-                        unlinkedMentions: currentUnlinkedMentions,
+                        headings: cachedHeadings,
+                        backlinks: cachedBacklinks,
+                        outgoingResolved: cachedOutgoingLinks.resolved,
+                        outgoingUnresolved: cachedOutgoingLinks.unresolved,
+                        unlinkedMentions: cachedUnlinkedMentions,
                         onJumpHeading: { heading in
                             localHeadingJumpToken += 1
                             localHeadingJumpRequest = KnowledgeHeadingJumpRequest(
@@ -260,6 +264,9 @@ struct KnowledgeEditorView: View {
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .background(p.background)
+        .onChange(of: linksRefreshKey, initial: true) { _, _ in
+            refreshDerivedLinksAndMentions()
+        }
         .task(id: page.id) {
             context.store.load(networkRequest)
             context.store.load(mentionCandidatesRequest)
@@ -276,12 +283,13 @@ struct KnowledgeEditorView: View {
                 let fresh = page.bodyMd ?? ""
                 document = KnowledgeEditorDocument(markdown: fresh)
                 lastSavedMarkdown = fresh
+                hasUnsavedChanges = false
                 saveStatus = .saved
-                emitHeadings()
+                emitHeadings(immediately: true)
             }
         }
         .onAppear {
-            emitHeadings()
+            emitHeadings(immediately: true)
             findBridge.onFind = { query, backwards, caseSensitive in
                 showFindBar = true
                 return runFind(query: query, backwards: backwards, caseSensitive: caseSensitive)
@@ -295,6 +303,7 @@ struct KnowledgeEditorView: View {
             onRegisterSave?(nil)
             onSelectedEmbedChange?(nil, [])
             autosaveTask?.cancel()
+            headingsDebounceTask?.cancel()
             if context.find.searcher === findBridge {
                 context.find.searcher = nil
             }
@@ -414,8 +423,8 @@ struct KnowledgeEditorView: View {
             .fixedSize()
             .knowledgeToolbarTooltip("Export or copy", alignment: .bottomTrailing)
 
-            let headingCount = currentHeadings.count
-            let linksBadgeCount = currentBacklinks.count + currentUnlinkedMentions.count
+            let headingCount = cachedHeadings.count
+            let linksBadgeCount = cachedBacklinks.count + cachedUnlinkedMentions.count
 
             Button {
                 withAnimation(.easeOut(duration: 0.16)) {
@@ -574,8 +583,8 @@ struct KnowledgeEditorView: View {
     private var pageHeader: some View {
         let p = theme.palette
         let matchedSpaces = linkedSpacesForPage
-        let backlinksCount = currentBacklinks.count
-        let mentionsCount = currentUnlinkedMentions.count
+        let backlinksCount = cachedBacklinks.count
+        let mentionsCount = cachedUnlinkedMentions.count
         return VStack(alignment: .leading, spacing: 4) {
             if (page.path != nil && !(page.path ?? "").isEmpty) || !matchedSpaces.isEmpty || backlinksCount > 0 || mentionsCount > 0 {
                 HStack(spacing: 8) {
@@ -673,6 +682,7 @@ struct KnowledgeEditorView: View {
     }
 
     private var deletableEmbedURLs: Set<String> {
+        guard !resolvedEmbeds.isEmpty else { return [] }
         let attachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
         return Set(attachments.filter(\.isOwner).map(\.url))
     }
@@ -807,20 +817,27 @@ struct KnowledgeEditorView: View {
     // MARK: - Editing, Completion, Undo/Redo, Find, Save & Links
 
     private func handleProseEdit(_ newText: String, selection: NSRange, at segmentIndex: Int) {
-        activeSelectionSegment = segmentIndex
-        activeSelectionRange = selection
+        liveSelection.segmentIndex = segmentIndex
+        liveSelection.range = selection
         let docSel = documentSelection(for: selection, in: segmentIndex)
-        if document.setProse(newText, in: segmentIndex, newSelection: docSel) { noteDocumentEdited() }
+        if document.setProse(newText, in: segmentIndex, newSelection: docSel) {
+            noteDocumentEdited(debounceHeadings: true)
+        }
         updateCompletion(text: newText, selection: selection, segmentIndex: segmentIndex)
     }
 
     private func handleProseSelection(_ selection: NSRange, isFocused: Bool, at segmentIndex: Int) {
-        activeSelectionSegment = segmentIndex
-        activeSelectionRange = selection
-        document.selection = documentSelection(for: selection, in: segmentIndex)
+        liveSelection.segmentIndex = segmentIndex
+        liveSelection.range = selection
+        let nextSel = documentSelection(for: selection, in: segmentIndex)
+        let wasCollapsed = document.selection?.isCollapsed ?? true
+        // Avoid mutating `@State document` (and re-evaluating `body`) on every collapsed caret move.
+        if !nextSel.isCollapsed || !wasCollapsed {
+            document.selection = nextSel
+        }
         if isFocused, let prose = document.proseText(at: segmentIndex) {
             updateCompletion(text: prose, selection: selection, segmentIndex: segmentIndex)
-        } else if completionSegmentIndex == segmentIndex {
+        } else if completionSegmentIndex == segmentIndex, completionSession.isOpen {
             completionSession.close()
         }
     }
@@ -828,15 +845,15 @@ struct KnowledgeEditorView: View {
     // MARK: - Formatting & Export Actions
 
     private func applyProseTransform(_ transform: (String, NSRange) -> KnowledgeMarkdownFormatting.EditResult) {
-        let idx = min(activeSelectionSegment, max(0, document.segments.count - 1))
+        let idx = min(liveSelection.segmentIndex, max(0, document.segments.count - 1))
         guard let text = document.proseText(at: idx) else { return }
-        let res = transform(text, activeSelectionRange)
+        let res = transform(text, liveSelection.range)
         let docSel = documentSelection(for: res.selection, in: idx)
         if document.setProse(res.text, in: idx, newSelection: docSel) {
             noteDocumentEdited()
         }
-        activeSelectionSegment = idx
-        activeSelectionRange = res.selection
+        liveSelection.segmentIndex = idx
+        liveSelection.range = res.selection
         selectionToken += 1
         selectionRequest = KnowledgeTextSelectionRequest(token: selectionToken, segmentIndex: idx, range: res.selection)
     }
@@ -854,7 +871,7 @@ struct KnowledgeEditorView: View {
     }
 
     private func insertBlock(_ block: String) {
-        let idx = min(activeSelectionSegment, max(0, document.segments.count - 1))
+        let idx = min(liveSelection.segmentIndex, max(0, document.segments.count - 1))
         guard document.proseText(at: idx) != nil else {
             document = KnowledgeEditorDocument(markdown: document.serialize() + block)
             noteDocumentEdited()
@@ -917,12 +934,28 @@ struct KnowledgeEditorView: View {
 
     private func updateCompletion(text: String, selection: NSRange, segmentIndex: Int) {
         guard selection.length == 0 else {
-            completionSession.close()
+            if completionSession.isOpen { completionSession.close() }
+            return
+        }
+        // Check current-line trigger syntax before building any completion candidate lists.
+        guard let trigger = KnowledgeCompletionLogic.matchTrigger(in: text, caretUTF16: selection.location) else {
+            if completionSession.isOpen || completionSession.dismissedAtOffset != nil {
+                completionSession.dismissedAtOffset = nil
+                completionSession.close()
+            }
             return
         }
         completionSegmentIndex = segmentIndex
-        let combined = remoteCandidates + liveAttachmentCandidates() + currentDocumentCandidates()
-        completionSession.update(text: text, caretUTF16: selection.location, allCandidates: combined, limit: 24)
+        let candidates: [KnowledgeCompletionCandidate]
+        switch trigger.kind {
+        case .page, .tag:
+            candidates = remoteCandidates
+        case .embed:
+            candidates = liveAttachmentCandidates()
+        case .heading, .blockID:
+            candidates = currentDocumentCandidates()
+        }
+        completionSession.update(trigger: trigger, allCandidates: candidates, limit: 24)
     }
 
     private func handleCompletionKey(_ action: KnowledgeTextKeyAction) -> Bool {
@@ -1026,11 +1059,18 @@ struct KnowledgeEditorView: View {
     }
 
     private func loadCompletionCandidates() async {
-        guard let client = context.store.client else { return }
+        let req = KnowledgeAPI.listPages(includeAgent: true, limit: 200)
+        let entry = context.store.load(req)
+        let table: KnowledgePageTable?
+        if let cached = entry.data {
+            table = cached
+        } else {
+            table = await context.store.refetch(req).data
+        }
         var candidates: [KnowledgeCompletionCandidate] = []
         var seenTags = Set<String>()
 
-        if let table = try? await client.send(KnowledgeAPI.listPages(includeAgent: true, limit: 200)) {
+        if let table {
             for row in table.rows {
                 let ref = row.path.isEmpty ? row.title : row.path
                 let title = row.title.isEmpty ? ref : row.title
@@ -1195,15 +1235,15 @@ struct KnowledgeEditorView: View {
                 await saveNow()
             }
         } else {
-            let targetSeg = segmentIndex ?? min(activeSelectionSegment, max(0, document.segments.count - 1))
+            let targetSeg = segmentIndex ?? min(liveSelection.segmentIndex, max(0, document.segments.count - 1))
             if let text = document.proseText(at: targetSeg) {
                 let ns = text as NSString
-                let offset = max(0, min(utf16Offset ?? (activeSelectionRange.location + activeSelectionRange.length), ns.length))
+                let offset = max(0, min(utf16Offset ?? (liveSelection.range.location + liveSelection.range.length), ns.length))
                 let caretAfter = offset + (markdown as NSString).length
                 let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: targetSeg, utf16Offset: caretAfter))
                 if document.replaceProse(in: targetSeg, range: NSRange(location: offset, length: 0), with: markdown, newSelection: newSel) {
-                    activeSelectionSegment = targetSeg
-                    activeSelectionRange = NSRange(location: caretAfter, length: 0)
+                    liveSelection.segmentIndex = targetSeg
+                    liveSelection.range = NSRange(location: caretAfter, length: 0)
                     selectionToken += 1
                     selectionRequest = KnowledgeTextSelectionRequest(
                         token: selectionToken,
@@ -1271,7 +1311,7 @@ struct KnowledgeEditorView: View {
         let currentToken = ns.substring(with: placement.tokenRange)
         let updatedToken = KnowledgeMarkdownSyntax.updatingEmbedWidth(in: currentToken, width: newWidth)
         guard updatedToken != currentToken else { return }
-        let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: segmentIndex, utf16Offset: activeSelectionRange.location))
+        let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: segmentIndex, utf16Offset: liveSelection.range.location))
         if document.replaceProse(in: segmentIndex, range: placement.tokenRange, with: updatedToken, newSelection: newSel) {
             embedLayoutVersion &+= 1
             noteDocumentEdited()
@@ -1309,8 +1349,8 @@ struct KnowledgeEditorView: View {
             return false
         }
         clearSelectedEmbed()
-        activeSelectionSegment = segmentIndex
-        activeSelectionRange = caret
+        liveSelection.segmentIndex = segmentIndex
+        liveSelection.range = caret
         selectionToken += 1
         selectionRequest = KnowledgeTextSelectionRequest(token: selectionToken, segmentIndex: segmentIndex, range: caret)
         embedLayoutVersion &+= 1
@@ -1602,7 +1642,7 @@ struct KnowledgeEditorView: View {
         preferredUTF16Offset: Int?,
         replacementRange: NSRange?
     ) {
-        let targetSeg = preferredSegmentIndex ?? min(activeSelectionSegment, max(0, document.segments.count - 1))
+        let targetSeg = preferredSegmentIndex ?? min(liveSelection.segmentIndex, max(0, document.segments.count - 1))
         if let text = document.proseText(at: targetSeg) {
             let ns = text as NSString
             let replaceRange: NSRange
@@ -1614,8 +1654,8 @@ struct KnowledgeEditorView: View {
                 let offset: Int
                 if let preferredUTF16Offset {
                     offset = max(0, min(preferredUTF16Offset, ns.length))
-                } else if targetSeg == activeSelectionSegment {
-                    offset = max(0, min(activeSelectionRange.location + activeSelectionRange.length, ns.length))
+                } else if targetSeg == liveSelection.segmentIndex {
+                    offset = max(0, min(liveSelection.range.location + liveSelection.range.length, ns.length))
                 } else {
                     offset = ns.length
                 }
@@ -1627,8 +1667,8 @@ struct KnowledgeEditorView: View {
             let caretAfter = offset + (inserted as NSString).length
             let newSel = DocumentSelection(collapsedAt: .prose(segmentIndex: targetSeg, utf16Offset: caretAfter))
             if document.replaceProse(in: targetSeg, range: replaceRange, with: inserted, newSelection: newSel) {
-                activeSelectionSegment = targetSeg
-                activeSelectionRange = NSRange(location: caretAfter, length: 0)
+                liveSelection.segmentIndex = targetSeg
+                liveSelection.range = NSRange(location: caretAfter, length: 0)
                 selectionToken += 1
                 selectionRequest = KnowledgeTextSelectionRequest(
                     token: selectionToken,
@@ -1647,6 +1687,7 @@ struct KnowledgeEditorView: View {
         guard document.undo() else { return }
         restoreCachedEmbedsForCurrentDocument()
         refreshFindAfterEdit()
+        emitHeadings(immediately: true)
         syncDirtyStateAfterHistoryChange()
     }
 
@@ -1654,11 +1695,14 @@ struct KnowledgeEditorView: View {
         guard document.redo() else { return }
         restoreCachedEmbedsForCurrentDocument()
         refreshFindAfterEdit()
+        emitHeadings(immediately: true)
         syncDirtyStateAfterHistoryChange()
     }
 
     private func syncDirtyStateAfterHistoryChange() {
-        if hasUnsavedChanges {
+        let dirty = document.serialize() != lastSavedMarkdown
+        hasUnsavedChanges = dirty
+        if dirty {
             saveStatus = .dirty
             scheduleAutosave()
         } else {
@@ -1725,18 +1769,54 @@ struct KnowledgeEditorView: View {
         return active.range
     }
 
-    private func emitHeadings() {
-        onHeadingsChange?(KnowledgeInspectorLogic.extractHeadings(from: document.segments))
+    private func refreshDerivedLinksAndMentions() {
+        let network = context.store.entry(networkRequest).data ?? KnowledgeNetwork()
+        let backlinks = KnowledgePanelsLogic.backlinks(for: page.id, in: network)
+        cachedBacklinks = backlinks
+        cachedOutgoingLinks = KnowledgePanelsLogic.outgoingLinks(for: page.id, in: network)
+        let candidates = context.store.entry(mentionCandidatesRequest).data?.rows ?? []
+        cachedUnlinkedMentions = KnowledgePanelsLogic.findUnlinkedMentions(
+            of: page,
+            in: candidates,
+            linkedSourceIds: Set(backlinks.map(\.id))
+        )
     }
 
-    private func noteDocumentEdited() {
+    private func emitHeadings(immediately: Bool) {
+        headingsDebounceTask?.cancel()
+        if immediately {
+            let next = KnowledgeInspectorLogic.extractHeadings(from: document.segments)
+            if next != cachedHeadings {
+                cachedHeadings = next
+            }
+            onHeadingsChange?(next)
+            return
+        }
+        headingsDebounceTask = Task { @MainActor in
+            try? await Task.sleep(for: .milliseconds(120))
+            guard !Task.isCancelled else { return }
+            let next = KnowledgeInspectorLogic.extractHeadings(from: document.segments)
+            if next != cachedHeadings {
+                cachedHeadings = next
+                onHeadingsChange?(next)
+            }
+        }
+    }
+
+    private func noteDocumentEdited(debounceHeadings: Bool = false) {
         refreshFindAfterEdit()
-        emitHeadings()
-        guard hasUnsavedChanges else {
+        emitHeadings(immediately: !debounceHeadings)
+        let dirty = document.serialize() != lastSavedMarkdown
+        if hasUnsavedChanges != dirty {
+            hasUnsavedChanges = dirty
+        }
+        guard dirty else {
             saveStatus = .saved
             return
         }
-        saveStatus = .dirty
+        if saveStatus != .dirty {
+            saveStatus = .dirty
+        }
         scheduleAutosave()
     }
 
@@ -1750,10 +1830,11 @@ struct KnowledgeEditorView: View {
     }
 
     private func saveNow() async {
-        guard document.isDirty else { return }
+        guard hasUnsavedChanges || document.isDirty else { return }
         autosaveTask?.cancel()
         let serialized = document.serialize()
         guard serialized != lastSavedMarkdown else {
+            hasUnsavedChanges = false
             saveStatus = .saved
             return
         }
@@ -1769,6 +1850,7 @@ struct KnowledgeEditorView: View {
             lastSavedMarkdown = serialized
             currentVersionId = updated.versionId
             resolvedEmbeds = updated.embeds
+            hasUnsavedChanges = false
             saveStatus = .saved
         } catch {
             saveStatus = .error((error as? APIError)?.userMessage ?? error.localizedDescription)
