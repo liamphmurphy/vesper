@@ -100,6 +100,151 @@ func (s *Service) SweepKnowledgeAssets(ctx context.Context) error {
 // is read into memory, unlike the person's streamed uploads.
 const PersonaAssetLimit = 25 << 20
 
+// AttachmentFolder is the top-level Obsidian-style folder where Knowledge
+// attachments are organized.
+const AttachmentFolder = "attachments"
+
+// AttachmentFolderPath returns the logical Knowledge path for an attachment
+// inside the top-level attachments folder.
+func AttachmentFolderPath(filename string) string {
+	base := path.Base(strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/"))
+	if base == "." || base == ".." || base == "/" || base == "" {
+		base = "attachment"
+	}
+	return AttachmentFolder + "/" + base
+}
+
+// SanitizeAttachmentFilename cleans a user-supplied attachment filename to a
+// safe single path segment, returning "" if nothing usable remains.
+func SanitizeAttachmentFilename(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.ContainsAny(trimmed, "/\\\x00\r\n") {
+		return ""
+	}
+	base := path.Base(trimmed)
+	if base == "." || base == ".." || base == "/" || base == "" {
+		return ""
+	}
+	return base
+}
+
+// AttachmentFilenameTarget extracts a candidate attachment filename from an
+// Obsidian-style embed target such as "diagram.png" or "attachments/diagram.png".
+// Returns "" when the target does not look like a file name (e.g. a note title
+// without an extension or a nested folder path outside attachments/).
+func AttachmentFilenameTarget(target string) string {
+	t := strings.TrimSpace(strings.ReplaceAll(target, "\\", "/"))
+	if t == "" {
+		return ""
+	}
+	lower := strings.ToLower(t)
+	if strings.HasPrefix(lower, AttachmentFolder+"/") {
+		t = t[len(AttachmentFolder)+1:]
+	}
+	if strings.Contains(t, "/") {
+		return ""
+	}
+	clean := SanitizeAttachmentFilename(t)
+	if clean == "" || path.Ext(clean) == "" {
+		return ""
+	}
+	return clean
+}
+
+// RenameKnowledgeAsset renames an attachment owned by user. Returns
+// apperr.ErrNotFound if the attachment does not exist or is not visible to user,
+// ErrAttachmentForbidden if visible via a shared page owned by someone else,
+// and apperr.Invalid if the filename is invalid.
+func (s *Service) RenameKnowledgeAsset(ctx context.Context, ws, user, id uuid.UUID, filename string) (store.KnowledgeAsset, error) {
+	clean := SanitizeAttachmentFilename(filename)
+	if clean == "" {
+		return store.KnowledgeAsset{}, apperr.Invalid("filename", "must be a valid file name without slashes")
+	}
+	q := store.New(s.Pool)
+	existing, err := q.GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: ws, Viewer: &user})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	if existing.OwnerUserID != user {
+		return store.KnowledgeAsset{}, ErrAttachmentForbidden
+	}
+	updated, err := q.RenameKnowledgeAsset(ctx, store.RenameKnowledgeAssetParams{
+		ID:          id,
+		WorkspaceID: ws,
+		OwnerUserID: user,
+		Filename:    clean,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	return updated, err
+}
+
+// DeleteKnowledgeAsset deletes an attachment owned by user and cleans up its
+// backing blob if no remaining knowledge_assets row references that blob key.
+func (s *Service) DeleteKnowledgeAsset(ctx context.Context, ws, user, id uuid.UUID) (store.KnowledgeAsset, error) {
+	q := store.New(s.Pool)
+	existing, err := q.GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: ws, Viewer: &user})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	if existing.OwnerUserID != user {
+		return store.KnowledgeAsset{}, ErrAttachmentForbidden
+	}
+
+	var deleted store.KnowledgeAsset
+	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		tq := store.New(tx)
+		if err := tq.LockKnowledgeBlob(ctx, existing.BlobKey); err != nil {
+			return err
+		}
+		var err error
+		deleted, err = tq.DeleteKnowledgeAsset(ctx, store.DeleteKnowledgeAssetParams{
+			ID:          id,
+			WorkspaceID: ws,
+			OwnerUserID: user,
+		})
+		if err != nil {
+			return err
+		}
+		return tq.QueueKnowledgeAssetDeletion(ctx, deleted.BlobKey)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+
+	// Best-effort immediate blob cleanup; any failure stays queued in
+	// knowledge_asset_deletions for SweepKnowledgeAssets.
+	if objects, bucket, err := s.vaultObjects(); err == nil {
+		_ = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+			tq := store.New(tx)
+			if err := tq.LockKnowledgeBlob(ctx, deleted.BlobKey); err != nil {
+				return err
+			}
+			used, err := tq.KnowledgeBlobInUse(ctx, deleted.BlobKey)
+			if err != nil {
+				return err
+			}
+			if !used {
+				if err := objects.Delete(ctx, bucket, deleted.BlobKey); err != nil {
+					return err
+				}
+			}
+			return tq.ClearKnowledgeAssetDeletion(ctx, deleted.BlobKey)
+		})
+	}
+	return deleted, nil
+}
+
 // DetectAssetContentType sniffs a Knowledge asset's MIME type from its leading
 // bytes, preserving SVG detection for .svg files and recognizing common
 // container formats that http.DetectContentType leaves as octet-stream.
@@ -108,9 +253,13 @@ func DetectAssetContentType(filename string, head []byte) string {
 		head = head[:512]
 	}
 	typ := http.DetectContentType(head)
-	if strings.EqualFold(path.Ext(filename), ".svg") && strings.Contains(string(head), "<svg") {
+	ext := strings.ToLower(path.Ext(filename))
+	if ext == ".svg" && strings.Contains(string(head), "<svg") {
 		// Sniffing reads an SVG as text; the viewer serves it as a download either way.
 		return "image/svg+xml"
+	}
+	if typ == "video/webm" && ext == ".mkv" {
+		return "video/x-matroska"
 	}
 	if typ != "application/octet-stream" {
 		return typ
@@ -119,14 +268,71 @@ func DetectAssetContentType(filename string, head []byte) string {
 		switch string(head[8:12]) {
 		case "avif", "avis":
 			return "image/avif"
+		case "heic", "heix", "hevc", "hevx":
+			return "image/heic"
+		case "mif1", "msf1":
+			return "image/heif"
 		case "qt  ":
 			return "video/quicktime"
 		case "M4A ", "M4B ":
 			return "audio/mp4"
+		case "M4V ", "mp41", "mp42", "isom", "iso2", "avc1":
+			return "video/mp4"
 		}
 	}
 	if len(head) >= 4 && string(head[:4]) == "fLaC" {
 		return "audio/flac"
+	}
+	if len(head) >= 4 && string(head[:4]) == "OggS" {
+		if ext == ".opus" {
+			return "audio/opus"
+		}
+		return "audio/ogg"
+	}
+	if len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WAVE" {
+		return "audio/wav"
+	}
+	if len(head) >= 12 && string(head[:4]) == "FORM" && (string(head[8:12]) == "AIFF" || string(head[8:12]) == "AIFC") {
+		return "audio/aiff"
+	}
+	if len(head) >= 4 && head[0] == 0x1a && head[1] == 0x45 && head[2] == 0xdf && head[3] == 0xa3 {
+		if ext == ".webm" {
+			return "video/webm"
+		}
+		return "video/x-matroska"
+	}
+	if (len(head) >= 3 && string(head[:3]) == "ID3") || (len(head) >= 2 && head[0] == 0xff && (head[1]&0xe0) == 0xe0) {
+		return "audio/mpeg"
+	}
+	switch ext {
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a", ".m4b":
+		return "audio/mp4"
+	case ".aac":
+		return "audio/aac"
+	case ".wav":
+		return "audio/wav"
+	case ".aif", ".aiff":
+		return "audio/aiff"
+	case ".flac":
+		return "audio/flac"
+	case ".ogg":
+		return "audio/ogg"
+	case ".opus":
+		return "audio/opus"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	case ".webm":
+		return "video/webm"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
 	}
 	return typ
 }
@@ -216,6 +422,8 @@ var (
 	ErrAssetTooLarge = errors.New("asset exceeds size limit")
 	// ErrAssetNoFile is returned when a Library item has no backing blob (such as a saved link).
 	ErrAssetNoFile = errors.New("library item has no file")
+	// ErrAttachmentForbidden is returned when a non-owner tries to rename or delete a shared attachment.
+	ErrAttachmentForbidden = errors.New("only the uploader can modify this attachment")
 )
 
 func readBoundedObject(ctx context.Context, objects VaultObjects, bucket, key string, maxBytes int64) ([]byte, error) {

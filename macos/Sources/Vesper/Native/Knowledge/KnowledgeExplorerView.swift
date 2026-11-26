@@ -27,9 +27,16 @@ struct KnowledgeExplorerView: View {
     var body: some View {
         let p = theme.palette
         let allRows = controller.rows(in: context)
+        let allAttachments = controller.viewMode == .yours ? controller.attachments(in: context) : []
         let filteredRows = KnowledgeShellLogic.filterRows(allRows, matching: controller.treeFilter)
-        let tree = KnowledgeShellLogic.buildTree(from: filteredRows, prioritizeInbox: true)
+        let filteredAttachments = KnowledgeShellLogic.filterAttachments(allAttachments, matching: controller.treeFilter)
         let isFiltering = !controller.treeFilter.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        let tree = KnowledgeShellLogic.buildTree(
+            from: filteredRows,
+            attachments: filteredAttachments,
+            prioritizeInbox: true,
+            includeEmptyAttachmentsFolder: controller.viewMode == .yours && !isFiltering
+        )
         let effectiveExpanded = isFiltering
             ? Set(KnowledgeShellLogic.folderPaths(in: tree))
             : controller.expandedFolders
@@ -37,12 +44,13 @@ struct KnowledgeExplorerView: View {
             tree,
             expanded: effectiveExpanded,
             showAll: controller.showAllFolders,
-            activePageId: controller.activeDestination.activePageId
+            activePageId: controller.activeDestination.activePageId,
+            activeAttachmentId: controller.activeDestination.activeAttachmentId
         )
         let selectableRowIds = flatRows.compactMap { row -> String? in
             switch row.kind {
             case .folder, .page: return row.id
-            case .showMore: return nil
+            case .attachment, .showMore: return nil
             }
         }
         let pinnedPages = controller.pinnedPages(from: allRows)
@@ -132,6 +140,9 @@ struct KnowledgeExplorerView: View {
                 .lineLimit(1)
             Spacer(minLength: 4)
 
+            headerIconButton(symbol: "command", help: "Quick Switcher (\u{2318}O / \u{2318}K)") {
+                controller.quickSwitcherOpen.toggle()
+            }
             headerIconButton(symbol: "magnifyingglass", help: "Search Knowledge") {
                 controller.openSearch(in: context)
             }
@@ -478,6 +489,8 @@ struct KnowledgeExplorerView: View {
                 selectableIds: selectableIds,
                 tree: tree
             )
+        case .attachment(let attachment):
+            attachmentRow(attachment, depth: row.depth)
         case .showMore(let folderPath, let hiddenCount):
             showMoreRow(folderPath: folderPath, hiddenCount: hiddenCount, depth: row.depth)
         }
@@ -494,12 +507,13 @@ struct KnowledgeExplorerView: View {
     ) -> some View {
         let p = theme.palette
         let isInbox = depth == 0 && folder.name == "Inbox"
+        let isAttachments = depth == 0 && folder.name == KnowledgeShellLogic.attachmentsFolderName
         let isSelected = controller.selection.selected.contains(rowId)
         let isDropTarget = targetedFolderDropPath == folder.path
         let isRenaming = controller.inlineRenameRowId == rowId
 
-        return HStack(spacing: 4) {
-            if controller.selectMode || controller.selection.selected.count > 1 {
+        let rowContent = HStack(spacing: 4) {
+            if !isAttachments && (controller.selectMode || controller.selection.selected.count > 1) {
                 Image(systemName: isSelected ? "checkmark.circle.fill" : "circle")
                     .font(.system(size: 11))
                     .foregroundStyle(isSelected ? p.accent : p.tertiaryText)
@@ -515,9 +529,9 @@ struct KnowledgeExplorerView: View {
             }
             .buttonStyle(.plain)
 
-            Image(systemName: isInbox ? "tray" : "folder")
+            Image(systemName: isInbox ? "tray" : (isAttachments ? "paperclip" : "folder"))
                 .font(.system(size: 12))
-                .foregroundStyle(isInbox ? p.accent : p.secondaryText)
+                .foregroundStyle((isInbox || isAttachments) ? p.accent : p.secondaryText)
                 .frame(width: 14)
 
             if isRenaming {
@@ -537,7 +551,11 @@ struct KnowledgeExplorerView: View {
 
             Spacer(minLength: 4)
 
-            if !isRenaming && (isInbox || folder.name == "Proposed") {
+            if isAttachments && isDropTarget {
+                Text("Drop to upload")
+                    .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                    .foregroundStyle(p.accent)
+            } else if !isRenaming && (isInbox || isAttachments || folder.name == "Proposed") {
                 Text("\(folder.count)")
                     .font(.system(size: theme.pointSize(.micro), weight: .semibold))
                     .foregroundStyle(p.accent)
@@ -561,19 +579,47 @@ struct KnowledgeExplorerView: View {
         )
         .contentShape(Rectangle())
         .onTapGesture {
-            handleRowTap(rowId: rowId, selectableIds: selectableIds) {
+            if isAttachments {
                 controller.toggleFolder(folder.path)
+            } else {
+                handleRowTap(rowId: rowId, selectableIds: selectableIds) {
+                    controller.toggleFolder(folder.path)
+                }
             }
         }
-        .draggable(KnowledgeDragItem.folder(folder).encodeDragPayload())
-        .dropDestination(for: String.self) { items, _ in
-            guard let payload = items.first else { return false }
-            return controller.handleDrop(payload, ontoFolder: folder.path, in: context)
-        } isTargeted: { targeted in
-            targetedFolderDropPath = targeted ? folder.path : (targetedFolderDropPath == folder.path ? nil : targetedFolderDropPath)
-        }
-        .contextMenu {
-            folderContextMenu(folder: folder, rowId: rowId, selectableIds: selectableIds, allRows: allRows)
+
+        return Group {
+            if isAttachments {
+                rowContent
+                    .dropDestination(for: URL.self) { urls, _ in
+                        let fileURLs = urls.filter(\.isFileURL)
+                        guard !fileURLs.isEmpty else { return false }
+                        controller.uploadDroppedFilesToAttachments(fileURLs, in: context)
+                        return true
+                    } isTargeted: { targeted in
+                        targetedFolderDropPath = targeted ? folder.path : (targetedFolderDropPath == folder.path ? nil : targetedFolderDropPath)
+                    }
+                    .contextMenu {
+                        Button("Upload Files\u{2026}") {
+                            controller.pickFilesToUploadToAttachments(in: context)
+                        }
+                        Button(isExpanded ? "Collapse" : "Expand") {
+                            controller.toggleFolder(folder.path)
+                        }
+                    }
+            } else {
+                rowContent
+                    .draggable(KnowledgeDragItem.folder(folder).encodeDragPayload())
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let payload = items.first else { return false }
+                        return controller.handleDrop(payload, ontoFolder: folder.path, in: context)
+                    } isTargeted: { targeted in
+                        targetedFolderDropPath = targeted ? folder.path : (targetedFolderDropPath == folder.path ? nil : targetedFolderDropPath)
+                    }
+                    .contextMenu {
+                        folderContextMenu(folder: folder, rowId: rowId, selectableIds: selectableIds, allRows: allRows)
+                    }
+            }
         }
     }
 
@@ -656,6 +702,121 @@ struct KnowledgeExplorerView: View {
         }
         .contextMenu {
             pageContextMenu(page: page, rowId: rowId, selectableIds: selectableIds, allRows: allRows, tree: tree)
+        }
+    }
+
+    private func attachmentRow(_ attachment: KnowledgeAttachment, depth: Int) -> some View {
+        let p = theme.palette
+        let rowId = "a:\(attachment.id)"
+        let active = controller.activeDestination.activeAttachmentId == attachment.id
+        let isRenaming = controller.inlineRenameRowId == rowId
+        let symbol = KnowledgeAttachmentActions.sfSymbol(for: attachment.contentType, filename: attachment.filename)
+
+        return HStack(spacing: 5) {
+            Image(systemName: symbol)
+                .font(.system(size: 11))
+                .foregroundStyle(active ? p.accent : p.secondaryText)
+                .frame(width: 14)
+
+            if isRenaming {
+                TextField("Filename", text: $controller.inlineRenameText)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: theme.pointSize(.small)))
+                    .focused($inlineRenameFocused)
+                    .onAppear { inlineRenameFocused = true }
+                    .onSubmit { controller.commitInlineRename(in: context) }
+                    .onExitCommand { controller.cancelInlineRename() }
+            } else {
+                Text(attachment.filename)
+                    .font(.system(size: theme.pointSize(.small), weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? p.text : p.secondaryText)
+                    .lineLimit(1)
+            }
+
+            Spacer(minLength: 4)
+
+            if !isRenaming {
+                if attachment.isOrphaned {
+                    Text("unused")
+                        .font(.system(size: max(8.5, theme.pointSize(.micro) - 1), weight: .medium))
+                        .foregroundStyle(p.tertiaryText)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 0.5)
+                        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: Capsule())
+                        .help("Orphaned \u{2014} not used in any doc")
+                } else {
+                    Text("\(attachment.usageCount)")
+                        .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                        .monospacedDigit()
+                        .foregroundStyle(p.tertiaryText)
+                        .help(attachment.usageSummary)
+                }
+            }
+        }
+        .padding(.leading, CGFloat(18 + depth * 12))
+        .padding(.trailing, 6)
+        .frame(height: 22)
+        .background(active ? p.selected : .clear, in: RoundedRectangle(cornerRadius: 5))
+        .contentShape(Rectangle())
+        .onTapGesture {
+            guard !isRenaming else { return }
+            let newTab = context.currentEventModifiers.contains(.command)
+            controller.openAttachment(attachment, in: context, newTab: newTab)
+        }
+        .draggable(KnowledgeDragItem.attachment(attachment).encodeDragPayload())
+        .dropDestination(for: URL.self) { urls, _ in
+            let fileURLs = urls.filter(\.isFileURL)
+            guard !fileURLs.isEmpty else { return false }
+            controller.uploadDroppedFilesToAttachments(fileURLs, in: context)
+            return true
+        }
+        .contextMenu {
+            Text(attachment.usageSummary)
+            Divider()
+            Button("Quick Look (Space)") {
+                controller.previewAttachmentInQuickLook(attachment, in: context)
+            }
+            Button("Open in Another App") {
+                KnowledgeAttachmentActions.openInExternalApp(
+                    url: attachment.url,
+                    filename: attachment.filename,
+                    contentType: attachment.contentType,
+                    context: context
+                )
+            }
+            Divider()
+            Button("Copy Embed Link") {
+                context.copyToClipboard("![[\(attachment.ref)]]")
+                context.showToast(ToastItemModel(id: "knowledge.att.copy.\(attachment.id)", title: "Copied embed link", tone: .success))
+            }
+            Button("Copy File") {
+                KnowledgeAttachmentActions.copyFile(
+                    url: attachment.url,
+                    filename: attachment.filename,
+                    contentType: attachment.contentType,
+                    context: context
+                )
+            }
+            Button("Download\u{2026}") {
+                KnowledgeAttachmentActions.saveCopy(
+                    url: attachment.url,
+                    filename: attachment.filename,
+                    contentType: attachment.contentType,
+                    context: context
+                )
+            }
+            if attachment.isOwner {
+                Divider()
+                Button("Rename") {
+                    controller.startInlineRename(rowId: rowId, initial: attachment.filename)
+                }
+                Button("Rename in Sheet\u{2026}") {
+                    controller.sheet = .renameAttachment(attachment)
+                }
+                Button("Delete\u{2026}", role: .destructive) {
+                    controller.sheet = .delete(target: .attachment(attachment))
+                }
+            }
         }
     }
 

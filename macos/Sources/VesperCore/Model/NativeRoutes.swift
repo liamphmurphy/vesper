@@ -135,6 +135,7 @@ public struct NativeRouteRegistry: Sendable {
         NativeRoute("/knowledge", .knowledge),
         NativeRoute("/knowledge/graph", .knowledgeGraph),
         NativeRoute("/knowledge/connect", .knowledge),
+        NativeRoute("/knowledge/attachments/:id", .knowledge),
         NativeRoute("/knowledge/:id", .knowledgePage),
         NativeRoute("/knowledge/:id/*", .knowledgePage),
         NativeRoute("/wiki", .knowledge),

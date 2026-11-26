@@ -111,3 +111,47 @@ func TestEmbedsResolveDesignFramesAndLibraryItems(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbedsResolveObsidianFilenameWithWidthAndVisibility(t *testing.T) {
+	e := setup(t)
+	person := pageview.Person(e.ctx, e.me.ID)
+	asset, err := e.q.PutKnowledgeAsset(person, store.PutKnowledgeAssetParams{
+		WorkspaceID: e.ws,
+		OwnerUserID: e.me.ID,
+		ContentHash: "obsidian-img-hash",
+		BlobKey:     "knowledge-assets/test/img.png",
+		Filename:    "map.png",
+		ContentType: "image/png",
+		SizeBytes:   128,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	body := "![[map.png|400]]\n\n![[attachments/map.png|320x200]]\n\n![[missing.png|400]]\n"
+	got, err := wiki.ResolveEmbeds(person, e.q, e.ws, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byRef := embedsByRef(t, got)
+	for _, ref := range []string{"![[map.png|400]]", "![[attachments/map.png|320x200]]"} {
+		emb := byRef[ref]
+		if !emb.Available || emb.Kind != "file" || emb.Title != "map.png" || !strings.Contains(emb.URL, asset.ID.String()) {
+			t.Errorf("%s resolved to %+v, want map.png asset", ref, emb)
+		}
+	}
+	if missing := byRef["![[missing.png|400]]"]; missing.Available {
+		t.Errorf("missing.png unexpectedly resolved: %+v", missing)
+	}
+
+	// A run with no person viewer cannot resolve private unreferenced attachments by filename.
+	run, err := wiki.ResolveEmbeds(pageview.Run(e.ctx), e.q, e.ws, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, emb := range run {
+		if emb.Available {
+			t.Errorf("run resolved private attachment %+v", emb)
+		}
+	}
+}

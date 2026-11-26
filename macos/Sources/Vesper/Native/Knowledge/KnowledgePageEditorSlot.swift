@@ -19,6 +19,7 @@ struct KnowledgePageEditorSlot: View {
     var onHeadingsChange: (([KnowledgeOutlineHeading]) -> Void)?
     var onRegisterSave: KnowledgeEditorView.RegisterSave?
     var onMoveToPersonal: (() -> Void)?
+    var onSelectedEmbedChange: ((KnowledgeEmbed?, [KnowledgeEmbed]) -> Void)?
 
     @State private var pdfModel = PDFViewerModel()
 
@@ -76,7 +77,8 @@ struct KnowledgePageEditorSlot: View {
                 headingJumpRequest: headingJumpRequest,
                 onHeadingsChange: onHeadingsChange,
                 onRegisterSave: onRegisterSave,
-                onMoveToPersonal: onMoveToPersonal
+                onMoveToPersonal: onMoveToPersonal,
+                onSelectedEmbedChange: onSelectedEmbedChange
             )
             .id(page.id)
             .frame(maxWidth: .infinity, maxHeight: .infinity)

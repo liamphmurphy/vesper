@@ -3,81 +3,76 @@ import VesperCore
 
 // MARK: - Inline Embed Preview Card
 
-/// Pure SwiftUI inline preview card for an embedded image, PDF, or linked note inside a prose segment.
+/// Pure SwiftUI inline preview card for an embedded image, video, audio, PDF, file, or linked note inside a prose segment.
 struct KnowledgeEmbedPreviewCard: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
 
     let embed: KnowledgeEmbed
+    var target: KnowledgeWikiTarget? = nil
     var maxImageWidth: CGFloat = 460
     var maxImageHeight: CGFloat = 320
+    var containerMaxWidth: CGFloat? = nil
+    var isSelected: Bool = false
+    var onSelect: (() -> Void)? = nil
+    var onResizeWidth: ((Int?) -> Void)? = nil
 
     var body: some View {
         let p = theme.palette
-        let label = (embed.title?.isEmpty == false ? embed.title : nil) ?? embed.ref
+        let label = target?.displayLabel(resolvedTitle: embed.title)
+            ?? (embed.title?.isEmpty == false ? embed.title : nil)
+            ?? embed.ref
 
         if embed.isImageEmbed, let rawURL = embed.url, !rawURL.isEmpty {
-            Button {
-                context.showQuickLook([QuickLookItem(url: rawURL, title: label, contentType: embed.contentType)], index: 0)
-            } label: {
-                VStack(alignment: .leading, spacing: 4) {
-                    AuthenticatedImageView(source: rawURL, maxPixel: 920) { img, naturalSize in
-                        let fitted = KnowledgeMarkdownSyntax.fittedInlineImageSize(
-                            naturalSize: naturalSize,
-                            maxWidth: maxImageWidth,
-                            maxHeight: maxImageHeight
-                        )
-                        img.resizable()
-                            .aspectRatio(contentMode: .fit)
-                            .frame(width: fitted.width, height: fitted.height)
-                            .clipShape(RoundedRectangle(cornerRadius: 8))
-                    } placeholder: {
-                        ProgressView().controlSize(.small).padding(16)
-                    } failure: {
-                        Label(label, systemImage: "photo")
-                            .vesperText(.small, theme)
-                            .foregroundStyle(p.secondaryText)
-                            .padding(10)
-                    }
-                    Text(label)
-                        .font(.system(size: theme.pointSize(.micro) + 1))
-                        .foregroundStyle(p.tertiaryText)
-                        .lineLimit(1)
-                        .frame(maxWidth: maxImageWidth, alignment: .leading)
-                }
-            }
-            .buttonStyle(.plain)
-        } else if embed.isPDFEmbed, let rawURL = embed.url {
-            HStack(spacing: 10) {
-                Image(systemName: "doc.richtext")
-                    .font(.system(size: 16))
-                    .foregroundStyle(p.accent)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(label)
-                        .font(.system(size: theme.pointSize(.small), weight: .medium))
-                        .foregroundStyle(p.text)
-                        .lineLimit(1)
-                    Text("PDF Attachment")
-                        .font(.system(size: theme.pointSize(.micro) + 1))
-                        .foregroundStyle(p.tertiaryText)
-                }
-                Spacer()
-                Button("Quick Look") {
-                    context.showQuickLook([QuickLookItem(url: rawURL, title: label, contentType: embed.contentType)], index: 0)
-                }
-                .buttonStyle(.vesper())
-                Button("Open PDF") {
-                    let encoded = APIQuery.encode([
-                        URLQueryItem(name: "src", value: rawURL),
-                        URLQueryItem(name: "title", value: label),
-                    ])
-                    context.navigate("/pdf?\(encoded)")
-                }
-                .buttonStyle(.vesper(.primary))
-            }
-            .padding(10)
-            .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+            KnowledgeInlineImageCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: target?.raw ?? embed.ref,
+                maxImageWidth: maxImageWidth,
+                maxImageHeight: maxImageHeight,
+                containerMaxWidth: containerMaxWidth,
+                explicitDimensions: target?.embedDimensions,
+                isSelected: isSelected,
+                onSelect: onSelect,
+                onResizeWidth: onResizeWidth
+            )
+        } else if embed.isVideoEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlineVideoCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: target?.raw ?? embed.ref,
+                isSelected: isSelected,
+                onSelect: onSelect
+            )
+        } else if embed.isAudioEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlineAudioCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: target?.raw ?? embed.ref,
+                isSelected: isSelected,
+                onSelect: onSelect
+            )
+        } else if embed.isPDFEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlinePDFCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: target?.raw ?? embed.ref,
+                isSelected: isSelected,
+                onSelect: onSelect
+            )
+        } else if embed.isFileEmbed, let rawURL = embed.url, !rawURL.isEmpty {
+            KnowledgeInlineFileCard(
+                url: rawURL,
+                label: label,
+                contentType: embed.contentType,
+                embedRef: target?.raw ?? embed.ref,
+                isSelected: isSelected,
+                onSelect: onSelect
+            )
         } else if let md = embed.markdown, !md.isEmpty {
             VStack(alignment: .leading, spacing: 4) {
                 Text(label)
@@ -91,17 +86,20 @@ struct KnowledgeEmbedPreviewCard: View {
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
             .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 8))
-            .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
+            .overlay(RoundedRectangle(cornerRadius: 8).stroke(isSelected ? p.accent : p.border))
         }
     }
 }
 
 /// Hosts one paragraph's inline embed cards inside `LivePreviewNSTextView` and reports intrinsic size updates
-/// (for example when an authenticated image finishes loading) so TextKit 2 paragraph spacing updates in place.
+/// (for example when an authenticated image finishes loading or is resized) so TextKit 2 paragraph spacing updates in place.
 struct KnowledgeInlineEmbedGroupView: View {
     let placements: [KnowledgeInlineEmbedPlacement]
     let maxWidth: CGFloat
     let fillsWidth: Bool
+    var selectedEmbedID: String? = nil
+    var onSelectEmbed: ((KnowledgeInlineEmbedPlacement) -> Void)? = nil
+    var onResizeImage: ((KnowledgeInlineEmbedPlacement, Int?) -> Void)? = nil
     let onSizeChange: (CGSize) -> Void
 
     var body: some View {
@@ -109,7 +107,12 @@ struct KnowledgeInlineEmbedGroupView: View {
             ForEach(placements) { placement in
                 KnowledgeEmbedPreviewCard(
                     embed: placement.embed,
-                    maxImageWidth: min(maxWidth, 460)
+                    target: placement.target,
+                    maxImageWidth: min(maxWidth, 460),
+                    containerMaxWidth: maxWidth,
+                    isSelected: selectedEmbedID == placement.id,
+                    onSelect: onSelectEmbed.map { cb in { cb(placement) } },
+                    onResizeWidth: onResizeImage.map { cb in { width in cb(placement, width) } }
                 )
             }
         }
@@ -150,7 +153,7 @@ struct KnowledgeCompletionPopoverView: View {
                                 onSelect(idx)
                             } label: {
                                 HStack(spacing: 8) {
-                                    Image(systemName: icon(for: item.kind))
+                                    Image(systemName: item.symbolName ?? icon(for: item.kind))
                                         .font(.system(size: 11))
                                         .foregroundStyle(p.accent)
                                         .frame(width: 14)
@@ -261,5 +264,309 @@ struct KnowledgeEditorFindBar: View {
         .padding(.horizontal, 14)
         .frame(height: 34)
         .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+    }
+}
+
+// MARK: - Inline Heading Outline (TOC) & Backlinks Drawer
+
+enum KnowledgeInlineDrawerMode: Equatable, Sendable {
+    case outline
+    case backlinks
+}
+
+/// Sleek inline drawer docked beside the document prose for quick jump-to-heading TOC
+/// and one-click Backlinks / Unlinked Mentions navigation.
+struct KnowledgeInlineDrawerView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let page: KnowledgePage
+    @Binding var mode: KnowledgeInlineDrawerMode?
+    let headings: [KnowledgeOutlineHeading]
+    let backlinks: [KnowledgeBacklinkItem]
+    let outgoingResolved: [KnowledgeBacklinkItem]
+    let outgoingUnresolved: [String]
+    let unlinkedMentions: [KnowledgeUnlinkedMention]
+    let onJumpHeading: (KnowledgeOutlineHeading) -> Void
+    let onLinkMention: (KnowledgeUnlinkedMention) -> Void
+    let linkingMentionId: String?
+
+    @State private var headingFilter = ""
+
+    var body: some View {
+        let p = theme.palette
+        VStack(spacing: 0) {
+            HStack(spacing: 4) {
+                drawerTabButton(
+                    title: "Outline",
+                    symbol: "list.bullet.indent",
+                    count: headings.count,
+                    active: mode == .outline
+                ) {
+                    mode = .outline
+                }
+                drawerTabButton(
+                    title: "Links",
+                    symbol: "arrow.triangle.branch",
+                    count: backlinks.count + unlinkedMentions.count,
+                    active: mode == .backlinks
+                ) {
+                    mode = .backlinks
+                }
+                Spacer(minLength: 4)
+                Button {
+                    mode = nil
+                } label: {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(p.tertiaryText)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Close drawer")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(p.surface)
+
+            Divider().overlay(p.border)
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 10) {
+                    switch mode {
+                    case .outline:
+                        outlineBody
+                    case .backlinks:
+                        backlinksBody
+                    case nil:
+                        EmptyView()
+                    }
+                }
+                .padding(10)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+        .frame(width: 248)
+        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+    }
+
+    private func drawerTabButton(
+        title: String,
+        symbol: String,
+        count: Int,
+        active: Bool,
+        action: @escaping () -> Void
+    ) -> some View {
+        let p = theme.palette
+        return Button(action: action) {
+            HStack(spacing: 4) {
+                Image(systemName: symbol)
+                    .font(.system(size: 10.5))
+                Text(title)
+                    .font(.system(size: theme.pointSize(.micro) + 1, weight: active ? .semibold : .medium))
+                if count > 0 {
+                    Text("\(count)")
+                        .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                        .foregroundStyle(active ? p.accent : p.tertiaryText)
+                }
+            }
+            .foregroundStyle(active ? p.accent : p.secondaryText)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(active ? theme.swiftUIColor("accent-soft", fallback: p.selected) : .clear, in: RoundedRectangle(cornerRadius: 5))
+        }
+        .buttonStyle(.plain)
+    }
+
+    @ViewBuilder
+    private var outlineBody: some View {
+        let p = theme.palette
+        if headings.count > 6 {
+            HStack(spacing: 5) {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 10))
+                    .foregroundStyle(p.tertiaryText)
+                TextField("Filter headings\u{2026}", text: $headingFilter)
+                    .textFieldStyle(.plain)
+                    .font(.system(size: theme.pointSize(.micro) + 1))
+                if !headingFilter.isEmpty {
+                    Button { headingFilter = "" } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal, 7)
+            .frame(height: 24)
+            .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+            .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+        }
+
+        let trimmed = headingFilter.trimmingCharacters(in: .whitespacesAndNewlines)
+        let shown = trimmed.isEmpty
+            ? headings
+            : headings.filter { $0.text.localizedCaseInsensitiveContains(trimmed) }
+
+        if shown.isEmpty {
+            Text(headings.isEmpty ? "No headings yet. Start a line with # to build a table of contents." : "No matching headings.")
+                .vesperText(.small, theme)
+                .foregroundStyle(p.tertiaryText)
+                .padding(.top, 4)
+        } else {
+            let minLevel = headings.map(\.level).min() ?? 1
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(shown) { heading in
+                    let depth = max(0, heading.level - minLevel)
+                    Button {
+                        onJumpHeading(heading)
+                    } label: {
+                        HStack(spacing: 5) {
+                            Text(heading.text)
+                                .font(.system(size: theme.pointSize(.small), weight: heading.level <= 2 ? .medium : .regular))
+                                .foregroundStyle(p.text)
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                            Spacer(minLength: 4)
+                            Text("H\(heading.level)")
+                                .font(.system(size: 9, weight: .medium, design: .monospaced))
+                                .foregroundStyle(p.tertiaryText)
+                        }
+                        .padding(.leading, CGFloat(6 + depth * 11))
+                        .padding(.trailing, 6)
+                        .padding(.vertical, 5)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .background(p.surface.opacity(0.65), in: RoundedRectangle(cornerRadius: 5))
+                }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var backlinksBody: some View {
+        let p = theme.palette
+        sectionTitle("Backlinks", count: backlinks.count)
+        if backlinks.isEmpty {
+            Text("No other pages link here yet.")
+                .vesperText(.small, theme)
+                .foregroundStyle(p.tertiaryText)
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(backlinks) { item in
+                    Button {
+                        context.navigate(KnowledgeShellLogic.pageHref(id: item.id, title: item.title))
+                    } label: {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text(item.title)
+                                .font(.system(size: theme.pointSize(.small), weight: .medium))
+                                .foregroundStyle(p.accent)
+                                .lineLimit(1)
+                            Text(KnowledgeShellLogic.folderDisplay(of: item.path))
+                                .font(.system(size: theme.pointSize(.micro)))
+                                .foregroundStyle(p.tertiaryText)
+                                .lineLimit(1)
+                        }
+                        .padding(7)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+        }
+
+        sectionTitle("Unlinked Mentions", count: unlinkedMentions.count)
+            .padding(.top, 4)
+        if unlinkedMentions.isEmpty {
+            Text("No unlinked mentions found.")
+                .vesperText(.small, theme)
+                .foregroundStyle(p.tertiaryText)
+        } else {
+            VStack(alignment: .leading, spacing: 6) {
+                ForEach(unlinkedMentions) { mention in
+                    VStack(alignment: .leading, spacing: 4) {
+                        HStack(spacing: 4) {
+                            Button(mention.pageTitle) {
+                                context.navigate(KnowledgeShellLogic.pageHref(id: mention.pageId, title: mention.pageTitle))
+                            }
+                            .buttonStyle(.plain)
+                            .font(.system(size: theme.pointSize(.small), weight: .semibold))
+                            .foregroundStyle(p.accent)
+                            .lineLimit(1)
+
+                            Spacer(minLength: 4)
+
+                            Button(linkingMentionId == mention.id ? "\u{2026}" : "Link") {
+                                onLinkMention(mention)
+                            }
+                            .buttonStyle(.vesper())
+                            .controlSize(.mini)
+                            .disabled(linkingMentionId != nil)
+                        }
+                        Text(mention.snippet)
+                            .font(.system(size: theme.pointSize(.micro)))
+                            .foregroundStyle(p.secondaryText)
+                            .lineLimit(2)
+                    }
+                    .padding(7)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+                }
+            }
+        }
+
+        if !outgoingResolved.isEmpty || !outgoingUnresolved.isEmpty {
+            sectionTitle("Outgoing Links", count: outgoingResolved.count + outgoingUnresolved.count)
+                .padding(.top, 4)
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(outgoingResolved) { item in
+                    Button {
+                        context.navigate(KnowledgeShellLogic.pageHref(id: item.id, title: item.title))
+                    } label: {
+                        Text(item.title)
+                            .font(.system(size: theme.pointSize(.small)))
+                            .foregroundStyle(p.text)
+                            .lineLimit(1)
+                            .padding(.horizontal, 7)
+                            .padding(.vertical, 5)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .background(p.surface, in: RoundedRectangle(cornerRadius: 5))
+                    }
+                    .buttonStyle(.plain)
+                }
+                ForEach(outgoingUnresolved, id: \.self) { missing in
+                    HStack(spacing: 4) {
+                        Image(systemName: "questionmark.circle")
+                            .font(.system(size: 10))
+                            .foregroundStyle(p.tertiaryText)
+                        Text(missing)
+                            .font(.system(size: theme.pointSize(.small)))
+                            .foregroundStyle(p.secondaryText)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 4)
+                }
+            }
+        }
+    }
+
+    private func sectionTitle(_ title: String, count: Int) -> some View {
+        let p = theme.palette
+        return HStack {
+            Text(title.uppercased())
+                .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                .foregroundStyle(p.tertiaryText)
+            Spacer()
+            Text("\(count)")
+                .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                .foregroundStyle(p.tertiaryText)
+        }
     }
 }

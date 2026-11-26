@@ -13,6 +13,8 @@ import (
 var audienceExceptions = map[string]string{
 	"OwnKnowledgeAssetByHash":     "owner-only dedup; owner comes from the authenticated upload or an owned import job",
 	"PutKnowledgeAsset":           "content metadata insert under the uploader hash lock; never a page reader",
+	"RenameKnowledgeAsset":        "owner-only rename filtered by workspace and authenticated owner_user_id; never reads or exposes other users' data",
+	"DeleteKnowledgeAsset":        "owner-only delete filtered by workspace and authenticated owner_user_id; cascades refs on the owner's asset only",
 	"StageOrphanKnowledgeAssets":  "system-only garbage collection; tombstones are not returned to callers",
 	"KnowledgeBlobInUse":          "system-only garbage collection checks existence under the blob hash lock",
 	"FinishedKnowledgeArchives":   "system-only garbage collection of completed job archives; returns only storage keys",

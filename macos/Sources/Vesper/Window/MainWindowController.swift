@@ -510,6 +510,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         app.aux.previewQuickLook(items: items, index: index, from: window)
     }
 
+    func toggleQuickLook(items: [QuickLookItem], index: Int?) {
+        app.aux.toggleQuickLook(items: items, index: index, from: window)
+    }
+
     func openCustomAppWindow(slug: String) {
         app.aux.openCustomAppWindow(slug: slug)
     }
