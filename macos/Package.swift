@@ -17,8 +17,9 @@ let package = Package(
             dependencies: ["cmark-gfm", "cmark-gfm-extensions", "SwiftMath"],
             path: "Sources/VesperCore",
             // Shiki for code blocks, built by scripts/build-shiki-bundle.mjs (Markdown/CodeHighlighter.swift);
-            // elkjs for offline node graph layout, built by scripts/build-elk-bundle.mjs (NodeGraph/ELKLayoutEngine.swift).
-            resources: [.copy("Resources/shiki"), .copy("Resources/elk"), .copy("Resources/designs")]
+            // elkjs for offline node graph layout, built by scripts/build-elk-bundle.mjs (NodeGraph/ELKLayoutEngine.swift);
+            // adblock starter filter lists for the internal browser's Wipr/uBO-style content blocker.
+            resources: [.copy("Resources/shiki"), .copy("Resources/elk"), .copy("Resources/designs"), .copy("Resources/adblock")]
         ),
         // The markdown parser, vendored from swiftlang/swift-cmark (Vendor/cmark-gfm/README.md) so the
         // build fetches nothing.

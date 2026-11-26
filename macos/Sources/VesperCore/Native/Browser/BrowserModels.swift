@@ -401,6 +401,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
     public var profiles: [BrowserProfile]
     public var activeProfileId: UUID?
     public var autofillEnabled: Bool
+    public var adBlockConfig: BrowserAdBlockConfig
 
     public init(
         tabs: [BrowserTabRecord] = [],
@@ -414,7 +415,8 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         siteZooms: [String: Double] = [:],
         profiles: [BrowserProfile] = [],
         activeProfileId: UUID? = nil,
-        autofillEnabled: Bool = true
+        autofillEnabled: Bool = true,
+        adBlockConfig: BrowserAdBlockConfig = .default
     ) {
         self.tabs = tabs
         self.activeTabId = activeTabId
@@ -441,6 +443,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
             self.activeProfileId = activeProfileId ?? profiles.first?.id
         }
         self.autofillEnabled = autofillEnabled
+        self.adBlockConfig = adBlockConfig
     }
 
     public static let empty = BrowserPersistedState()
@@ -458,6 +461,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         case profiles
         case activeProfileId = "active_profile_id"
         case autofillEnabled = "autofill_enabled"
+        case adBlockConfig = "ad_block_config"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -472,6 +476,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         searchEngine = try c.decodeIfPresent(BrowserSearchEngine.self, forKey: .searchEngine) ?? .duckDuckGo
         siteZooms = try c.decodeIfPresent([String: Double].self, forKey: .siteZooms) ?? [:]
         autofillEnabled = try c.decodeIfPresent(Bool.self, forKey: .autofillEnabled) ?? true
+        adBlockConfig = try c.decodeIfPresent(BrowserAdBlockConfig.self, forKey: .adBlockConfig) ?? .default
 
         let decodedProfiles = try c.decodeIfPresent([BrowserProfile].self, forKey: .profiles) ?? []
         if decodedProfiles.isEmpty {
@@ -504,6 +509,10 @@ public enum BrowserStorage {
 
     public static func extensionsDirectory(dataDirectory: URL) -> URL {
         dataDirectory.appendingPathComponent("browser-extensions", isDirectory: true)
+    }
+
+    public static func adBlockDirectory(dataDirectory: URL) -> URL {
+        dataDirectory.appendingPathComponent("browser-adblock", isDirectory: true)
     }
 
     /// Loads persisted browser state; unreadable or malformed files fall back cleanly to `.empty`.

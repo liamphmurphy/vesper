@@ -1,0 +1,36 @@
+! Title: Vesper Bundled Scriptlets & Extended CSS List
+! Description: Offline starter scriptlets and procedural rules for YouTube ad stripping, anti-adblock bypasses, cookie-wall cleanup, and feed ad hiding.
+! Supplemented by live uBlock Origin Filters & Quick Fixes updates.
+
+! --- YouTube Ad Stripping & Anti-Adblock Defusal ---
+youtube.com,m.youtube.com,music.youtube.com##+js(json-prune, adPlacements playerAds adSlots adBreakHeartbeatParams)
+youtube.com,m.youtube.com,music.youtube.com##+js(json-prune-fetch-response, adPlacements playerAds adSlots adBreakHeartbeatParams, , propsToMatch, /youtubei/v1/player)
+youtube.com,m.youtube.com,music.youtube.com##+js(set-constant, ytInitialPlayerResponse.adPlacements, undefined)
+youtube.com,m.youtube.com,music.youtube.com##+js(set-constant, ytInitialPlayerResponse.playerAds, undefined)
+youtube.com,m.youtube.com,music.youtube.com##+js(set-constant, ytInitialPlayerResponse.adSlots, undefined)
+youtube.com,m.youtube.com,music.youtube.com##+js(set-constant, google_ad_status, 1)
+youtube.com##ytd-enforcement-message-view-model:remove()
+youtube.com##tp-yt-paper-dialog:has-text(/Ad blockers violate YouTube|Ad blockers are not allowed/i):remove()
+
+! --- Common Anti-Adblock Defusers ---
+##+js(set-constant, canRunAds, true)
+##+js(set-constant, isAdBlockActive, false)
+##+js(set-constant, adblockDetected, false)
+##+js(set-constant, adsBlocked, false)
+##+js(set-constant, blockAdBlock, noopFunc)
+##+js(set-constant, fuckAdBlock, noopFunc)
+##+js(set-constant, sniffAdBlock, noopFunc)
+##+js(set-constant, admiral, noopFunc)
+##+js(abort-on-property-read, adBlockDetected)
+##+js(abort-on-property-read, _adblock)
+
+! --- Popup / Aggressive Ad Timer Defusers ---
+##+js(nowoif, popads|popcash|propellerads|adsterra|exoclick)
+
+! --- Procedural Feed & Promoted Card Hiding (Extended CSS) ---
+reddit.com##article:has-text(/^Promoted$/):remove()
+x.com,twitter.com##article[data-testid="tweet"]:has-text(/^Ad$/):remove()
+linkedin.com##div.feed-shared-update-v2:has-text(/Promoted/):remove()
+facebook.com##div[role="article"]:has-text(/^Sponsored$/):remove()
+news.ycombinator.com##tr.athing:has-text(/\(YC [SW]\d+\) Is Hiring/)
+youtube.com##ytd-rich-item-renderer:has-text(/Sponsored/):remove()
