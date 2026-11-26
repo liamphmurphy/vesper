@@ -116,6 +116,14 @@ public struct BrowserFilterListSubscription: Codable, Sendable, Equatable, Ident
             isEnabled: true
         ),
         BrowserFilterListSubscription(
+            id: "adguard-base",
+            name: "AdGuard Base Filter",
+            category: .ads,
+            url: "https://filters.adtidy.org/extension/ublock/filters/2_optimized.txt",
+            isBuiltIn: true,
+            isEnabled: true
+        ),
+        BrowserFilterListSubscription(
             id: "peter-lowe",
             name: "Peter Lowe's Ad & Tracking List",
             category: .ads,
@@ -128,6 +136,14 @@ public struct BrowserFilterListSubscription: Codable, Sendable, Equatable, Ident
             name: "EasyPrivacy",
             category: .trackers,
             url: "https://easylist.to/easylist/easyprivacy.txt",
+            isBuiltIn: true,
+            isEnabled: true
+        ),
+        BrowserFilterListSubscription(
+            id: "ublock-privacy",
+            name: "uBlock Origin Privacy",
+            category: .trackers,
+            url: "https://ublockorigin.github.io/uAssets/filters/privacy.min.txt",
             isBuiltIn: true,
             isEnabled: true
         ),
@@ -148,10 +164,26 @@ public struct BrowserFilterListSubscription: Codable, Sendable, Equatable, Ident
             isEnabled: true
         ),
         BrowserFilterListSubscription(
+            id: "ublock-badware",
+            name: "uBlock Origin Badware Risks",
+            category: .ads,
+            url: "https://ublockorigin.github.io/uAssets/filters/badware.txt",
+            isBuiltIn: true,
+            isEnabled: true
+        ),
+        BrowserFilterListSubscription(
             id: "ublock-quick-fixes",
             name: "uBlock Quick Fixes (YouTube & Breakage)",
             category: .scriptlets,
             url: "https://ublockorigin.github.io/uAssets/filters/quick-fixes.txt",
+            isBuiltIn: true,
+            isEnabled: true
+        ),
+        BrowserFilterListSubscription(
+            id: "ublock-unbreak",
+            name: "uBlock Origin Unbreak",
+            category: .scriptlets,
+            url: "https://ublockorigin.github.io/uAssets/filters/unbreak.txt",
             isBuiltIn: true,
             isEnabled: true
         ),

@@ -75,6 +75,21 @@ public enum BrowserAdBlockScripts {
           function hostCoveredBy(hostname, domain) {
             if (!domain) return false;
             var d = domain.toLowerCase();
+            if (d.length > 2 && d.endsWith('.*')) {
+              var stem = d.slice(0, -2);
+              var suffix = null;
+              if (hostname.startsWith(stem + '.')) {
+                suffix = hostname.slice(stem.length + 1);
+              } else {
+                var idx = hostname.lastIndexOf('.' + stem + '.');
+                if (idx !== -1) suffix = hostname.slice(idx + stem.length + 2);
+              }
+              if (!suffix) return false;
+              var parts = suffix.split('.');
+              if (parts.length === 1) return parts[0].length > 0;
+              if (parts.length === 2) return parts[0].length <= 3 && parts[1].length >= 2 && parts[1].length <= 3;
+              return false;
+            }
             return hostname === d || (hostname.length > d.length && hostname.endsWith('.' + d));
           }
 
@@ -98,23 +113,42 @@ public enum BrowserAdBlockScripts {
             }
           }
 
-          function compileMatcher(raw) {
+          function compileMatcher(raw, opts) {
             if (!raw) return null;
             var s = String(raw).trim();
             if (!s) return null;
+            if (opts && opts.stripUrlPrefix && s.toLowerCase().startsWith('url:')) {
+              s = s.slice(4).trim();
+              if (!s) return null;
+            }
+            var negated = false;
+            if (s.length > 1 && s[0] === '!') {
+              negated = true;
+              s = s.slice(1).trim();
+              if (!s) return null;
+            }
+            var re = null;
             if (s.length >= 2 && s[0] === '/') {
               var lastSlash = s.lastIndexOf('/');
               if (lastSlash > 0) {
                 try {
-                  return new RegExp(s.slice(1, lastSlash), s.slice(lastSlash + 1));
+                  re = new RegExp(s.slice(1, lastSlash), s.slice(lastSlash + 1));
                 } catch (err) {}
               }
             }
-            try {
-              return new RegExp(s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));
-            } catch (err) {
-              return null;
+            if (!re) {
+              try {
+                re = new RegExp(s.replace(/[.*+?^${}()|[\\]\\\\]/g, '\\\\$&'));
+              } catch (err) {
+                return null;
+              }
             }
+            return {
+              test: function(val) {
+                var hit = re.test(String(val || ''));
+                return negated ? !hit : hit;
+              }
+            };
           }
 
           // --- Abort Sentinel Guard (keeps console clean for aopr/aopw/acis) ---
@@ -411,15 +445,18 @@ public enum BrowserAdBlockScripts {
             }
           }
 
-          // --- Timer / Fetch / XHR / EventListener / Window.open Defusers ---
+          // --- Timer / Fetch / XHR / EventListener / Window.open / Eval Defusers ---
           var blockedTimeoutRules = [];
           var blockedIntervalRules = [];
           var blockedFetchMatchers = [];
           var blockedXHRMatchers = [];
           var blockedEventRules = [];
           var blockedPopupMatchers = [];
+          var blockedEvalMatchers = [];
           var removeAttrRules = [];
           var removeClassRules = [];
+          var setAttrRules = [];
+          var disableNewtabMatchers = [];
           var clickSelectors = [];
 
           // --- Execute Matching Scriptlets ---
@@ -451,14 +488,14 @@ public enum BrowserAdBlockScripts {
                 fetchPruneSpecs.push({
                   removePaths: parsePrunePaths(args[0]),
                   requiredPaths: parsePrunePaths(args[1]),
-                  urlMatcher: compileMatcher(args[3] || args[2])
+                  urlMatcher: compileMatcher(args[3] || args[2], { stripUrlPrefix: true })
                 });
                 break;
               case 'json-prune-xhr-response':
                 xhrPruneSpecs.push({
                   removePaths: parsePrunePaths(args[0]),
                   requiredPaths: parsePrunePaths(args[1]),
-                  urlMatcher: compileMatcher(args[3] || args[2])
+                  urlMatcher: compileMatcher(args[3] || args[2], { stripUrlPrefix: true })
                 });
                 break;
               case 'no-setTimeout-if':
@@ -468,10 +505,10 @@ public enum BrowserAdBlockScripts {
                 blockedIntervalRules.push({ matcher: compileMatcher(args[0]), delay: args[1] ? Number(args[1]) : null });
                 break;
               case 'no-fetch-if':
-                if (args[0]) { var fm = compileMatcher(args[0]); if (fm) blockedFetchMatchers.push(fm); }
+                if (args[0]) { var fm = compileMatcher(args[0], { stripUrlPrefix: true }); if (fm) blockedFetchMatchers.push(fm); }
                 break;
               case 'no-xhr-if':
-                if (args[0]) { var xm = compileMatcher(args[0]); if (xm) blockedXHRMatchers.push(xm); }
+                if (args[0]) { var xm = compileMatcher(args[0], { stripUrlPrefix: true }); if (xm) blockedXHRMatchers.push(xm); }
                 break;
               case 'prevent-addEventListener':
                 blockedEventRules.push({ type: compileMatcher(args[0]), handler: compileMatcher(args[1]) });
@@ -479,11 +516,36 @@ public enum BrowserAdBlockScripts {
               case 'nowoif':
                 blockedPopupMatchers.push(compileMatcher(args[0]));
                 break;
+              case 'noeval-if':
+                blockedEvalMatchers.push(compileMatcher(args[0]));
+                break;
               case 'remove-attr':
                 if (args[0]) removeAttrRules.push({ attr: args[0], selector: args[1] || '*' });
                 break;
               case 'remove-class':
                 if (args[0]) removeClassRules.push({ cls: args[0], selector: args[1] || '*' });
+                break;
+              case 'set-attr':
+                if (args[0] && args[1]) setAttrRules.push({ selector: args[0], attr: args[1], value: args[2] || '' });
+                break;
+              case 'set-local-storage-item':
+                if (args[0]) {
+                  try {
+                    if (args[1] === '$remove$') window.localStorage.removeItem(args[0]);
+                    else window.localStorage.setItem(args[0], args[1] || '');
+                  } catch (e) {}
+                }
+                break;
+              case 'set-session-storage-item':
+                if (args[0]) {
+                  try {
+                    if (args[1] === '$remove$') window.sessionStorage.removeItem(args[0]);
+                    else window.sessionStorage.setItem(args[0], args[1] || '');
+                  } catch (e) {}
+                }
+                break;
+              case 'disable-newtab-links':
+                disableNewtabMatchers.push(compileMatcher(args[0]));
                 break;
               case 'click-element':
                 if (args[0]) clickSelectors.push(args[0]);
@@ -664,6 +726,20 @@ public enum BrowserAdBlockScripts {
             };
           }
 
+          if (blockedEvalMatchers.length) {
+            var origEval = window.eval;
+            window.eval = function(code) {
+              var src = String(code || '');
+              for (var ev = 0; ev < blockedEvalMatchers.length; ev++) {
+                if (!blockedEvalMatchers[ev] || blockedEvalMatchers[ev].test(src)) {
+                  reportHit(1);
+                  return undefined;
+                }
+              }
+              return origEval.call(window, code);
+            };
+          }
+
           // --- Style Injection (`:style(...)`) ---
           var activeStyles = (BUNDLE.injectedStyles || []).filter(function(st) {
             return matchesDomains(st.includeDomains, st.excludeDomains);
@@ -689,7 +765,11 @@ public enum BrowserAdBlockScripts {
           function parseProceduralChain(raw) {
             // Splits `baseSelector:has-text(...):upward(2):matches-css(...)` into base + ordered operators.
             var ops = [];
-            var known = [':has-text(', ':-abp-contains(', ':upward(', ':matches-css(', ':matches-path('];
+            var known = [
+              ':has-text(', ':-abp-contains(', ':-abp-has(', ':has(', ':not(',
+              ':upward(', ':nth-ancestor(', ':matches-css(', ':matches-css-before(',
+              ':matches-css-after(', ':matches-path(', ':matches-attr(', ':min-text-length('
+            ];
             var firstIdx = -1;
             for (var k = 0; k < known.length; k++) {
               var pos = raw.indexOf(known[k]);
@@ -704,7 +784,7 @@ public enum BrowserAdBlockScripts {
               for (var m = 0; m < known.length; m++) {
                 if (rest.startsWith(known[m])) { matchedOp = known[m]; break; }
               }
-              if (!matchedOp) break;
+              if (!matchedOp) return null;
               var depth = 0;
               var endIdx = -1;
               for (var c = matchedOp.length - 1; c < rest.length; c++) {
@@ -714,7 +794,7 @@ public enum BrowserAdBlockScripts {
                   if (depth === 0) { endIdx = c; break; }
                 }
               }
-              if (endIdx === -1) break;
+              if (endIdx === -1) return null;
               var arg = rest.slice(matchedOp.length, endIdx);
               ops.push({ name: matchedOp.slice(1, -1), arg: arg });
               rest = rest.slice(endIdx + 1).trim();
@@ -722,26 +802,64 @@ public enum BrowserAdBlockScripts {
             return { base: base, ops: ops };
           }
 
+          function stripQuotes(str) {
+            var s = String(str || '').trim();
+            if (s.length >= 2 && ((s[0] === '"' && s[s.length - 1] === '"') || (s[0] === "'" && s[s.length - 1] === "'"))) {
+              return s.slice(1, -1);
+            }
+            return s;
+          }
+
+          function parseStyleDeclarations(cssText) {
+            if (!cssText) return [];
+            return String(cssText).split(';').map(function(part) {
+              var colon = part.indexOf(':');
+              if (colon === -1) return null;
+              var prop = part.slice(0, colon).trim();
+              var val = part.slice(colon + 1).trim();
+              if (!prop || !val) return null;
+              var important = false;
+              if (val.toLowerCase().endsWith('!important')) {
+                important = true;
+                val = val.slice(0, -10).trim();
+              }
+              return { prop: prop, val: val, priority: important ? 'important' : '' };
+            }).filter(Boolean);
+          }
+
           var compiledProcedural = activeExtended.map(function(rule) {
             var parsed = parseProceduralChain(rule.selector);
+            if (!parsed) return null;
             return {
               base: parsed.base,
               ops: parsed.ops.map(function(op) {
                 if (op.name === 'has-text' || op.name === '-abp-contains' || op.name === 'matches-path') {
                   return { name: op.name, matcher: compileMatcher(op.arg), raw: op.arg };
                 }
+                if (op.name === 'matches-attr') {
+                  var eq = op.arg.indexOf('=');
+                  if (eq === -1) {
+                    return { name: op.name, nameMatcher: compileMatcher(stripQuotes(op.arg)), valMatcher: null };
+                  }
+                  return {
+                    name: op.name,
+                    nameMatcher: compileMatcher(stripQuotes(op.arg.slice(0, eq))),
+                    valMatcher: compileMatcher(stripQuotes(op.arg.slice(eq + 1)))
+                  };
+                }
                 return { name: op.name, raw: op.arg };
               }),
-              removeNode: !!rule.removeNode
+              removeNode: !!rule.removeNode,
+              styleDecls: parseStyleDeclarations(rule.styleCSS)
             };
-          });
+          }).filter(Boolean);
 
           var clickedOnce = new WeakSet();
 
           function applyDOMRules() {
             injectStyleSheet();
 
-            // remove-attr / remove-class
+            // remove-attr / remove-class / set-attr / disable-newtab-links
             for (var a = 0; a < removeAttrRules.length; a++) {
               try {
                 var nodes = document.querySelectorAll(removeAttrRules[a].selector);
@@ -760,6 +878,32 @@ public enum BrowserAdBlockScripts {
                   if (cnodes[cn].classList && cnodes[cn].classList.contains(removeClassRules[c].cls)) {
                     cnodes[cn].classList.remove(removeClassRules[c].cls);
                     reportHit(1);
+                  }
+                }
+              } catch (e) {}
+            }
+            for (var sa = 0; sa < setAttrRules.length; sa++) {
+              try {
+                var snodes = document.querySelectorAll(setAttrRules[sa].selector);
+                for (var sn = 0; sn < snodes.length; sn++) {
+                  if (snodes[sn].getAttribute(setAttrRules[sa].attr) !== setAttrRules[sa].value) {
+                    snodes[sn].setAttribute(setAttrRules[sa].attr, setAttrRules[sa].value);
+                    reportHit(1);
+                  }
+                }
+              } catch (e) {}
+            }
+            if (disableNewtabMatchers.length) {
+              try {
+                var blanks = document.querySelectorAll('a[target="_blank"]');
+                for (var bl = 0; bl < blanks.length; bl++) {
+                  var href = blanks[bl].getAttribute('href') || '';
+                  for (var bm = 0; bm < disableNewtabMatchers.length; bm++) {
+                    if (!disableNewtabMatchers[bm] || disableNewtabMatchers[bm].test(href)) {
+                      blanks[bl].removeAttribute('target');
+                      reportHit(1);
+                      break;
+                    }
                   }
                 }
               } catch (e) {}
@@ -792,6 +936,7 @@ public enum BrowserAdBlockScripts {
                 var target = candidates[idx];
                 if (!target || target.nodeType !== 1) continue;
                 if (target.getAttribute('data-vesper-ab-hidden') === '1') continue;
+                if (rule.styleDecls.length && target.getAttribute('data-vesper-ab-styled') === '1') continue;
 
                 var matched = true;
                 for (var o = 0; o < rule.ops.length; o++) {
@@ -801,15 +946,39 @@ public enum BrowserAdBlockScripts {
                   } else if (op.name === 'has-text' || op.name === '-abp-contains') {
                     var txt = (target.textContent || '').trim();
                     if (!op.matcher || !op.matcher.test(txt)) { matched = false; break; }
-                  } else if (op.name === 'matches-css') {
+                  } else if (op.name === 'min-text-length') {
+                    var minLen = Number(op.raw);
+                    if (isNaN(minLen) || (target.textContent || '').trim().length < minLen) { matched = false; break; }
+                  } else if (op.name === '-abp-has' || op.name === 'has') {
+                    var q = String(op.raw || '').trim();
+                    if (!q) { matched = false; break; }
+                    if (q[0] === '>' || q[0] === '+' || q[0] === '~') q = ':scope ' + q;
+                    try {
+                      if (!target.querySelector(q)) { matched = false; break; }
+                    } catch (err) { matched = false; break; }
+                  } else if (op.name === 'not') {
+                    try {
+                      if (target.matches(op.raw)) { matched = false; break; }
+                    } catch (err) { matched = false; break; }
+                  } else if (op.name === 'matches-attr') {
+                    var attrHit = false;
+                    var attrs = target.attributes || [];
+                    for (var ai = 0; ai < attrs.length; ai++) {
+                      var nameOK = !op.nameMatcher || op.nameMatcher.test(attrs[ai].name);
+                      var valOK = !op.valMatcher || op.valMatcher.test(attrs[ai].value);
+                      if (nameOK && valOK) { attrHit = true; break; }
+                    }
+                    if (!attrHit) { matched = false; break; }
+                  } else if (op.name === 'matches-css' || op.name === 'matches-css-before' || op.name === 'matches-css-after') {
                     var colon = op.raw.indexOf(':');
                     if (colon === -1) { matched = false; break; }
                     var prop = op.raw.slice(0, colon).trim();
                     var expected = op.raw.slice(colon + 1).trim();
-                    var actual = window.getComputedStyle(target).getPropertyValue(prop).trim();
+                    var pseudo = op.name === 'matches-css-before' ? '::before' : (op.name === 'matches-css-after' ? '::after' : null);
+                    var actual = window.getComputedStyle(target, pseudo).getPropertyValue(prop).trim();
                     var cssMatcher = compileMatcher(expected);
                     if (!cssMatcher || !cssMatcher.test(actual)) { matched = false; break; }
-                  } else if (op.name === 'upward') {
+                  } else if (op.name === 'upward' || op.name === 'nth-ancestor') {
                     var steps = Number(op.raw);
                     if (!isNaN(steps) && steps > 0) {
                       var cur = target;
@@ -824,19 +993,28 @@ public enum BrowserAdBlockScripts {
                   }
                 }
 
-                if (!matched || !target || target.getAttribute('data-vesper-ab-hidden') === '1') continue;
+                if (!matched || !target) continue;
                 if (rule.removeNode) {
                   target.remove();
+                  reportHit(1);
+                } else if (rule.styleDecls.length) {
+                  if (target.getAttribute('data-vesper-ab-styled') === '1') continue;
+                  target.setAttribute('data-vesper-ab-styled', '1');
+                  for (var sd = 0; sd < rule.styleDecls.length; sd++) {
+                    target.style.setProperty(rule.styleDecls[sd].prop, rule.styleDecls[sd].val, rule.styleDecls[sd].priority);
+                  }
+                  reportHit(1);
                 } else {
+                  if (target.getAttribute('data-vesper-ab-hidden') === '1') continue;
                   target.setAttribute('data-vesper-ab-hidden', '1');
                   target.style.setProperty('display', 'none', 'important');
+                  reportHit(1);
                 }
-                reportHit(1);
               }
             }
           }
 
-          var needsDOMLoop = activeStyles.length || compiledProcedural.length || removeAttrRules.length || removeClassRules.length || clickSelectors.length;
+          var needsDOMLoop = activeStyles.length || compiledProcedural.length || removeAttrRules.length || removeClassRules.length || setAttrRules.length || disableNewtabMatchers.length || clickSelectors.length;
           if (needsDOMLoop) {
             var pendingTimer = null;
             function scheduleDOMApply() {

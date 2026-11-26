@@ -76,6 +76,138 @@ final class BrowserAdBlockTests: XCTestCase {
         )
         XCTAssertTrue(res.chunks.isEmpty)
         XCTAssertEqual(res.stats.skippedRules, 1)
+
+        // Empty character class `[]` is rejected by WebKit.
+        XCTAssertFalse(BrowserAdBlockCompiler.isValidWebKitURLFilter("^https://example\\.com/[]$"))
+    }
+
+    func testPathRulesStartingWithSlashSplitOptionsCorrectly() throws {
+        let list = """
+        /pagead/js/adsbygoogle.js$script
+        /ads/banner.js$third-party,image,from=news.example.com
+        /\\/ad_[0-9]+\\.js$/$script,3p
+        """
+
+        let result = BrowserAdBlockCompiler.compile(
+            sources: [BrowserAdBlockFilterSource(category: .ads, text: list)],
+            youtubeAdShieldEnabled: false
+        )
+
+        XCTAssertEqual(result.chunks.count, 1)
+        let chunk = try XCTUnwrap(result.chunks.first)
+        XCTAssertFalse(chunk.json.contains("\\$script"))
+        XCTAssertFalse(chunk.json.contains("\\$third-party"))
+
+        let data = try XCTUnwrap(chunk.json.data(using: .utf8))
+        let rules = try XCTUnwrap(JSONSerialization.jsonObject(with: data) as? [[String: Any]])
+        XCTAssertEqual(rules.count, 3)
+
+        let firstTrigger = try XCTUnwrap(rules[0]["trigger"] as? [String: Any])
+        XCTAssertEqual(firstTrigger["url-filter"] as? String, "/pagead/js/adsbygoogle\\.js")
+        XCTAssertEqual(firstTrigger["resource-type"] as? [String], ["script"])
+
+        let secondTrigger = try XCTUnwrap(rules[1]["trigger"] as? [String: Any])
+        XCTAssertEqual(secondTrigger["url-filter"] as? String, "/ads/banner\\.js")
+        XCTAssertEqual(secondTrigger["load-type"] as? [String], ["third-party"])
+        XCTAssertEqual(secondTrigger["resource-type"] as? [String], ["image"])
+        XCTAssertEqual(secondTrigger["if-domain"] as? [String], ["*news.example.com"])
+
+        let thirdTrigger = try XCTUnwrap(rules[2]["trigger"] as? [String: Any])
+        XCTAssertEqual(thirdTrigger["url-filter"] as? String, "\\/ad_[0-9]+\\.js$")
+        XCTAssertEqual(thirdTrigger["load-type"] as? [String], ["third-party"])
+        XCTAssertEqual(thirdTrigger["resource-type"] as? [String], ["script"])
+    }
+
+    func testSupportsFromAliasDenyAllowNoopRedirectsAndNegatedOptions() throws {
+        let list = """
+        ||ads.trafficjunky.net^$script,redirect=noopjs,from=tube.example.com
+        ||surrogate.example^$script,redirect-rule=noopjs
+        ||pop.example^$popunder,~1p
+        ||banner.example^$~document,~3p
+        *$script,3p,denyallow=cdn.example.com|static.example.com,from=tube.example.com
+        *$script,3p
+        """
+
+        let result = BrowserAdBlockCompiler.compile(
+            sources: [BrowserAdBlockFilterSource(category: .ads, text: list)],
+            youtubeAdShieldEnabled: false
+        )
+
+        // Expect 2 chunks: standard network chunk (3 valid blocks) + isolated denyallow chunk (1 block + 2 exceptions).
+        // `redirect-rule=` and unscoped `*$script,3p` must be skipped.
+        XCTAssertEqual(result.chunks.count, 2)
+        XCTAssertEqual(result.stats.skippedRules, 2)
+
+        let netChunk = try XCTUnwrap(result.chunks.first(where: { $0.id == "ads-net-0" }))
+        let netRules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(netChunk.json.utf8)) as? [[String: Any]])
+        XCTAssertEqual(netRules.count, 3)
+
+        let tjTrigger = try XCTUnwrap(netRules[0]["trigger"] as? [String: Any])
+        XCTAssertEqual(tjTrigger["if-domain"] as? [String], ["*tube.example.com"])
+        XCTAssertEqual(tjTrigger["resource-type"] as? [String], ["script"])
+
+        let popTrigger = try XCTUnwrap(netRules[1]["trigger"] as? [String: Any])
+        XCTAssertEqual(popTrigger["load-type"] as? [String], ["third-party"])
+        XCTAssertEqual(popTrigger["resource-type"] as? [String], ["popup"])
+
+        let bannerTrigger = try XCTUnwrap(netRules[2]["trigger"] as? [String: Any])
+        XCTAssertEqual(bannerTrigger["load-type"] as? [String], ["first-party"])
+        XCTAssertFalse((bannerTrigger["resource-type"] as? [String] ?? []).contains("document"))
+
+        let daChunk = try XCTUnwrap(result.chunks.first(where: { $0.id == "ads-denyallow-0" }))
+        let daRules = try XCTUnwrap(JSONSerialization.jsonObject(with: Data(daChunk.json.utf8)) as? [[String: Any]])
+        XCTAssertEqual(daRules.count, 3)
+        let daActions = daRules.compactMap { ($0["action"] as? [String: Any])?["type"] as? String }
+        XCTAssertEqual(daActions, ["block", "ignore-previous-rules", "ignore-previous-rules"])
+        for rule in daRules {
+            let trig = try XCTUnwrap(rule["trigger"] as? [String: Any])
+            XCTAssertEqual(trig["if-domain"] as? [String], ["*tube.example.com"])
+            XCTAssertEqual(trig["resource-type"] as? [String], ["script"])
+            XCTAssertEqual(trig["load-type"] as? [String], ["third-party"])
+        }
+    }
+
+    func testEntityDomainsAdGuardCSSAndProceduralStyleRules() throws {
+        let list = """
+        ||ads.trafficjunky.com^$from=videohub.*
+        videohub.*##.tj-banner
+        videohub.*##+js(noeval-if, trafficjunky)
+        example.com#$#.ad-placeholder { display: none !important; }
+        example.com##div.slot:has-text(Sponsored):upward(1):style(visibility: hidden !important)
+        example.com##body:remove-class(ad-lock)
+        example.com##html:remove-attr(data-ad-wall)
+        """
+
+        let result = BrowserAdBlockCompiler.compile(
+            sources: [BrowserAdBlockFilterSource(category: .ads, text: list)],
+            youtubeAdShieldEnabled: false
+        )
+
+        // Network entity domain rule expands into concrete WebKit `if-domain` triggers (never `*videohub.*`).
+        let netChunk = try XCTUnwrap(result.chunks.first(where: { $0.kind == .network }))
+        XCTAssertFalse(netChunk.json.contains("*videohub.*"))
+        XCTAssertTrue(netChunk.json.contains("*videohub.com"))
+        XCTAssertTrue(netChunk.json.contains("*videohub.org"))
+
+        // Entity cosmetic rule & AdGuard `#$#` rule route to Phase B `<style>` injection.
+        XCTAssertEqual(result.advanced.injectedStyles.count, 2)
+        XCTAssertTrue(result.advanced.injectedStyles.contains(where: {
+            $0.selector == ".tj-banner" && $0.includeDomains == ["videohub.*"] && $0.cssBody == "display: none !important;"
+        }))
+        XCTAssertTrue(result.advanced.injectedStyles.contains(where: {
+            $0.selector == ".ad-placeholder" && $0.includeDomains == ["example.com"]
+        }))
+
+        // Procedural `:style(...)` rule is preserved on BrowserExtendedCSSRule.
+        XCTAssertEqual(result.advanced.extendedCSS.count, 1)
+        XCTAssertEqual(result.advanced.extendedCSS[0].selector, "div.slot:has-text(Sponsored):upward(1)")
+        XCTAssertEqual(result.advanced.extendedCSS[0].styleCSS, "visibility: hidden !important")
+
+        // Scriptlets include `noeval-if` with entity domain + converted `:remove-class` & `:remove-attr`.
+        XCTAssertEqual(result.advanced.scriptlets.count, 3)
+        XCTAssertTrue(result.advanced.scriptlets.contains(where: { $0.name == "noeval-if" && $0.includeDomains == ["videohub.*"] }))
+        XCTAssertTrue(result.advanced.scriptlets.contains(where: { $0.name == "remove-class" && $0.args == ["ad-lock", "body"] }))
+        XCTAssertTrue(result.advanced.scriptlets.contains(where: { $0.name == "remove-attr" && $0.args == ["data-ad-wall", "html"] }))
     }
 
     // MARK: - Cosmetic Batching, Exceptions & Chunking
