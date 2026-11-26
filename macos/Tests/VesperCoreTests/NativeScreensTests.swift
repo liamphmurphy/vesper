@@ -108,6 +108,7 @@ final class NativeRoutesTests: XCTestCase {
             "/spaces": .spaces, "/spaces/new": .spaces, "/spaces/sp-1": .spaces,
             "/knowledge": .knowledge, "/knowledge/graph": .knowledge, "/knowledge/p1": .knowledge, "/wiki/a/b": .knowledge,
             "/library": .library, "/artifacts/art-1": .library, "/artifacts/art-1/review": .library,
+            "/browser": .browser,
             "/workflows": .apps, "/workflows/wf-1": .apps, "/workflows/runs/wr-1": .apps, "/scheduled": .apps,
             "/learn": .apps, "/learn/l1": .apps, "/reports": .apps, "/costs": .apps, "/http": .apps, "/dev": .apps,
             "/apps": .apps, "/apps/docs": .apps, "/apps/slides": .apps, "/apps/designs": .apps,

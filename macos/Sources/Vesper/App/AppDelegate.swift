@@ -147,15 +147,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     // MARK: File / app menu actions
 
-    /// ⌘T and the system tab bar's +.
-    @objc func newWindowForTab(_ sender: Any?) { app.openNewTab(from: NSApp.keyWindow) }
+    /// ⌘T and the system tab bar's +. When Browser is active, opens a new web tab inside Browser.
+    @objc func newWindowForTab(_ sender: Any?) {
+        if let c = app.keyController, c.isBrowserActive {
+            _ = app.browser.newTab(isPrivate: false, select: true)
+            return
+        }
+        app.openNewTab(from: NSApp.keyWindow)
+    }
     @objc func newWindowAction(_ sender: Any?) { app.newWindow() }
-    @objc func reopenClosedTab(_ sender: Any?) { app.reopenClosedTab(nextTo: NSApp.keyWindow) }
-    /// ⌘W: the active tab of a Vesper window (a window's last tab closes it, the app's only tab
-    /// becomes a new chat), else the key window (Settings, a popup).
+    @objc func reopenClosedTab(_ sender: Any?) {
+        if let c = app.keyController, c.isBrowserActive, app.browser.canReopenClosedTab {
+            app.browser.reopenClosedTab()
+            return
+        }
+        app.reopenClosedTab(nextTo: NSApp.keyWindow)
+    }
+    /// ⌘W: closes the active web tab when Browser is active, else the active Vesper tab (or key window).
     @objc func closeTab(_ sender: Any?) {
         if let c = NSApp.keyWindow?.windowController as? MainWindowController, !c.retired {
-            c.closeActiveTab()
+            if c.isBrowserActive {
+                app.browser.closeActiveTab()
+            } else {
+                c.closeActiveTab()
+            }
         } else {
             NSApp.keyWindow?.performClose(nil)
         }
@@ -220,13 +235,108 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     }
     @objc func toggleSidebarAction(_ sender: Any?) { app.keyController?.split.toggleSidebar(sender) }
     @objc func toggleInspectorAction(_ sender: Any?) { app.keyController?.toggleInspector(sender) }
-    @objc func reload(_ sender: Any?) { web?.reload() }
-    @objc func forceReload(_ sender: Any?) { web?.reloadFromOrigin() }
-    @objc func zoomIn(_ sender: Any?) { if let web { web.pageZoom = min(web.pageZoom + 0.1, 3) } }
-    @objc func zoomOut(_ sender: Any?) { if let web { web.pageZoom = max(web.pageZoom - 0.1, 0.3) } }
-    @objc func zoomReset(_ sender: Any?) { web?.pageZoom = 1 }
-    @objc func goBack(_ sender: Any?) { app.keyController?.content.goBack() }
-    @objc func goForward(_ sender: Any?) { app.keyController?.content.goForward() }
+    @objc func reload(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true {
+            app.browser.activeTab?.reload(fromOrigin: false)
+            return
+        }
+        web?.reload()
+    }
+    @objc func forceReload(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true {
+            app.browser.activeTab?.reload(fromOrigin: true)
+            return
+        }
+        web?.reloadFromOrigin()
+    }
+    @objc func zoomIn(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true {
+            app.browser.adjustZoom(delta: 0.1)
+            return
+        }
+        if let web { web.pageZoom = min(web.pageZoom + 0.1, 3) }
+    }
+    @objc func zoomOut(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true {
+            app.browser.adjustZoom(delta: -0.1)
+            return
+        }
+        if let web { web.pageZoom = max(web.pageZoom - 0.1, 0.3) }
+    }
+    @objc func zoomReset(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true {
+            app.browser.resetZoom()
+            return
+        }
+        web?.pageZoom = 1
+    }
+    @objc func goBack(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true, let tab = app.browser.activeTab, tab.canGoBack {
+            tab.goBack()
+            return
+        }
+        app.keyController?.content.goBack()
+    }
+    @objc func goForward(_ sender: Any?) {
+        if app.keyController?.isBrowserActive == true, let tab = app.browser.activeTab, tab.canGoForward {
+            tab.goForward()
+            return
+        }
+        app.keyController?.content.goForward()
+    }
+
+    // MARK: Browser Menu Actions
+
+    @objc func focusBrowserAddressBar(_ sender: Any?) {
+        guard let c = app.keyController else { return }
+        if !c.isBrowserActive {
+            c.content.navigate(path: "/browser")
+        }
+        app.browser.focusAddressBar()
+    }
+
+    @objc func newPrivateBrowserTab(_ sender: Any?) {
+        guard let c = app.keyController else { return }
+        if !c.isBrowserActive {
+            c.content.navigate(path: "/browser")
+        }
+        _ = app.browser.newTab(isPrivate: true, select: true)
+    }
+
+    @objc func toggleBrowserReaderMode(_ sender: Any?) {
+        guard let c = app.keyController, c.isBrowserActive, let tab = app.browser.activeTab else { return }
+        let isDark = (c.state.pageMode ?? c.state.theme?.mode) == .dark
+        Task { await tab.toggleReaderMode(darkMode: isDark) }
+    }
+
+    @objc func toggleBrowserBookmark(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.toggleBookmark()
+    }
+
+    @objc func openBrowserPageInSafari(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true,
+              let raw = app.browser.activeTab?.urlString,
+              let url = URL(string: raw),
+              BrowserURLResolver.isWebURL(url)
+        else { return }
+        NSWorkspace.shared.open(url)
+    }
+
+    @objc func nextBrowserTab(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.selectNextTab()
+    }
+
+    @objc func previousBrowserTab(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.selectPreviousTab()
+    }
+
+    @objc func selectBrowserTab(_ sender: NSMenuItem) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.selectNumberedTab(sender.tag)
+    }
 
     /// Opens Web Inspector. WebKit has no public API for this; "Inspect Element" in the page's
     /// context menu (isInspectable) is the supported route, so this only uses the SPI if present.
@@ -305,9 +415,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
         switch item.action {
-        case #selector(reopenClosedTab(_:)): return app.canReopenClosedTab
-        case #selector(goBack(_:)): return app.keyController?.content.canGoBack ?? false
-        case #selector(goForward(_:)): return app.keyController?.content.canGoForward ?? false
+        case #selector(reopenClosedTab(_:)):
+            if app.keyController?.isBrowserActive == true {
+                return app.browser.canReopenClosedTab || app.canReopenClosedTab
+            }
+            return app.canReopenClosedTab
+        case #selector(goBack(_:)):
+            if app.keyController?.isBrowserActive == true, app.browser.activeTab?.canGoBack == true {
+                return true
+            }
+            return app.keyController?.content.canGoBack ?? false
+        case #selector(goForward(_:)):
+            if app.keyController?.isBrowserActive == true, app.browser.activeTab?.canGoForward == true {
+                return true
+            }
+            return app.keyController?.content.canGoForward ?? false
+        case #selector(focusBrowserAddressBar(_:)), #selector(newPrivateBrowserTab(_:)):
+            return app.keyController?.kind == .vesper
+        case #selector(toggleBrowserReaderMode(_:)), #selector(toggleBrowserBookmark(_:)), #selector(openBrowserPageInSafari(_:)):
+            return app.keyController?.isBrowserActive == true && app.browser.activeTab?.hasLoadedPage == true
+        case #selector(nextBrowserTab(_:)), #selector(previousBrowserTab(_:)):
+            return app.keyController?.isBrowserActive == true && app.browser.tabs.count > 1
+        case #selector(selectBrowserTab(_:)):
+            guard app.keyController?.isBrowserActive == true else { return false }
+            return BrowserTabListLogic.indexForNumberedShortcut(item.tag, count: app.browser.tabs.count) != nil
         case #selector(toggleSidebarAction(_:)):
             guard let controller = app.keyController, controller.hasSidebar, let sidebar = controller.split.splitViewItems.first else { return false }
             item.title = sidebar.isCollapsed ? "Show Sidebar" : "Hide Sidebar"

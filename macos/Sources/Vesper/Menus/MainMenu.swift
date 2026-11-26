@@ -116,6 +116,31 @@ enum MainMenu {
             item("Forward", #selector(AppDelegate.goForward(_:)), "]"),
         ])
 
+        // Browser
+        var browserItems: [NSMenuItem] = [
+            item("Focus Address Bar", #selector(AppDelegate.focusBrowserAddressBar(_:)), "l"),
+            item("New Private Web Tab", #selector(AppDelegate.newPrivateBrowserTab(_:)), "p", [.command, .shift]),
+            item("Toggle Reader Mode", #selector(AppDelegate.toggleBrowserReaderMode(_:)), "r", [.command, .option]),
+            item("Bookmark Page", #selector(AppDelegate.toggleBrowserBookmark(_:)), "b", [.command, .shift]),
+            item("Open Page in Safari", #selector(AppDelegate.openBrowserPageInSafari(_:)), "o", [.command, .option]),
+            sep(),
+            item("Next Web Tab", #selector(AppDelegate.nextBrowserTab(_:)), "]", [.command, .control]),
+            item("Previous Web Tab", #selector(AppDelegate.previousBrowserTab(_:)), "[", [.command, .control]),
+            sep(),
+        ]
+        for n in 1...9 {
+            browserItems.append(
+                item(
+                    n == 9 ? "Last Web Tab" : "Web Tab \(n)",
+                    #selector(AppDelegate.selectBrowserTab(_:)),
+                    "\(n)",
+                    [.command, .control],
+                    tag: n
+                )
+            )
+        }
+        _ = add("Browser", browserItems)
+
         // Window
         var windowItems: [NSMenuItem] = [
             item("Minimize", #selector(NSWindow.performMiniaturize(_:)), "m", target: nil),

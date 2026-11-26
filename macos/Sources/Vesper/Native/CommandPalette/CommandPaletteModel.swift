@@ -111,6 +111,9 @@ final class CommandPaletteModel {
     @ObservationIgnored var onToast: ((_ title: String, _ tone: ToastTone) -> Void)?
     @ObservationIgnored var storeProvider: (() -> QueryStore?)?
     @ObservationIgnored var clientProvider: (() -> APIClient?)?
+    @ObservationIgnored var browserTabsProvider: (() -> [BrowserTabRecord])?
+    @ObservationIgnored var onSelectBrowserTab: ((_ tabId: UUID) -> Void)?
+    @ObservationIgnored var onOpenInBrowser: ((_ queryOrURL: String) -> Void)?
 
     // Theme & focus trigger
     var theme: ThemeTokens = ThemeTokens(mode: .dark)
@@ -1082,6 +1085,7 @@ final class CommandPaletteModel {
             AppJump(label: "Inbox", href: "/inbox", aliases: "needs you approvals", kind: "app", sfSymbol: "tray"),
             AppJump(label: "Knowledge", href: "/knowledge", aliases: "wiki notes pages", kind: "app", sfSymbol: "book"),
             AppJump(label: "Library", href: "/library", aliases: "files images links", kind: "app", sfSymbol: "books.vertical"),
+            AppJump(label: "Browser", href: "/browser", aliases: "web safari internet tabs bookmarks", kind: "app", sfSymbol: "safari"),
             AppJump(label: "Learn", href: "/learn", aliases: "courses study", kind: "app", sfSymbol: "graduationcap"),
             AppJump(label: "Workflows", href: "/workflows", aliases: "automations", kind: "app", sfSymbol: "point.3.connected.trianglepath.dotted"),
             AppJump(label: "Scheduled", href: "/scheduled", aliases: "cron tasks", kind: "app", sfSymbol: "clock"),
@@ -1245,7 +1249,45 @@ final class CommandPaletteModel {
         // Fallback actions when searching globally
         if !searchText.isEmpty && scopedType == nil {
             let trimmed = searchText
-            var fallbacks: [PaletteRow] = [
+            let needle = trimmed.lowercased()
+            let matchingBrowserTabs = (browserTabsProvider?() ?? []).filter { tab in
+                !tab.url.isEmpty && (tab.title.lowercased().contains(needle) || tab.url.lowercased().contains(needle))
+            }
+            if !matchingBrowserTabs.isEmpty {
+                let tabRows = matchingBrowserTabs.prefix(5).map { tab in
+                    PaletteRow(
+                        id: "browser-tab-\(tab.id.uuidString)",
+                        title: tab.title.isEmpty ? BrowserURLResolver.displayHost(for: tab.url) : tab.title,
+                        subtitle: "Open web tab · \(BrowserURLResolver.displayHost(for: tab.url))",
+                        sfSymbol: tab.isPrivate ? "eye.slash" : "safari",
+                        tone: .neutral,
+                        highlightTitle: true,
+                        perform: { [weak self] in
+                            self?.onSelectBrowserTab?(tab.id)
+                        }
+                    )
+                }
+                result.append(PaletteSection(id: "browser-tabs", label: "Browser tabs", count: matchingBrowserTabs.count, rows: tabRows))
+            }
+            let fallbacks: [PaletteRow] = [
+                PaletteRow(
+                    id: "fallback-browser",
+                    title: "Open or search in Browser: “\(trimmed)”",
+                    subtitle: "Launch directly in Vesper's internal browser",
+                    sfSymbol: "safari",
+                    tone: .neutral,
+                    preview: .command(PaletteCommandPreview(
+                        category: "Browser",
+                        title: "Open in Browser",
+                        description: "Opens “\(trimmed)” as a URL or web search in Vesper's internal Browser.",
+                        shortcut: "↵",
+                        contextLabel: "Query",
+                        contextValue: trimmed
+                    )),
+                    perform: { [weak self] in
+                        self?.onOpenInBrowser?(trimmed)
+                    }
+                ),
                 PaletteRow(
                     id: "fallback-ask",
                     title: "Ask \(defaultPersona?.name ?? "Assistant"): “\(trimmed)”",
