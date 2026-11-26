@@ -1,10 +1,17 @@
 package chatmodels
 
 import (
+	"encoding/base64"
 	"fmt"
 	"testing"
 	"time"
 )
+
+func fakeJWT(sub string) string {
+	hdr := base64.RawURLEncoding.EncodeToString([]byte(`{"alg":"RS256"}`))
+	body := base64.RawURLEncoding.EncodeToString([]byte(fmt.Sprintf(`{"sub":%q}`, sub)))
+	return hdr + "." + body + ".sig"
+}
 
 func codexAuth(account string, at time.Time) string {
 	return fmt.Sprintf(`{"auth_mode":"chatgpt","last_refresh":%q,"tokens":{"access_token":"a","refresh_token":"r","id_token":"i","account_id":%q}}`, at.Format(time.RFC3339), account)
@@ -37,10 +44,25 @@ func TestCodexAuthRefreshed(t *testing.T) {
 		"other account": {codexAuth("attacker", now.Add(time.Minute)), false},
 		"far future":    {codexAuth("acct", time.Now().Add(time.Hour)), false},
 		"garbage":       {"{}", false},
+		"dropped access": {fmt.Sprintf(`{"auth_mode":"chatgpt","last_refresh":%q,"tokens":{"access_token":"","refresh_token":"r2","id_token":"i","account_id":"acct"}}`, now.Add(time.Minute).Format(time.RFC3339)), false},
 	} {
 		if got := CodexAuthRefreshed(cur, tc.next); got != tc.want {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)
 		}
+	}
+	// Empty account_id in current must never accept a forged refresh.
+	if CodexAuthRefreshed(codexAuth("", now), codexAuth("", now.Add(time.Minute))) {
+		t.Error("empty account_id should be rejected")
+	}
+	// When current id_token is a JWT with a sub claim, next must preserve the same sub.
+	jwtCur := fmt.Sprintf(`{"auth_mode":"chatgpt","last_refresh":%q,"tokens":{"access_token":"a","refresh_token":"r","id_token":%q,"account_id":"acct"}}`, now.Format(time.RFC3339), fakeJWT("user-123"))
+	jwtSame := fmt.Sprintf(`{"auth_mode":"chatgpt","last_refresh":%q,"tokens":{"access_token":"a2","refresh_token":"r2","id_token":%q,"account_id":"acct"}}`, now.Add(time.Minute).Format(time.RFC3339), fakeJWT("user-123"))
+	jwtOther := fmt.Sprintf(`{"auth_mode":"chatgpt","last_refresh":%q,"tokens":{"access_token":"a2","refresh_token":"r2","id_token":%q,"account_id":"acct"}}`, now.Add(time.Minute).Format(time.RFC3339), fakeJWT("attacker-999"))
+	if !CodexAuthRefreshed(jwtCur, jwtSame) {
+		t.Error("matching JWT sub should be accepted")
+	}
+	if CodexAuthRefreshed(jwtCur, jwtOther) {
+		t.Error("mismatched JWT sub should be rejected")
 	}
 }
 
@@ -82,11 +104,14 @@ func TestClaudeAuthRefreshed(t *testing.T) {
 		next string
 		want bool
 	}{
-		"newer":      {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), true},
-		"unchanged":  {cur, false},
-		"older":      {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(-time.Minute).UnixMilli()), false},
-		"far future": {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", time.Now().Add(400*24*time.Hour).UnixMilli()), false},
-		"empty":      {`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`, false},
+		"newer":            {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), true},
+		"unchanged":        {cur, false},
+		"unrotated":        {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(time.Minute).UnixMilli()), false},
+		"bad access pfx":   {claudeAuthJSON("evil-token", "sk-ant-ort01-new", base.Add(time.Minute).UnixMilli()), false},
+		"bad refresh pfx":  {claudeAuthJSON("sk-ant-oat01-new", "evil-refresh", base.Add(time.Minute).UnixMilli()), false},
+		"older":            {claudeAuthJSON("sk-ant-oat01-old", "sk-ant-ort01-old", base.Add(-time.Minute).UnixMilli()), false},
+		"far future":       {claudeAuthJSON("sk-ant-oat01-new", "sk-ant-ort01-new", time.Now().Add(45*24*time.Hour).UnixMilli()), false},
+		"empty":            {`{"claudeAiOauth":{"accessToken":"","refreshToken":"","expiresAt":0}}`, false},
 	} {
 		if got := ClaudeAuthRefreshed(cur, tc.next); got != tc.want {
 			t.Errorf("%s: got %v, want %v", name, got, tc.want)

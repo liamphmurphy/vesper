@@ -98,6 +98,10 @@ type MicroVM struct {
 
 	SaveClaudeAuth func(ctx context.Context, scope, auth string) error
 	SaveCodexAuth  func(ctx context.Context, scope, auth string) error
+	// VerifyClaudeAuth and VerifyCodexAuth, when non-nil, validate refreshed
+	// guest OAuth credentials before persisting them back to the host store.
+	VerifyClaudeAuth func(ctx context.Context, auth string) error
+	VerifyCodexAuth  func(ctx context.Context, auth string) error
 	Log            *slog.Logger
 	ModelsTimeout  time.Duration
 	UsageTimeout   time.Duration
@@ -1008,8 +1012,8 @@ func (p *microvmProc) Wait() (int, error) {
 	if b, rerr := client.ReadFile(cctx, path.Join(homePath, ".nix-profile/manifest.json"), maxNixManifestBytes); rerr == nil {
 		p.nixManifest = b
 	}
-	p.keepRefreshed(cctx, client, path.Join(homePath, claudeAuthPath), p.claudeAuth, p.claudeScope, p.b.SaveClaudeAuth, chatmodels.ClaudeAuthRefreshed)
-	p.keepRefreshed(cctx, client, path.Join(homePath, codexAuthPath), p.codexAuth, p.codexScope, p.b.SaveCodexAuth, chatmodels.CodexAuthRefreshed)
+	p.keepRefreshed(cctx, client, path.Join(homePath, claudeAuthPath), p.claudeAuth, p.claudeScope, p.b.SaveClaudeAuth, chatmodels.ClaudeAuthRefreshed, p.b.VerifyClaudeAuth)
+	p.keepRefreshed(cctx, client, path.Join(homePath, codexAuthPath), p.codexAuth, p.codexScope, p.b.SaveCodexAuth, chatmodels.CodexAuthRefreshed, p.b.VerifyCodexAuth)
 
 	// Unlink credentials from /home/node even on error/kill, unless another
 	// running process in this VM still holds them.
@@ -1164,7 +1168,7 @@ func (rvm *runVM) credentialHeld(p string) bool {
 	return false
 }
 
-func (p *microvmProc) keepRefreshed(ctx context.Context, client *guestproto.Client, guestFile, current, scope string, save func(context.Context, string, string) error, valid func(string, string) bool) {
+func (p *microvmProc) keepRefreshed(ctx context.Context, client *guestproto.Client, guestFile, current, scope string, save func(context.Context, string, string) error, valid func(string, string) bool, verify func(context.Context, string) error) {
 	if current == "" || save == nil {
 		return
 	}
@@ -1175,6 +1179,12 @@ func (p *microvmProc) keepRefreshed(ctx context.Context, client *guestproto.Clie
 	next := string(b)
 	if !valid(current, next) {
 		return
+	}
+	if verify != nil {
+		if err := verify(ctx, next); err != nil {
+			p.b.logger().Warn("refreshed oauth failed verification; refusing to persist", "file", guestFile, "err", err)
+			return
+		}
 	}
 	if err := save(ctx, scope, next); err != nil {
 		p.b.logger().Warn("save refreshed oauth failed", "file", guestFile, "err", err)
