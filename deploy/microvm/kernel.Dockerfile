@@ -19,6 +19,9 @@ COPY kernel.fragment.config /tmp/kernel.fragment.config
 RUN make ARCH=arm64 defconfig \
  && ./scripts/kconfig/merge_config.sh -m .config /tmp/kernel.fragment.config \
  && make ARCH=arm64 olddefconfig \
+ && for opt in MODULES KEXEC KEXEC_FILE CRASH_DUMP HIBERNATION DEVMEM DEVPORT VSOCKETS_LOOPBACK; do \
+      if grep -q "^CONFIG_${opt}=" .config; then echo "hardening: CONFIG_${opt} is still on" >&2; exit 1; fi; \
+    done \
  && make -j"$(nproc)" ARCH=arm64 Image \
  && cp arch/arm64/boot/Image /tmp/vmlinux \
  && cp .config /tmp/kernel.config
