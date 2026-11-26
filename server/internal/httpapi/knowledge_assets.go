@@ -43,6 +43,49 @@ func (s *Server) knowledgeAssetRoutes(mux *http.ServeMux) {
 		w.Header().Set("Cache-Control", "private, no-store")
 		json.NewEncoder(w).Encode(map[string]any{"images": images})
 	})
+	mux.HandleFunc("GET /api/v1/knowledge/attachments", func(w http.ResponseWriter, r *http.Request) {
+		u, _, ws := me(r.Context())
+		rows, err := s.Q.ListKnowledgeAssets(r.Context(), store.ListKnowledgeAssetsParams{
+			WorkspaceID: ws,
+			Viewer:      &u.ID,
+			Query:       strings.TrimSpace(r.URL.Query().Get("q")),
+		})
+		if err != nil {
+			s.responseError(w, r, err)
+			return
+		}
+		type attachment struct {
+			ID          string `json:"id"`
+			Filename    string `json:"filename"`
+			Title       string `json:"title"`
+			Path        string `json:"path"`
+			Ref         string `json:"ref"`
+			URL         string `json:"url"`
+			ContentType string `json:"content_type"`
+			SizeBytes   int64  `json:"size_bytes"`
+			CreatedAt   string `json:"created_at"`
+		}
+		attachments := make([]attachment, 0, len(rows))
+		for _, asset := range rows {
+			attachments = append(attachments, attachment{
+				ID:          asset.ID.String(),
+				Filename:    asset.Filename,
+				Title:       asset.Filename,
+				Path:        wiki.AttachmentFolderPath(asset.Filename),
+				Ref:         wiki.AttachmentRef(asset.ID, asset.Filename),
+				URL:         "/api/v1/knowledge/assets/" + asset.ID.String(),
+				ContentType: asset.ContentType,
+				SizeBytes:   asset.SizeBytes,
+				CreatedAt:   asset.CreatedAt.UTC().Format("2006-01-02T15:04:05Z07:00"),
+			})
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "private, no-store")
+		json.NewEncoder(w).Encode(map[string]any{
+			"folder":      wiki.AttachmentFolder,
+			"attachments": attachments,
+		})
+	})
 	mux.HandleFunc("POST /api/v1/knowledge/assets", func(w http.ResponseWriter, r *http.Request) {
 		u, _, ws := me(r.Context())
 		if s.Blobs == nil {
@@ -92,7 +135,9 @@ func (s *Server) knowledgeAssetRoutes(mux *http.ServeMux) {
 			"ref":          wiki.AttachmentRef(asset.ID, asset.Filename),
 			"url":          "/api/v1/knowledge/assets/" + asset.ID.String(),
 			"filename":     asset.Filename,
+			"path":         wiki.AttachmentFolderPath(asset.Filename),
 			"content_type": asset.ContentType,
+			"size_bytes":   asset.SizeBytes,
 		})
 	})
 	mux.HandleFunc("GET /api/v1/knowledge/assets/{id}", func(w http.ResponseWriter, r *http.Request) {

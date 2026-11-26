@@ -100,6 +100,20 @@ func (s *Service) SweepKnowledgeAssets(ctx context.Context) error {
 // is read into memory, unlike the person's streamed uploads.
 const PersonaAssetLimit = 25 << 20
 
+// AttachmentFolder is the top-level Obsidian-style folder where Knowledge
+// attachments are organized.
+const AttachmentFolder = "attachments"
+
+// AttachmentFolderPath returns the logical Knowledge path for an attachment
+// inside the top-level attachments folder.
+func AttachmentFolderPath(filename string) string {
+	base := path.Base(strings.ReplaceAll(strings.TrimSpace(filename), "\\", "/"))
+	if base == "." || base == ".." || base == "/" || base == "" {
+		base = "attachment"
+	}
+	return AttachmentFolder + "/" + base
+}
+
 // DetectAssetContentType sniffs a Knowledge asset's MIME type from its leading
 // bytes, preserving SVG detection for .svg files and recognizing common
 // container formats that http.DetectContentType leaves as octet-stream.
@@ -108,9 +122,13 @@ func DetectAssetContentType(filename string, head []byte) string {
 		head = head[:512]
 	}
 	typ := http.DetectContentType(head)
-	if strings.EqualFold(path.Ext(filename), ".svg") && strings.Contains(string(head), "<svg") {
+	ext := strings.ToLower(path.Ext(filename))
+	if ext == ".svg" && strings.Contains(string(head), "<svg") {
 		// Sniffing reads an SVG as text; the viewer serves it as a download either way.
 		return "image/svg+xml"
+	}
+	if typ == "video/webm" && ext == ".mkv" {
+		return "video/x-matroska"
 	}
 	if typ != "application/octet-stream" {
 		return typ
@@ -119,14 +137,71 @@ func DetectAssetContentType(filename string, head []byte) string {
 		switch string(head[8:12]) {
 		case "avif", "avis":
 			return "image/avif"
+		case "heic", "heix", "hevc", "hevx":
+			return "image/heic"
+		case "mif1", "msf1":
+			return "image/heif"
 		case "qt  ":
 			return "video/quicktime"
 		case "M4A ", "M4B ":
 			return "audio/mp4"
+		case "M4V ", "mp41", "mp42", "isom", "iso2", "avc1":
+			return "video/mp4"
 		}
 	}
 	if len(head) >= 4 && string(head[:4]) == "fLaC" {
 		return "audio/flac"
+	}
+	if len(head) >= 4 && string(head[:4]) == "OggS" {
+		if ext == ".opus" {
+			return "audio/opus"
+		}
+		return "audio/ogg"
+	}
+	if len(head) >= 12 && string(head[:4]) == "RIFF" && string(head[8:12]) == "WAVE" {
+		return "audio/wav"
+	}
+	if len(head) >= 12 && string(head[:4]) == "FORM" && (string(head[8:12]) == "AIFF" || string(head[8:12]) == "AIFC") {
+		return "audio/aiff"
+	}
+	if len(head) >= 4 && head[0] == 0x1a && head[1] == 0x45 && head[2] == 0xdf && head[3] == 0xa3 {
+		if ext == ".webm" {
+			return "video/webm"
+		}
+		return "video/x-matroska"
+	}
+	if (len(head) >= 3 && string(head[:3]) == "ID3") || (len(head) >= 2 && head[0] == 0xff && (head[1]&0xe0) == 0xe0) {
+		return "audio/mpeg"
+	}
+	switch ext {
+	case ".mp3":
+		return "audio/mpeg"
+	case ".m4a", ".m4b":
+		return "audio/mp4"
+	case ".aac":
+		return "audio/aac"
+	case ".wav":
+		return "audio/wav"
+	case ".aif", ".aiff":
+		return "audio/aiff"
+	case ".flac":
+		return "audio/flac"
+	case ".ogg":
+		return "audio/ogg"
+	case ".opus":
+		return "audio/opus"
+	case ".mp4", ".m4v":
+		return "video/mp4"
+	case ".mov":
+		return "video/quicktime"
+	case ".webm":
+		return "video/webm"
+	case ".mkv":
+		return "video/x-matroska"
+	case ".heic":
+		return "image/heic"
+	case ".heif":
+		return "image/heif"
 	}
 	return typ
 }

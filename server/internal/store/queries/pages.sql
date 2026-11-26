@@ -77,6 +77,16 @@ AND (k.owner_user_id=sqlc.narg(viewer)::uuid OR EXISTS (
 ORDER BY k.created_at DESC, k.id
 LIMIT 12;
 
+-- name: ListKnowledgeAssets :many
+SELECT k.id, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
+WHERE k.workspace_id=sqlc.arg(workspace_id)
+AND (sqlc.arg(query)::text = '' OR strpos(lower(k.filename), lower(sqlc.arg(query)::text)) > 0)
+AND (k.owner_user_id=sqlc.narg(viewer)::uuid OR EXISTS (
+ SELECT 1 FROM page_asset_refs r JOIN artifact_versions v ON v.id=r.version_id JOIN artifacts a ON a.id=v.artifact_id
+ WHERE r.asset_id=k.id AND artifact_visible(a.audience,a.owner_user_id,sqlc.narg(viewer)::uuid)))
+ORDER BY k.created_at DESC, k.id
+LIMIT 500;
+
 -- name: AddPageAssetRef :exec
 INSERT INTO page_asset_refs(version_id,asset_id)
 SELECT v.id,k.id FROM artifact_versions v JOIN artifacts a ON a.id=v.artifact_id

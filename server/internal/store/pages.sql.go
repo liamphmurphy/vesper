@@ -387,6 +387,57 @@ func (q *Queries) ListKnowledgeAssetDeletions(ctx context.Context) ([]KnowledgeA
 	return items, nil
 }
 
+const listKnowledgeAssets = `-- name: ListKnowledgeAssets :many
+SELECT k.id, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
+WHERE k.workspace_id=$1
+AND ($2::text = '' OR strpos(lower(k.filename), lower($2::text)) > 0)
+AND (k.owner_user_id=$3::uuid OR EXISTS (
+ SELECT 1 FROM page_asset_refs r JOIN artifact_versions v ON v.id=r.version_id JOIN artifacts a ON a.id=v.artifact_id
+ WHERE r.asset_id=k.id AND artifact_visible(a.audience,a.owner_user_id,$3::uuid)))
+ORDER BY k.created_at DESC, k.id
+LIMIT 500
+`
+
+type ListKnowledgeAssetsParams struct {
+	WorkspaceID uuid.UUID
+	Query       string
+	Viewer      *uuid.UUID
+}
+
+type ListKnowledgeAssetsRow struct {
+	ID          uuid.UUID
+	Filename    string
+	ContentType string
+	SizeBytes   int64
+	CreatedAt   time.Time
+}
+
+func (q *Queries) ListKnowledgeAssets(ctx context.Context, arg ListKnowledgeAssetsParams) ([]ListKnowledgeAssetsRow, error) {
+	rows, err := q.db.Query(ctx, listKnowledgeAssets, arg.WorkspaceID, arg.Query, arg.Viewer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListKnowledgeAssetsRow{}
+	for rows.Next() {
+		var i ListKnowledgeAssetsRow
+		if err := rows.Scan(
+			&i.ID,
+			&i.Filename,
+			&i.ContentType,
+			&i.SizeBytes,
+			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listPageReviews = `-- name: ListPageReviews :many
 SELECT v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id, v.review_snapshot_key, v.review_snapshot_renderer, v.review_snapshot_sha256 FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
 WHERE a.id = $1 AND a.workspace_id = $2
