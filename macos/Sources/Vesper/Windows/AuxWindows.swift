@@ -136,6 +136,9 @@ final class AuxWindows {
     func previewQuickLook(items: [QuickLookItem], index: Int?, from window: NSWindow?) {
         quickLook.preview(items: items, index: index, from: window)
     }
+    func toggleQuickLook(items: [QuickLookItem], index: Int?, from window: NSWindow?) {
+        quickLook.toggle(items: items, index: index, from: window)
+    }
     func cleanupQuickLook() { quickLook.cleanup() }
     func checkForUpdates() { Task { await runUpdateCheck(manual: true) } }
 

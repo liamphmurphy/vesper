@@ -423,6 +423,9 @@ final class CommandPaletteModel {
         store.load(API.getDevWorkspace())
         store.load(API.listInbox())
         store.load(API.listChats(archived: false))
+        if isKnowledgeMode {
+            store.load(KnowledgeAPI.listAttachments())
+        }
 
         switch pageContext {
         case .knowledge(let id):
@@ -1318,6 +1321,28 @@ final class CommandPaletteModel {
         }
         if !rows.isEmpty {
             result.append(PaletteSection(id: "knowledge-pages", label: nil, rows: rows))
+        }
+
+        if knowledgeKind == nil && parsed.tag.isEmpty && (facet == nil || facet == KnowledgeShellLogic.attachmentsFolderName) {
+            let allAttachments = store?.entry(KnowledgeAPI.listAttachments()).data?.attachments ?? []
+            let matchingAtts = KnowledgeShellLogic.filterAttachments(allAttachments, matching: parsed.text)
+            if !matchingAtts.isEmpty {
+                let attRows = matchingAtts.prefix(12).map { att -> PaletteRow in
+                    let href = KnowledgeShellLogic.attachmentRoute(id: att.id)
+                    let subtitle = "\(att.path) \u{00B7} \(att.usageSummary)"
+                    return PaletteRow(
+                        id: "katt-\(att.id)",
+                        title: att.filename,
+                        subtitle: subtitle,
+                        sfSymbol: KnowledgeAttachmentActions.sfSymbol(for: att.contentType, filename: att.filename),
+                        href: href,
+                        recent: CommandPaletteLink(id: att.id, title: att.filename, meta: "attachment", href: href, kind: "Attachments"),
+                        highlightTitle: !parsed.text.isEmpty,
+                        preview: .item(label: "Attachment", title: att.filename, detail: subtitle, updatedAt: att.createdAt)
+                    )
+                }
+                result.append(PaletteSection(id: "knowledge-attachments", label: "Attachments", count: matchingAtts.count, rows: attRows))
+            }
         }
 
         if !parsed.text.isEmpty || !parsed.tag.isEmpty {

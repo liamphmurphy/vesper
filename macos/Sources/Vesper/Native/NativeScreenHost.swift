@@ -89,6 +89,10 @@ final class NativeScreenContext {
 
     func showQuickLook(_ items: [QuickLookItem], index: Int? = nil) { window()?.showQuickLook(items: items, index: index) }
 
+    func toggleQuickLook(_ items: [QuickLookItem], index: Int? = nil) { window()?.toggleQuickLook(items: items, index: index) }
+
+    func openCommandPalette(_ request: CommandPaletteRequest? = nil) { window()?.openCommandPalette(request) }
+
     /// The window's undo manager, so ⌘Z (Edit ▸ Undo) undoes a screen's action.
     var undoManager: UndoManager? { window()?.window?.undoManager }
 

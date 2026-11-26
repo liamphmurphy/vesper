@@ -189,9 +189,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
     @objc func findNext(_ sender: Any?) { app.keyController?.findNext() }
     @objc func findPrevious(_ sender: Any?) { app.keyController?.findPrevious() }
     @objc func useSelectionForFind(_ sender: Any?) { app.keyController?.useSelectionForFind() }
-    /// ⌘K: opens (or toggles) the native floating command palette.
+    private func isOnKnowledgeRoute(_ controller: MainWindowController?) -> Bool {
+        guard let route = controller?.state.route else { return false }
+        return route == "/knowledge" || route.hasPrefix("/knowledge/") || route.hasPrefix("/knowledge?") || route.hasPrefix("/wiki/")
+    }
+
+    /// ⌘K: opens Knowledge Quick Switcher when in Knowledge, otherwise opens the global command palette.
     @objc func openCommandPalette(_ sender: Any?) {
+        if let controller = app.keyController, isOnKnowledgeRoute(controller), let window = controller.window {
+            NotificationCenter.default.post(name: .vesperOpenKnowledgeQuickSwitcher, object: window)
+            return
+        }
         app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .all), from: app.keyController)
+    }
+    /// ⌘O: opens Knowledge Quick Switcher (or Knowledge-scoped Command Palette from other screens).
+    @objc func openQuickSwitcher(_ sender: Any?) {
+        if let controller = app.keyController, isOnKnowledgeRoute(controller), let window = controller.window {
+            NotificationCenter.default.post(name: .vesperOpenKnowledgeQuickSwitcher, object: window)
+            return
+        }
+        app.aux.openCommandPalette(request: CommandPaletteRequest(scope: .knowledge), from: app.keyController)
     }
     /// ⇧⌘K: opens the floating command palette scoped to the current view.
     @objc func openScopedCommandPalette(_ sender: Any?) {
@@ -308,7 +325,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         case #selector(findNext(_:)), #selector(findPrevious(_:)):
             guard let controller = app.keyController else { return false }
             return controller.isFindBarVisible && controller.hasFindQuery
-        case #selector(openCommandPalette(_:)), #selector(openScopedCommandPalette(_:)), #selector(focusSearch(_:)):
+        case #selector(openCommandPalette(_:)), #selector(openQuickSwitcher(_:)), #selector(openScopedCommandPalette(_:)), #selector(focusSearch(_:)):
             guard let controller = app.keyController, controller.kind == .vesper else { return false }
             let route = controller.state.route
             return route != "/dev" && route?.hasPrefix("/dev/") != true

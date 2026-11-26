@@ -84,6 +84,7 @@ enum MainMenu {
             item("Use Selection for Find", #selector(AppDelegate.useSelectionForFind(_:)), "e"),
             sep(),
             item("Command Palette…", #selector(AppDelegate.openCommandPalette(_:)), "k"),
+            item("Quick Switcher…", #selector(AppDelegate.openQuickSwitcher(_:)), "o"),
             item("Search Current View…", #selector(AppDelegate.openScopedCommandPalette(_:)), "k", [.command, .shift]),
             item("Search…", #selector(AppDelegate.focusSearch(_:)), "f", [.command, .option]),
         ])

@@ -60,6 +60,25 @@ final class QuickLookController: NSObject, QLPreviewPanelDataSource, QLPreviewPa
     private var fetchTask: Task<Void, Never>?
 
     var hasItems: Bool { !previewItems.isEmpty }
+    var isVisible: Bool {
+        QLPreviewPanel.sharedPreviewPanelExists() && QLPreviewPanel.shared()?.isVisible == true
+    }
+
+    func close() {
+        fetchTask?.cancel()
+        fetchTask = nil
+        if QLPreviewPanel.sharedPreviewPanelExists() {
+            QLPreviewPanel.shared()?.orderOut(nil)
+        }
+    }
+
+    func toggle(items: [QuickLookItem], index: Int?, from window: NSWindow?) {
+        if isVisible {
+            close()
+            return
+        }
+        preview(items: items, index: index, from: window)
+    }
 
     init(aux: AuxWindows) {
         self.aux = aux

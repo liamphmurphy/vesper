@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import VesperCore
@@ -31,6 +32,7 @@ enum KnowledgeMoveTarget: Equatable {
 enum KnowledgeDeleteTarget: Equatable {
     case page(KnowledgePageRow)
     case folder(path: String, name: String, pageCount: Int)
+    case attachment(KnowledgeAttachment)
 }
 
 enum KnowledgeSheetKind: Identifiable, Equatable {
@@ -39,6 +41,7 @@ enum KnowledgeSheetKind: Identifiable, Equatable {
     case newFolder(parent: String)
     case renamePage(KnowledgePageRow)
     case renameFolder(path: String, name: String)
+    case renameAttachment(KnowledgeAttachment)
     case move(target: KnowledgeMoveTarget)
     case delete(target: KnowledgeDeleteTarget)
     case bulkMove(rowIds: [String])
@@ -51,11 +54,13 @@ enum KnowledgeSheetKind: Identifiable, Equatable {
         case .newFolder(let p): return "newFolder:\(p)"
         case .renamePage(let r): return "renamePage:\(r.id)"
         case .renameFolder(let p, _): return "renameFolder:\(p)"
+        case .renameAttachment(let a): return "renameAttachment:\(a.id)"
         case .move(let t): return "move:\(t.isFolder ? "f" : "p"):\(t.path)"
         case .delete(let t):
             switch t {
             case .page(let r): return "deletePage:\(r.id)"
             case .folder(let p, _, _): return "deleteFolder:\(p)"
+            case .attachment(let a): return "deleteAttachment:\(a.id)"
             }
         case .bulkMove(let ids): return "bulkMove:\(ids.joined(separator: ","))"
         case .bulkDelete(let ids): return "bulkDelete:\(ids.joined(separator: ","))"
@@ -118,6 +123,7 @@ final class KnowledgeShellController {
     var colorScheme: ColorScheme = .light
     var isWorking = false
     var sheet: KnowledgeSheetKind?
+    var quickSwitcherOpen = false
     var activeDestination: KnowledgeDestination = .home
     var legacyResolutionError: String?
     var allPagesCache: [KnowledgePageRow] = []
@@ -125,6 +131,9 @@ final class KnowledgeShellController {
     @ObservationIgnored private var syncedAudiencePageId: String?
     @ObservationIgnored private var headingJumpToken = 0
     @ObservationIgnored private var chatPrefillToken = 0
+    @ObservationIgnored private var pendingVaultHeadingJump: (pageId: String, headingText: String, anchor: String)?
+    @ObservationIgnored var selectedInlineEmbed: KnowledgeEmbed?
+    @ObservationIgnored var selectedPageEmbeds: [KnowledgeEmbed] = []
     /// Saves the open editor's unsaved edits; the editor registers it while it is on screen.
     @ObservationIgnored private var pendingEditorSave: (pageId: String, save: @MainActor () async -> Void)?
 
@@ -132,6 +141,10 @@ final class KnowledgeShellController {
     static let slideStartersRequest = API.listSlideStarters()
     static let bootstrapRequest = API.getBootstrap()
     static let attachmentsRequest = KnowledgeAPI.listAttachments()
+
+    var headingsRequest: APIRequest<KnowledgeHeadingsResponse> {
+        KnowledgeAPI.listHeadings(includeAgent: viewMode == .agent)
+    }
 
     init() {
         let savedPins = UserDefaults.standard.stringArray(forKey: Self.pinnedDefaultsKey) ?? []
@@ -193,6 +206,146 @@ final class KnowledgeShellController {
         } else {
             context.navigate(href)
         }
+    }
+
+    func previewAttachmentInQuickLook(_ attachment: KnowledgeAttachment, in context: NativeScreenContext) {
+        let all = attachments(in: context)
+        let items = all.map { att in
+            QuickLookItem(
+                url: context.resolvedURL(att.url)?.absoluteString ?? att.url,
+                title: att.filename,
+                filename: att.filename,
+                contentType: att.contentType
+            )
+        }
+        if let idx = all.firstIndex(where: { $0.id == attachment.id }), !items.isEmpty {
+            context.showQuickLook(items, index: idx)
+        } else {
+            KnowledgeAttachmentActions.openFullscreen(
+                url: attachment.url,
+                title: attachment.filename,
+                contentType: attachment.contentType,
+                context: context
+            )
+        }
+    }
+
+    /// Spacebar Quick Look toggle for the currently selected inline embed or active attachment in `attachments/`.
+    @discardableResult
+    func toggleQuickLookForCurrentSelection(in context: NativeScreenContext) -> Bool {
+        if let selected = selectedInlineEmbed,
+           let rawURL = selected.url, !rawURL.isEmpty {
+            let source = selectedPageEmbeds.isEmpty ? [selected] : selectedPageEmbeds
+            let validEmbeds = source.filter { $0.url?.isEmpty == false }
+            let items = validEmbeds.compactMap { emb -> QuickLookItem? in
+                guard let url = emb.url, !url.isEmpty else { return nil }
+                let title = (emb.title?.isEmpty == false ? emb.title! : emb.ref)
+                return QuickLookItem(
+                    url: context.resolvedURL(url)?.absoluteString ?? url,
+                    title: title,
+                    filename: title,
+                    contentType: emb.contentType
+                )
+            }
+            guard !items.isEmpty else { return false }
+            let idx = validEmbeds.firstIndex(where: { $0.ref == selected.ref }) ?? 0
+            context.toggleQuickLook(items, index: idx)
+            return true
+        }
+
+        if let activeAttId = activeDestination.activeAttachmentId {
+            let all = attachments(in: context)
+            guard let idx = all.firstIndex(where: { $0.id == activeAttId }) else { return false }
+            let items = all.map { att in
+                QuickLookItem(
+                    url: context.resolvedURL(att.url)?.absoluteString ?? att.url,
+                    title: att.filename,
+                    filename: att.filename,
+                    contentType: att.contentType
+                )
+            }
+            context.toggleQuickLook(items, index: idx)
+            return true
+        }
+
+        return false
+    }
+
+    func pickFilesToUploadToAttachments(in context: NativeScreenContext) {
+        let panel = NSOpenPanel()
+        panel.canChooseFiles = true
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = true
+        panel.prompt = "Upload"
+        let done: (NSApplication.ModalResponse) -> Void = { response in
+            guard response == .OK, !panel.urls.isEmpty else { return }
+            self.uploadDroppedFilesToAttachments(panel.urls, in: context)
+        }
+        if let window = context.window()?.window {
+            panel.beginSheetModal(for: window, completionHandler: done)
+        } else {
+            panel.begin(completionHandler: done)
+        }
+    }
+
+    func renameAttachment(_ attachment: KnowledgeAttachment, to newName: String, in context: NativeScreenContext) async throws {
+        let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, trimmed != attachment.filename else { return }
+        _ = try await context.store.mutate(
+            KnowledgeAPI.renameAttachment(id: attachment.id, filename: trimmed),
+            invalidating: KnowledgeAPI.invalidation
+        )
+        _ = await context.store.refetch(Self.attachmentsRequest)
+        if activeDestination.activeAttachmentId == attachment.id {
+            publishChrome(for: context)
+        }
+        context.showToast(ToastItemModel(id: "knowledge.att.rename.\(attachment.id)", title: "Renamed to \(trimmed)", tone: .success))
+    }
+
+    func deleteAttachment(_ attachment: KnowledgeAttachment, in context: NativeScreenContext) async throws {
+        _ = try await context.store.mutate(
+            KnowledgeAPI.deleteAttachment(id: attachment.id),
+            invalidating: KnowledgeAPI.invalidation
+        )
+        _ = await context.store.refetch(Self.attachmentsRequest)
+        if activeDestination.activeAttachmentId == attachment.id {
+            context.navigate("/knowledge")
+        }
+        context.showToast(ToastItemModel(id: "knowledge.att.delete.\(attachment.id)", title: "Deleted \(attachment.filename)", tone: .success))
+    }
+
+    func jumpToHeading(pageId: String, heading: KnowledgeOutlineHeading) {
+        headingJumpToken += 1
+        headingJumpRequest = KnowledgeHeadingJumpRequest(
+            token: headingJumpToken,
+            pageId: pageId,
+            heading: heading
+        )
+    }
+
+    func jumpToVaultHeading(_ row: KnowledgeHeadingRow, in context: NativeScreenContext, newTab: Bool = false) {
+        let href = KnowledgeShellLogic.pageHref(id: row.pageId, title: row.pageTitle)
+        if newTab {
+            context.openInNewTab(href)
+            return
+        }
+        if activeDestination.activePageId == row.pageId {
+            let headings = currentHeadings(for: row.pageId, loadedPage: context.store.entry(KnowledgeAPI.getPage(id: row.pageId)).data)
+            if let matched = matchHeading(headings, text: row.heading, anchor: row.anchor) {
+                jumpToHeading(pageId: row.pageId, heading: matched)
+            }
+            return
+        }
+        pendingVaultHeadingJump = (pageId: row.pageId, headingText: row.heading, anchor: row.anchor)
+        context.navigate(href)
+    }
+
+    private func matchHeading(_ headings: [KnowledgeOutlineHeading], text: String, anchor: String) -> KnowledgeOutlineHeading? {
+        if let exact = headings.first(where: { $0.text.caseInsensitiveCompare(text) == .orderedSame }) {
+            return exact
+        }
+        let targetSlug = KnowledgeShellLogic.slug(anchor.isEmpty ? text : anchor)
+        return headings.first { KnowledgeShellLogic.slug($0.text) == targetSlug }
     }
 
     func uploadDroppedFilesToAttachments(_ urls: [URL], in context: NativeScreenContext) {
@@ -558,6 +711,16 @@ final class KnowledgeShellController {
                     showErrorToast(id: "knowledge.rename", title: "Couldn\u{2019}t rename folder", error: error, in: context)
                 }
             }
+        } else if rowId.hasPrefix("a:") {
+            let id = String(rowId.dropFirst(2))
+            guard let att = attachments(in: context).first(where: { $0.id == id }) else { return }
+            Task {
+                do {
+                    try await renameAttachment(att, to: nextName, in: context)
+                } catch {
+                    showErrorToast(id: "knowledge.rename", title: "Couldn\u{2019}t rename attachment", error: error, in: context)
+                }
+            }
         }
     }
 
@@ -867,6 +1030,14 @@ final class KnowledgeShellController {
     }
 
     func updateLiveHeadings(pageId: String, headings: [KnowledgeOutlineHeading], in context: NativeScreenContext) {
+        if let pending = pendingVaultHeadingJump, pending.pageId == pageId, !headings.isEmpty {
+            pendingVaultHeadingJump = nil
+            if let matched = matchHeading(headings, text: pending.headingText, anchor: pending.anchor) {
+                Task { @MainActor [weak self] in
+                    self?.jumpToHeading(pageId: pageId, heading: matched)
+                }
+            }
+        }
         guard liveHeadingsPageId != pageId || liveHeadings != headings else { return }
         liveHeadingsPageId = pageId
         liveHeadings = headings
@@ -1139,33 +1310,52 @@ struct KnowledgeScreen: View {
     @Environment(\.colorScheme) private var colorScheme
 
     @State private var controller = KnowledgeShellController()
+    @State private var spaceKeyMonitor: Any?
 
     var body: some View {
         let treeEntry = context.store.entry(controller.treeListRequest)
 
-        Group {
-            switch controller.activeDestination {
-            case .home:
-                KnowledgeHomeView(controller: controller, startKind: nil)
-            case .start(let kind):
-                KnowledgeHomeView(controller: controller, startKind: kind)
-            case .search:
-                KnowledgeSearchView(controller: controller)
-            case .connect:
-                KnowledgeConnectView(controller: controller)
-            case .graph:
-                KnowledgeGraphScreenSlot()
-            case .page(let pageId):
-                KnowledgePageView(controller: controller, pageId: pageId)
-                    .id(pageId)
-            case .attachment(let attachmentId):
-                attachmentDestinationView(id: attachmentId)
-                    .id(attachmentId)
-            case .legacyWiki(let wikiPath):
-                legacyResolutionView(path: wikiPath)
+        ZStack {
+            Group {
+                switch controller.activeDestination {
+                case .home:
+                    KnowledgeHomeView(controller: controller, startKind: nil)
+                case .start(let kind):
+                    KnowledgeHomeView(controller: controller, startKind: kind)
+                case .search:
+                    KnowledgeSearchView(controller: controller)
+                case .connect:
+                    KnowledgeConnectView(controller: controller)
+                case .graph:
+                    KnowledgeGraphScreenSlot()
+                case .page(let pageId):
+                    KnowledgePageView(controller: controller, pageId: pageId)
+                        .id(pageId)
+                case .attachment(let attachmentId):
+                    attachmentDestinationView(id: attachmentId)
+                        .id(attachmentId)
+                case .legacyWiki(let wikiPath):
+                    legacyResolutionView(path: wikiPath)
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+
+            if controller.quickSwitcherOpen {
+                KnowledgeQuickSwitcherView(controller: controller) {
+                    controller.quickSwitcherOpen = false
+                }
+                .transition(.opacity)
+                .zIndex(200)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .onReceive(NotificationCenter.default.publisher(for: .vesperOpenKnowledgeQuickSwitcher)) { note in
+            guard context.isAttached else { return }
+            if let targetWindow = note.object as? NSWindow, targetWindow !== context.window()?.window {
+                return
+            }
+            controller.quickSwitcherOpen.toggle()
+        }
         .onChange(of: theme, initial: true) { _, next in
             controller.theme = next
         }
@@ -1173,11 +1363,14 @@ struct KnowledgeScreen: View {
             controller.colorScheme = next
         }
         .onChange(of: context.match, initial: true) { _, match in
+            controller.selectedInlineEmbed = nil
+            controller.selectedPageEmbeds = []
             controller.applyMatch(match, in: context)
         }
         .task(id: controller.treeListRequest.key) {
             context.store.load(controller.treeListRequest)
             context.store.load(KnowledgeShellController.attachmentsRequest)
+            context.store.load(controller.headingsRequest)
             context.store.load(KnowledgeShellController.slideStartersRequest)
         }
         .task(id: "\(controller.viewMode.rawValue)|\(treeEntry.updatedAt?.timeIntervalSince1970 ?? 0)") {
@@ -1193,6 +1386,7 @@ struct KnowledgeScreen: View {
             context.store.stopObserving(oldReq.key)
             context.store.observe(controller.treeListRequest)
             context.store.load(controller.treeListRequest)
+            context.store.load(controller.headingsRequest)
             controller.publishChrome(for: context)
         }
         .onAppear {
@@ -1200,6 +1394,7 @@ struct KnowledgeScreen: View {
             controller.colorScheme = colorScheme
             context.store.observe(controller.treeListRequest)
             context.store.observe(KnowledgeShellController.attachmentsRequest)
+            installSpaceQuickLookMonitor()
             context.sidebarView = AnyView(KnowledgeSidebarHost(context: context, controller: controller))
             context.inspectorView = { tabId in
                 if tabId == KnowledgeInspectorLogic.chatTabId {
@@ -1227,6 +1422,7 @@ struct KnowledgeScreen: View {
             controller.publishChrome(for: context)
         }
         .onDisappear {
+            removeSpaceQuickLookMonitor()
             context.store.stopObserving(controller.treeListRequest.key)
             context.store.stopObserving(KnowledgeShellController.attachmentsRequest.key)
             context.sidebarView = nil
@@ -1241,14 +1437,54 @@ struct KnowledgeScreen: View {
         }
     }
 
+    private func installSpaceQuickLookMonitor() {
+        removeSpaceQuickLookMonitor()
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            guard context.isAttached,
+                  let window = context.window()?.window,
+                  event.window === window,
+                  window.isKeyWindow,
+                  window.attachedSheet == nil,
+                  controller.sheet == nil,
+                  controller.inlineRenameRowId == nil,
+                  !controller.quickSwitcherOpen else {
+                return event
+            }
+            // Spacebar with no modifiers triggers Quick Look when focus is not inside an editable text field or control.
+            guard event.keyCode == 49,
+                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty else {
+                return event
+            }
+            if let responder = window.firstResponder,
+               responder is NSText || responder is NSButton || responder is NSPopUpButton {
+                return event
+            }
+            if controller.toggleQuickLookForCurrentSelection(in: context) {
+                return nil
+            }
+            return event
+        }
+    }
+
+    private func removeSpaceQuickLookMonitor() {
+        if let spaceKeyMonitor {
+            NSEvent.removeMonitor(spaceKeyMonitor)
+            self.spaceKeyMonitor = nil
+        }
+    }
+
     @ViewBuilder
     private func attachmentDestinationView(id: String) -> some View {
         let entry = context.store.entry(KnowledgeShellController.attachmentsRequest)
         if let attachment = entry.data?.attachments.first(where: { $0.id == id }) {
-            KnowledgeAttachmentDetailView(attachment: attachment)
-                .onAppear {
-                    controller.publishChrome(for: context)
-                }
+            KnowledgeAttachmentDetailView(
+                attachment: attachment,
+                onRename: { att in controller.sheet = .renameAttachment(att) },
+                onDelete: { att in controller.sheet = .delete(target: .attachment(att)) }
+            )
+            .onAppear {
+                controller.publishChrome(for: context)
+            }
         } else if entry.data == nil && entry.error == nil {
             VStack(spacing: 10) {
                 ProgressView().controlSize(.small)
@@ -1309,6 +1545,13 @@ struct KnowledgeScreen: View {
             ) { newName in
                 try await controller.renameFolder(path, to: newName, in: context)
             }
+        case .renameAttachment(let att):
+            KnowledgeRenameSheet(
+                title: "Rename \u{201C}\(att.filename)\u{201D}",
+                initialName: att.filename
+            ) { newName in
+                try await controller.renameAttachment(att, to: newName, in: context)
+            }
         case .move(let target):
             KnowledgeMoveSheet(
                 controller: controller,
@@ -1326,6 +1569,7 @@ struct KnowledgeScreen: View {
                 switch target {
                 case .page(let row): try await controller.deletePage(row, in: context)
                 case .folder(let path, _, _): try await controller.deleteFolder(path, in: context)
+                case .attachment(let att): try await controller.deleteAttachment(att, in: context)
                 }
             }
         case .bulkMove(let rowIds):
@@ -1375,7 +1619,11 @@ private struct KnowledgePageView: View {
                     },
                     onMoveToPersonal: page.audience == .agent ? {
                         controller.setPageAudience(page: page, audience: .private, in: context)
-                    } : nil
+                    } : nil,
+                    onSelectedEmbedChange: { selected, allEmbeds in
+                        controller.selectedInlineEmbed = selected
+                        controller.selectedPageEmbeds = allEmbeds
+                    }
                 )
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else if let error = entry.error {
@@ -2038,16 +2286,22 @@ struct KnowledgeDeleteSheet: View {
         let titleText: String = switch target {
         case .page(let row): "Delete \u{201C}\(row.title)\u{201D}?"
         case .folder(_, let name, _): "Delete the folder \u{201C}\(name)\u{201D}?"
+        case .attachment(let att): "Delete \u{201C}\(att.filename)\u{201D}?"
         }
         let bodyText: String = switch target {
         case .page:
             "This deletes the page and its history. It can\u{2019}t be undone. Links to it stay as unresolved links."
         case .folder(_, _, let count):
             "This deletes the \(count == 1 ? "page" : "\(count) pages") in it, with their history. It can\u{2019}t be undone."
+        case .attachment(let att):
+            att.usageCount > 0
+                ? "Used in \(att.usageCount) \(att.usageCount == 1 ? "doc" : "docs") \u{2014} deleting will make those inline embeds unavailable. It can\u{2019}t be undone."
+                : "Not currently used in any doc (orphaned). This deletes the file permanently and can\u{2019}t be undone."
         }
         let actionLabel: String = switch target {
         case .page: "Delete page"
         case .folder(_, _, let count): count == 1 ? "Delete folder" : "Delete \(count) pages"
+        case .attachment: "Delete attachment"
         }
 
         VStack(alignment: .leading, spacing: 14) {
