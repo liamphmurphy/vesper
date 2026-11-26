@@ -346,18 +346,29 @@ struct BrowserScreen: View {
                     shieldPopoverOpen.toggle()
                 } label: {
                     let adBlockActive = store.isAdBlockActive(for: tab?.urlString ?? "")
-                    Image(systemName: tab?.isPrivate == true ? "eye.slash.fill" : (adBlockActive ? "shield.lefthalf.filled" : "shield.slash"))
-                        .font(.system(size: 11.5))
-                        .foregroundStyle(
-                            tab?.isPrivate == true
-                                ? Color.purple
-                                : (adBlockActive ? theme.palette.accent : theme.palette.tertiaryText)
-                        )
+                    let hits = tab?.adBlockInterventionsCount ?? 0
+                    HStack(spacing: 3) {
+                        Image(systemName: tab?.isPrivate == true ? "eye.slash.fill" : (adBlockActive ? "shield.lefthalf.filled" : "shield.slash"))
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(
+                                tab?.isPrivate == true
+                                    ? Color.purple
+                                    : (adBlockActive ? theme.palette.accent : theme.palette.tertiaryText)
+                            )
+                        if adBlockActive, hits > 0, tab?.isPrivate != true {
+                            Text(hits > 99 ? "99+" : "\(hits)")
+                                .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(theme.palette.accent)
+                                .padding(.horizontal, 4)
+                                .padding(.vertical, 0.5)
+                                .background(Capsule().fill(theme.palette.accent.opacity(0.14)))
+                        }
+                    }
                 }
                 .buttonStyle(.plain)
                 .hoverTooltip("Privacy, Ad-Block & Browser Settings")
                 .popover(isPresented: $shieldPopoverOpen, arrowEdge: .bottom) {
-                    shieldPopover(store: store, tab: tab)
+                    BrowserShieldPopover(store: store, tab: tab, isPresented: $shieldPopoverOpen)
                 }
 
                 if tab?.hasOnlySecureContent == true, !isEditingOmnibox {
@@ -1008,87 +1019,6 @@ struct BrowserScreen: View {
         }
     }
 
-    // MARK: Shield / Ad-Block / Browser Settings Popover
-
-    private func shieldPopover(store: BrowserStore, tab: BrowserTabSession?) -> some View {
-        let host = tab.flatMap { BrowserPageGuard.normalizeHost($0.urlString) }
-        return VStack(alignment: .leading, spacing: 10) {
-            Text("Browser Privacy & Controls")
-                .font(.system(size: 13, weight: .semibold))
-
-            Toggle("Block Ads & Trackers (WebKit)", isOn: Binding(
-                get: { store.adBlockEnabled },
-                set: { store.setAdBlockEnabled($0) }
-            ))
-            .font(.system(size: 12))
-
-            if let host, store.adBlockEnabled {
-                let active = store.isAdBlockActive(for: tab?.urlString ?? "")
-                Toggle("Protect \(host)", isOn: Binding(
-                    get: { active },
-                    set: { _ in store.toggleAdBlock(forHost: host) }
-                ))
-                .font(.system(size: 12))
-            }
-
-            Toggle("Offer Keychain Password AutoFill", isOn: Binding(
-                get: { store.autofillEnabled },
-                set: {
-                    store.autofillEnabled = $0
-                    store.scheduleSave()
-                }
-            ))
-            .font(.system(size: 12))
-
-            Divider()
-
-            Toggle("Open Vesper links in Browser", isOn: Binding(
-                get: { store.openExternalLinksInBrowser },
-                set: {
-                    store.openExternalLinksInBrowser = $0
-                    store.scheduleSave()
-                }
-            ))
-            .font(.system(size: 12))
-            Text("Hold ⌥ while clicking any link to open it in Safari.")
-                .font(.system(size: 10.5))
-                .foregroundStyle(.secondary)
-
-            HStack {
-                Text("Search engine")
-                    .font(.system(size: 12))
-                Spacer()
-                Picker("", selection: Binding(
-                    get: { store.searchEngine },
-                    set: {
-                        store.searchEngine = $0
-                        store.scheduleSave()
-                    }
-                )) {
-                    ForEach(BrowserSearchEngine.allCases) { engine in
-                        Text(engine.label).tag(engine)
-                    }
-                }
-                .labelsHidden()
-                .frame(width: 130)
-                .controlSize(.small)
-            }
-
-            Divider()
-
-            HStack {
-                Button("Clear \(store.currentRuntime.name) Cookies & Cache", role: .destructive) {
-                    shieldPopoverOpen = false
-                    Task { await store.clearBrowsingData() }
-                }
-                .controlSize(.small)
-                Spacer()
-            }
-        }
-        .padding(14)
-        .frame(width: 300)
-    }
-
     // MARK: Omnibox Autocomplete Overlay
 
     private func currentSuggestions(store: BrowserStore) -> [BrowserOmniboxSuggestion] {
@@ -1728,6 +1658,435 @@ private struct BrowserExtensionsPopoverView: View {
                 store.showToast("Installed extension \(rec.displayName)", tone: .success)
             case .failure(let err):
                 installError = err.localizedDescription
+            }
+        }
+    }
+}
+
+// MARK: - Wipr / uBlock-Grade Shield, Filter Lists & Browser Controls Popover
+
+private struct BrowserShieldPopover: View {
+    enum Tab: String, CaseIterable, Identifiable {
+        case overview = "Protection"
+        case lists = "Filter Lists"
+        case custom = "Custom Rules"
+        var id: String { rawValue }
+    }
+
+    let store: BrowserStore
+    let tab: BrowserTabSession?
+    @Binding var isPresented: Bool
+
+    @State private var selectedTab: Tab = .overview
+    @State private var customListName = ""
+    @State private var customListURL = ""
+    @State private var customListCategory: BrowserAdBlockCategory = .ads
+    @State private var addListError: String?
+    @State private var customRulesDraft = ""
+    @State private var didSeedDraft = false
+
+    private var currentHost: String? {
+        tab.flatMap { BrowserPageGuard.normalizeHost($0.urlString) }
+    }
+
+    private var isProtectedOnCurrentPage: Bool {
+        store.isAdBlockActive(for: tab?.urlString ?? "")
+    }
+
+    var body: some View {
+        let engine = store.adBlockEngine
+        VStack(alignment: .leading, spacing: 10) {
+            // Header + Live Engine Summary
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: isProtectedOnCurrentPage ? "shield.lefthalf.filled" : "shield.slash")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(isProtectedOnCurrentPage ? Color.accentColor : Color.secondary)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(statusTitle)
+                        .font(.system(size: 13, weight: .semibold))
+                        .lineLimit(1)
+                    Text(statusSubtitle(engine: engine))
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                if engine.isCompiling || engine.isUpdating {
+                    ProgressView()
+                        .controlSize(.small)
+                }
+            }
+
+            Picker("", selection: $selectedTab) {
+                ForEach(Tab.allCases) { item in
+                    Text(item.rawValue).tag(item)
+                }
+            }
+            .pickerStyle(.segmented)
+            .labelsHidden()
+            .controlSize(.small)
+
+            Divider()
+
+            switch selectedTab {
+            case .overview:
+                overviewSection(engine: engine)
+            case .lists:
+                filterListsSection(engine: engine)
+            case .custom:
+                customRulesSection()
+            }
+        }
+        .padding(14)
+        .frame(width: 356)
+        .onAppear {
+            if !didSeedDraft {
+                customRulesDraft = store.adBlockConfig.customRules
+                didSeedDraft = true
+            }
+        }
+    }
+
+    private var statusTitle: String {
+        if !store.adBlockEnabled { return "Ad-Blocking Off" }
+        if let host = currentHost {
+            return isProtectedOnCurrentPage ? "Shields Up · \(host)" : "Shields Paused · \(host)"
+        }
+        return "Shields Up"
+    }
+
+    private func statusSubtitle(engine: BrowserAdBlockEngine) -> String {
+        if engine.isUpdating { return "Updating upstream filter lists…" }
+        if engine.isCompiling { return "Compiling WebKit rule lists…" }
+        if !store.adBlockEnabled { return "Turn on to block ads, trackers, and annoyances" }
+        let rules = engine.stats.totalActiveRules
+        let hits = tab?.adBlockInterventionsCount ?? 0
+        if hits > 0 {
+            return "\(rules) active rules (\(engine.compiledChunkCount) lists) · \(hits) scriptlet/cosmetic hits"
+        }
+        return "\(rules) active rules across \(engine.compiledChunkCount) WebKit lists"
+    }
+
+    // MARK: Overview Tab
+
+    @ViewBuilder
+    private func overviewSection(engine: BrowserAdBlockEngine) -> some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 9) {
+                Toggle("Block Ads, Trackers & Annoyances", isOn: Binding(
+                    get: { store.adBlockEnabled },
+                    set: { store.setAdBlockEnabled($0) }
+                ))
+                .font(.system(size: 12, weight: .medium))
+
+                if let host = currentHost, store.adBlockEnabled {
+                    Toggle("Protect \(host)", isOn: Binding(
+                        get: { isProtectedOnCurrentPage },
+                        set: { _ in store.toggleAdBlock(forHost: host) }
+                    ))
+                    .font(.system(size: 12))
+                }
+
+                if store.adBlockEnabled {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("Protection Layers")
+                            .font(.system(size: 10.5, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.top, 2)
+
+                        ForEach(BrowserAdBlockCategory.allCases) { category in
+                            Toggle(isOn: Binding(
+                                get: { store.adBlockConfig.isCategoryEnabled(category) },
+                                set: { store.setAdBlockCategory(category, enabled: $0) }
+                            )) {
+                                HStack(spacing: 6) {
+                                    Image(systemName: category.icon)
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(.secondary)
+                                        .frame(width: 14)
+                                    VStack(alignment: .leading, spacing: 0.5) {
+                                        Text(category.label)
+                                            .font(.system(size: 11.5))
+                                        Text(category.summary)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                }
+                            }
+                            .toggleStyle(.checkbox)
+                        }
+
+                        Toggle(isOn: Binding(
+                            get: { store.adBlockConfig.youtubeAdShieldEnabled },
+                            set: { store.setYouTubeAdShieldEnabled($0) }
+                        )) {
+                            HStack(spacing: 6) {
+                                Image(systemName: "play.rectangle.fill")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 14)
+                                VStack(alignment: .leading, spacing: 0.5) {
+                                    Text("YouTube Ad Shield")
+                                        .font(.system(size: 11.5))
+                                    Text("Prunes playerAds JSON, dismisses enforcement & skips residual ads")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                            }
+                        }
+                        .toggleStyle(.checkbox)
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.primary.opacity(0.04)))
+
+                    if let err = engine.lastError {
+                        Text(err)
+                            .font(.system(size: 10))
+                            .foregroundStyle(.orange)
+                            .lineLimit(2)
+                    }
+                }
+
+                Divider()
+
+                Toggle("Offer Keychain Password AutoFill", isOn: Binding(
+                    get: { store.autofillEnabled },
+                    set: {
+                        store.autofillEnabled = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 12))
+
+                Toggle("Open Vesper links in Browser", isOn: Binding(
+                    get: { store.openExternalLinksInBrowser },
+                    set: {
+                        store.openExternalLinksInBrowser = $0
+                        store.scheduleSave()
+                    }
+                ))
+                .font(.system(size: 12))
+                Text("Hold ⌥ while clicking any link to open it in Safari.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+
+                HStack {
+                    Text("Search engine")
+                        .font(.system(size: 12))
+                    Spacer()
+                    Picker("", selection: Binding(
+                        get: { store.searchEngine },
+                        set: {
+                            store.searchEngine = $0
+                            store.scheduleSave()
+                        }
+                    )) {
+                        ForEach(BrowserSearchEngine.allCases) { engine in
+                            Text(engine.label).tag(engine)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 130)
+                    .controlSize(.small)
+                }
+
+                Divider()
+
+                HStack {
+                    Button("Clear \(store.currentRuntime.name) Cookies & Cache", role: .destructive) {
+                        isPresented = false
+                        Task { await store.clearBrowsingData() }
+                    }
+                    .controlSize(.small)
+                    Spacer()
+                }
+            }
+        }
+        .frame(maxHeight: 420)
+    }
+
+    // MARK: Filter Lists Tab
+
+    @ViewBuilder
+    private func filterListsSection(engine: BrowserAdBlockEngine) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Toggle("Auto-update daily", isOn: Binding(
+                    get: { store.adBlockConfig.autoUpdateEnabled },
+                    set: { store.setAdBlockAutoUpdateEnabled($0) }
+                ))
+                .font(.system(size: 11.5))
+
+                Spacer()
+
+                Button {
+                    Task { await store.refreshAdBlockLists(silent: false) }
+                } label: {
+                    Label(engine.isUpdating ? "Updating…" : "Update Lists", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.system(size: 11))
+                }
+                .controlSize(.small)
+                .disabled(engine.isUpdating)
+            }
+
+            if let updated = store.adBlockConfig.lastUpdatedAt {
+                Text("Last upstream refresh \(updated.formatted(.relative(presentation: .named))) · Bundled starter lists always active.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            } else {
+                Text("Using bundled offline starter lists. Click Update Lists to pull full EasyList, EasyPrivacy, Fanboy & uBlock lists.")
+                    .font(.system(size: 10))
+                    .foregroundStyle(.secondary)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(store.adBlockConfig.subscriptions) { sub in
+                        HStack(alignment: .top, spacing: 6) {
+                            Toggle("", isOn: Binding(
+                                get: { sub.isEnabled },
+                                set: { store.setFilterListEnabled(id: sub.id, enabled: $0) }
+                            ))
+                            .labelsHidden()
+                            .toggleStyle(.checkbox)
+                            .padding(.top, 1)
+
+                            VStack(alignment: .leading, spacing: 1.5) {
+                                HStack(spacing: 5) {
+                                    Text(sub.name)
+                                        .font(.system(size: 11.5, weight: .medium))
+                                        .lineLimit(1)
+                                    Text(sub.category.rawValue)
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(.secondary)
+                                        .padding(.horizontal, 4)
+                                        .padding(.vertical, 0.5)
+                                        .background(Capsule().fill(Color.primary.opacity(0.06)))
+                                }
+                                if let err = sub.lastError, !err.isEmpty {
+                                    Text(err)
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.red)
+                                        .lineLimit(1)
+                                } else if sub.ruleCount > 0 {
+                                    Text("\(sub.ruleCount.formatted()) lines cached")
+                                        .font(.system(size: 10))
+                                        .foregroundStyle(.secondary)
+                                } else {
+                                    Text(sub.url)
+                                        .font(.system(size: 9.5))
+                                        .foregroundStyle(.tertiary)
+                                        .lineLimit(1)
+                                        .truncationMode(.middle)
+                                }
+                            }
+
+                            Spacer(minLength: 4)
+
+                            if !sub.isBuiltIn {
+                                Button(role: .destructive) {
+                                    store.removeCustomFilterList(id: sub.id)
+                                } label: {
+                                    Image(systemName: "trash")
+                                        .font(.system(size: 10.5))
+                                }
+                                .buttonStyle(.plain)
+                                .foregroundStyle(.secondary)
+                            }
+                        }
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 5)
+                        .background(RoundedRectangle(cornerRadius: 6).fill(Color.primary.opacity(0.035)))
+                    }
+                }
+            }
+            .frame(maxHeight: 215)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Add Custom Filter List (ABP / uBO / Hosts)")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                HStack(spacing: 6) {
+                    TextField("Name (optional)", text: $customListName)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                    Picker("", selection: $customListCategory) {
+                        ForEach(BrowserAdBlockCategory.allCases) { cat in
+                            Text(cat.label).tag(cat)
+                        }
+                    }
+                    .labelsHidden()
+                    .frame(width: 118)
+                    .controlSize(.small)
+                }
+                HStack(spacing: 6) {
+                    TextField("https://example.com/filters.txt", text: $customListURL)
+                        .textFieldStyle(.roundedBorder)
+                        .font(.system(size: 11))
+                    Button("Add") {
+                        let err = store.addCustomFilterList(
+                            name: customListName,
+                            urlString: customListURL,
+                            category: customListCategory
+                        )
+                        addListError = err
+                        if err == nil {
+                            customListName = ""
+                            customListURL = ""
+                        }
+                    }
+                    .controlSize(.small)
+                    .disabled(customListURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                }
+                if let addListError {
+                    Text(addListError)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.red)
+                }
+            }
+        }
+    }
+
+    // MARK: Custom Rules Tab
+
+    @ViewBuilder
+    private func customRulesSection() -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Supports ABP/uBO network rules, CSS hiding (`##.ad`), extended CSS (`:has-text()`, `:upward()`, `:style()`), and scriptlets (`##+js(...)`).")
+                .font(.system(size: 10))
+                .foregroundStyle(.secondary)
+
+            TextEditor(text: $customRulesDraft)
+                .font(.system(size: 11, design: .monospaced))
+                .frame(height: 190)
+                .overlay(
+                    RoundedRectangle(cornerRadius: 6)
+                        .stroke(Color.primary.opacity(0.14), lineWidth: 1)
+                )
+
+            HStack {
+                Button("Clear", role: .destructive) {
+                    customRulesDraft = ""
+                    store.updateCustomAdBlockRules("")
+                }
+                .controlSize(.small)
+                .disabled(customRulesDraft.isEmpty && store.adBlockConfig.customRules.isEmpty)
+
+                Spacer()
+
+                Button("Apply Rules") {
+                    store.updateCustomAdBlockRules(customRulesDraft)
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.small)
+                .disabled(customRulesDraft == store.adBlockConfig.customRules)
             }
         }
     }
