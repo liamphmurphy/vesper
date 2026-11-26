@@ -83,6 +83,8 @@ struct KnowledgeTextView: NSViewRepresentable {
         if view.string != text {
             let previousSelection = view.selectedRange()
             view.string = text
+            coordinator.markNeedsFullRestyle()
+            view.invalidateFittingHeightCache()
             let maxLen = (text as NSString).length
             let clampedLoc = min(previousSelection.location, maxLen)
             let clampedLen = min(previousSelection.length, maxLen - clampedLoc)
@@ -102,8 +104,8 @@ struct KnowledgeTextView: NSViewRepresentable {
             view.window?.makeFirstResponder(view)
         }
 
-        if coordinator.applyStyling(to: view) {
-            view.invalidateIntrinsicContentSize()
+        if coordinator.applyStyling(to: view).layoutMayHaveChanged {
+            coordinator.invalidateSizeIfNeeded(for: view)
         }
     }
 
@@ -157,6 +159,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             _ = context.coordinator.applyStyling(to: view)
         }
         let height = max(minHeight, view.fittingHeight(width: width))
+        view.noteReportedHeight(height)
         return CGSize(width: width, height: height)
     }
 
@@ -168,6 +171,41 @@ struct KnowledgeTextView: NSViewRepresentable {
         var isUpdatingFromSwiftUI = false
         var lastAppliedSelectionToken: Int?
         private var lastRenderedKey: RenderKey?
+        private var lastDocumentKey: DocumentKey?
+        private var cachedTokens: [KnowledgeSyntaxToken] = []
+        private var cachedEmbedGroups: [KnowledgeInlineEmbedParagraph] = []
+        private var lastSnapshot: StyleSnapshot?
+        private var needsFullRestyle = true
+
+        // Diagnostic counters verified by VesperTests.
+        private(set) var fullRestyleCount = 0
+        private(set) var incrementalRestyleCount = 0
+        private(set) var skippedSelectionRestyleCount = 0
+        private(set) var lastStyledRanges: [NSRange] = []
+
+        private struct DocumentKey: Equatable {
+            var text: String
+            var embeds: [KnowledgeEmbed]
+        }
+
+        private struct EmbedVisualState: Equatable {
+            var groupID: String
+            var lineRange: NSRange
+            var lineContentRange: NSRange
+            var isCollapsedStandalone: Bool
+            var revealedTokenRanges: [NSRange]
+            var metrics: KnowledgeInlineEmbedMetrics
+        }
+
+        private struct StyleSnapshot {
+            var text: String
+            var mode: ColorMode
+            var tokens: [KnowledgeSyntaxToken]
+            var revealedTokenIndices: Set<Int>
+            var embedStates: [EmbedVisualState]
+            var findMatches: [NSRange]
+            var activeFind: NSRange?
+        }
 
         private struct RenderKey: Equatable {
             var text: String
@@ -197,33 +235,70 @@ struct KnowledgeTextView: NSViewRepresentable {
             self.parent = parent
         }
 
+        func markNeedsFullRestyle() {
+            needsFullRestyle = true
+        }
+
+        func invalidateSizeIfNeeded(for view: LivePreviewNSTextView) {
+            view.invalidateFittingHeightCache()
+            guard let previousHeight = view.lastReportedHeight,
+                  let width = view.textContainer?.size.width,
+                  width.isFinite, width > 1 else {
+                view.invalidateIntrinsicContentSize()
+                return
+            }
+            let nextHeight = max(parent.minHeight, view.fittingHeight(width: width))
+            if abs(nextHeight - previousHeight) > 0.5 {
+                view.invalidateIntrinsicContentSize()
+            }
+        }
+
+        struct StyleApplyResult {
+            var layoutMayHaveChanged: Bool
+            var embedLayoutChanged: Bool
+
+            static let unchanged = StyleApplyResult(layoutMayHaveChanged: false, embedLayoutChanged: false)
+        }
+
         func textDidChange(_ notification: Notification) {
             guard !isUpdatingFromSwiftUI, let view = notification.object as? LivePreviewNSTextView else { return }
-            _ = applyStyling(to: view)
-            view.invalidateIntrinsicContentSize()
+            let result = applyStyling(to: view)
+            invalidateSizeIfNeeded(for: view)
+            if result.embedLayoutChanged {
+                scheduleEmbedLayoutNotify()
+            }
             parent.onTextChange(view.string, view.selectedRange())
         }
 
         func textViewDidChangeSelection(_ notification: Notification) {
             guard !isUpdatingFromSwiftUI, let view = notification.object as? LivePreviewNSTextView else { return }
-            if applyStyling(to: view) {
-                view.invalidateIntrinsicContentSize()
+            let result = applyStyling(to: view)
+            if result.layoutMayHaveChanged {
+                invalidateSizeIfNeeded(for: view)
+            }
+            if result.embedLayoutChanged {
                 scheduleEmbedLayoutNotify()
             }
             parent.onSelectionChange(view.selectedRange(), view.isFocusedEditor)
         }
 
         func handleFocusChange(in view: LivePreviewNSTextView, isFocused: Bool) {
-            if applyStyling(to: view) {
-                view.invalidateIntrinsicContentSize()
+            let result = applyStyling(to: view)
+            if result.layoutMayHaveChanged {
+                invalidateSizeIfNeeded(for: view)
+            }
+            if result.embedLayoutChanged {
                 scheduleEmbedLayoutNotify()
             }
             parent.onSelectionChange(view.selectedRange(), isFocused)
         }
 
         func handleEmbedSizeChange(in view: LivePreviewNSTextView) {
-            if applyStyling(to: view) {
-                view.invalidateIntrinsicContentSize()
+            let result = applyStyling(to: view)
+            if result.layoutMayHaveChanged {
+                invalidateSizeIfNeeded(for: view)
+            }
+            if result.embedLayoutChanged {
                 scheduleEmbedLayoutNotify()
             }
         }
@@ -283,10 +358,11 @@ struct KnowledgeTextView: NSViewRepresentable {
             return false
         }
 
-        /// Returns `true` when inline embed metrics or group layout changed and the view's fitting height may differ.
+        /// Applies live-preview styling incrementally to dirty line ranges and reports whether
+        /// fitting height or inline embed layout may have changed.
         @discardableResult
-        func applyStyling(to view: LivePreviewNSTextView) -> Bool {
-            guard let storage = view.textStorage else { return false }
+        func applyStyling(to view: LivePreviewNSTextView) -> StyleApplyResult {
+            guard let storage = view.textStorage else { return .unchanged }
             let markdown = view.string
             let selection = view.selectedRange()
             let focused = view.isFocusedEditor
@@ -305,7 +381,7 @@ struct KnowledgeTextView: NSViewRepresentable {
                 selectedEmbedID: parent.selectedEmbedID,
                 deletableEmbedURLs: parent.deletableEmbedURLs
             )
-            guard key != lastRenderedKey else { return false }
+            guard needsFullRestyle || key != lastRenderedKey else { return .unchanged }
             lastRenderedKey = key
 
             let palette = parent.theme.palette
@@ -336,45 +412,143 @@ struct KnowledgeTextView: NSViewRepresentable {
 
             let fullLength = storage.length
             guard fullLength > 0 else {
+                needsFullRestyle = false
+                lastDocumentKey = nil
+                cachedTokens = []
+                cachedEmbedGroups = []
+                lastSnapshot = nil
+                lastStyledRanges = []
                 view.cachedTokens = []
+                if view.hasMountedEmbeds {
+                    view.syncEmbedHosts(
+                        groups: [],
+                        theme: parent.theme,
+                        screenContext: parent.screenContext,
+                        containerWidth: containerWidth,
+                        selectedEmbedID: parent.selectedEmbedID,
+                        deletableEmbedURLs: parent.deletableEmbedURLs
+                    )
+                }
+                view.invalidateFittingHeightCache()
+                let embedChanged = view.updateEmbedLayout(groups: [], metricsByID: [:])
+                return StyleApplyResult(layoutMayHaveChanged: true, embedLayoutChanged: embedChanged)
+            }
+
+            let docKey = DocumentKey(text: markdown, embeds: parent.embeds)
+            let tokens: [KnowledgeSyntaxToken]
+            let embedGroups: [KnowledgeInlineEmbedParagraph]
+            if docKey == lastDocumentKey {
+                tokens = cachedTokens
+                embedGroups = cachedEmbedGroups
+            } else {
+                tokens = KnowledgeMarkdownSyntax.scan(markdown)
+                embedGroups = KnowledgeMarkdownSyntax.groupInlineEmbedsByParagraph(
+                    in: markdown,
+                    embeds: parent.embeds,
+                    tokens: tokens
+                )
+                cachedTokens = tokens
+                cachedEmbedGroups = embedGroups
+                lastDocumentKey = docKey
+            }
+            view.cachedTokens = tokens
+
+            let preview = KnowledgeMarkdownSyntax.livePreview(
+                tokens: tokens,
+                selection: selection,
+                isFocused: focused
+            )
+
+            if !embedGroups.isEmpty || view.hasMountedEmbeds {
                 view.syncEmbedHosts(
-                    groups: [],
+                    groups: embedGroups,
                     theme: parent.theme,
                     screenContext: parent.screenContext,
                     containerWidth: containerWidth,
                     selectedEmbedID: parent.selectedEmbedID,
                     deletableEmbedURLs: parent.deletableEmbedURLs
                 )
-                return view.updateEmbedLayout(groups: [], metricsByID: [:])
             }
 
-            let preview = KnowledgeMarkdownSyntax.livePreview(
-                in: markdown,
-                selection: selection,
-                isFocused: focused
-            )
-            view.cachedTokens = preview.tokens
+            var metricsByID: [String: KnowledgeInlineEmbedMetrics] = [:]
+            var embedStates: [EmbedVisualState] = []
+            embedStates.reserveCapacity(embedGroups.count)
+            for group in embedGroups {
+                var revealedTokenRanges: [NSRange] = []
+                for placement in group.placements {
+                    if KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
+                        for: placement,
+                        selection: selection,
+                        isFocused: focused,
+                        activeFindMatch: parent.activeFindMatchRange
+                    ) {
+                        revealedTokenRanges.append(placement.tokenRange)
+                    }
+                }
+                let isCollapsedStandalone = group.isStandaloneLine && revealedTokenRanges.isEmpty
+                let measured = view.measuredSize(forGroupID: group.id)
+                let metrics = KnowledgeInlineEmbedLayout.metrics(
+                    measuredSize: measured,
+                    isCollapsedStandalone: isCollapsedStandalone
+                )
+                metricsByID[group.id] = metrics
+                embedStates.append(EmbedVisualState(
+                    groupID: group.id,
+                    lineRange: group.lineRange,
+                    lineContentRange: group.lineContentRange,
+                    isCollapsedStandalone: isCollapsedStandalone,
+                    revealedTokenRanges: revealedTokenRanges,
+                    metrics: metrics
+                ))
+            }
 
-            let embedGroups = KnowledgeMarkdownSyntax.groupInlineEmbedsByParagraph(
-                in: markdown,
-                embeds: parent.embeds,
-                tokens: preview.tokens
+            let nextSnapshot = StyleSnapshot(
+                text: markdown,
+                mode: parent.theme.mode,
+                tokens: tokens,
+                revealedTokenIndices: preview.revealedTokenIndices,
+                embedStates: embedStates,
+                findMatches: parent.findMatches,
+                activeFind: parent.activeFindMatchRange
             )
-            view.syncEmbedHosts(
-                groups: embedGroups,
-                theme: parent.theme,
-                screenContext: parent.screenContext,
-                containerWidth: containerWidth,
-                selectedEmbedID: parent.selectedEmbedID,
-                deletableEmbedURLs: parent.deletableEmbedURLs
+
+            let dirtyPlan = computeDirtyRanges(
+                previous: needsFullRestyle ? nil : lastSnapshot,
+                current: nextSnapshot,
+                fullLength: fullLength
             )
+            needsFullRestyle = false
+            lastSnapshot = nextSnapshot
+
+            let dirtyRanges = dirtyPlan.ranges
+            lastStyledRanges = dirtyRanges
+
+            if dirtyRanges.isEmpty {
+                skippedSelectionRestyleCount += 1
+                let embedLayoutChanged = view.updateEmbedLayout(groups: embedGroups, metricsByID: metricsByID)
+                lastRenderedKey?.embedSizes = view.measuredEmbedSizes.mapValues(RoundedSize.init)
+                return StyleApplyResult(layoutMayHaveChanged: embedLayoutChanged, embedLayoutChanged: embedLayoutChanged)
+            }
+
+            if dirtyPlan.isFullDocument {
+                fullRestyleCount += 1
+            } else {
+                incrementalRestyleCount += 1
+            }
+
+            let dirtyMin = dirtyRanges.first!.location
+            let dirtyMax = dirtyRanges.last!.location + dirtyRanges.last!.length
 
             storage.beginEditing()
-            storage.setAttributes(baseAttrs, range: NSRange(location: 0, length: fullLength))
+            for dirty in dirtyRanges {
+                storage.setAttributes(baseAttrs, range: dirty)
+            }
 
-            // 1. Style token content ranges.
+            // 1. Style token content ranges intersecting `dirtyRanges`.
             for token in preview.tokens {
-                guard let contentRange = clamped(token.contentRange, length: fullLength) else { continue }
+                let tokenEnd = token.range.location + token.range.length
+                if tokenEnd <= dirtyMin { continue }
+                if token.range.location >= dirtyMax { break }
                 switch token.kind {
                 case .heading(let level):
                     let scale: CGFloat = switch level {
@@ -385,93 +559,120 @@ struct KnowledgeTextView: NSViewRepresentable {
                     default: 1.00
                     }
                     let weight: NSFont.Weight = level <= 2 ? .bold : .semibold
-                    storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize * scale, weight: weight), range: contentRange)
-
-                case .bold:
-                    storage.addAttribute(.font, value: NSFont.systemFont(ofSize: baseSize, weight: .semibold), range: contentRange)
-
-                case .italic:
-                    storage.addAttribute(.font, value: italicFont(size: baseSize, bold: false), range: contentRange)
-
-                case .boldItalic:
-                    storage.addAttribute(.font, value: italicFont(size: baseSize, bold: true), range: contentRange)
-
-                case .strikethrough:
-                    storage.addAttributes([
-                        .strikethroughStyle: NSUnderlineStyle.single.rawValue,
-                        .foregroundColor: secondaryColor,
-                    ], range: contentRange)
-
-                case .inlineCode:
-                    storage.addAttributes([
-                        .font: monoFont,
-                        .backgroundColor: codeBg,
-                    ], range: contentRange)
-
-                case .fencedCodeBlock:
-                    if let fullRange = clamped(token.range, length: fullLength) {
-                        storage.addAttributes([
-                            .font: monoFont,
-                            .backgroundColor: codeBg,
-                        ], range: fullRange)
+                    let font = NSFont.systemFont(ofSize: baseSize * scale, weight: weight)
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttribute(.font, value: font, range: sub)
                     }
 
-                case .blockquote:
-                    storage.addAttribute(.foregroundColor, value: secondaryColor, range: contentRange)
+                case .bold:
+                    let font = NSFont.systemFont(ofSize: baseSize, weight: .semibold)
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttribute(.font, value: font, range: sub)
+                    }
 
-                case .listItem(_, let checked):
-                    if checked == true {
+                case .italic:
+                    let font = italicFont(size: baseSize, bold: false)
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttribute(.font, value: font, range: sub)
+                    }
+
+                case .boldItalic:
+                    let font = italicFont(size: baseSize, bold: true)
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttribute(.font, value: font, range: sub)
+                    }
+
+                case .strikethrough:
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
                         storage.addAttributes([
                             .strikethroughStyle: NSUnderlineStyle.single.rawValue,
                             .foregroundColor: secondaryColor,
-                        ], range: contentRange)
+                        ], range: sub)
+                    }
+
+                case .inlineCode:
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttributes([
+                            .font: monoFont,
+                            .backgroundColor: codeBg,
+                        ], range: sub)
+                    }
+
+                case .fencedCodeBlock:
+                    for sub in clippedToDirty(token.range, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttributes([
+                            .font: monoFont,
+                            .backgroundColor: codeBg,
+                        ], range: sub)
+                    }
+
+                case .blockquote:
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttribute(.foregroundColor, value: secondaryColor, range: sub)
+                    }
+
+                case .listItem(_, let checked):
+                    if checked == true {
+                        for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                            storage.addAttributes([
+                                .strikethroughStyle: NSUnderlineStyle.single.rawValue,
+                                .foregroundColor: secondaryColor,
+                            ], range: sub)
+                        }
                     }
 
                 case .frontmatter:
-                    if let fullRange = clamped(token.range, length: fullLength) {
+                    for sub in clippedToDirty(token.range, dirtyRanges: dirtyRanges, fullLength: fullLength) {
                         storage.addAttributes([
                             .font: monoFont,
                             .foregroundColor: tertiaryColor,
-                        ], range: fullRange)
+                        ], range: sub)
                     }
 
                 case .wikiLink:
-                    storage.addAttributes([
-                        .foregroundColor: accentColor,
-                        .underlineStyle: NSUnderlineStyle.single.rawValue,
-                        .underlineColor: accentColor.withAlphaComponent(0.45),
-                    ], range: contentRange)
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttributes([
+                            .foregroundColor: accentColor,
+                            .underlineStyle: NSUnderlineStyle.single.rawValue,
+                            .underlineColor: accentColor.withAlphaComponent(0.45),
+                        ], range: sub)
+                    }
 
                 case .embed:
-                    storage.addAttributes([
-                        .foregroundColor: accentColor,
-                        .backgroundColor: tagBg,
-                    ], range: contentRange)
-
-                case .tag:
-                    if let fullRange = clamped(token.range, length: fullLength) {
+                    for sub in clippedToDirty(token.contentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
                         storage.addAttributes([
                             .foregroundColor: accentColor,
                             .backgroundColor: tagBg,
-                            .font: NSFont.systemFont(ofSize: max(11, baseSize - 1), weight: .medium),
-                        ], range: fullRange)
+                        ], range: sub)
+                    }
+
+                case .tag:
+                    let font = NSFont.systemFont(ofSize: max(11, baseSize - 1), weight: .medium)
+                    for sub in clippedToDirty(token.range, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttributes([
+                            .foregroundColor: accentColor,
+                            .backgroundColor: tagBg,
+                            .font: font,
+                        ], range: sub)
                     }
 
                 case .blockID:
-                    if let fullRange = clamped(token.range, length: fullLength) {
+                    let font = NSFont.monospacedSystemFont(ofSize: max(10, baseSize - 2), weight: .regular)
+                    for sub in clippedToDirty(token.range, dirtyRanges: dirtyRanges, fullLength: fullLength) {
                         storage.addAttributes([
                             .foregroundColor: tertiaryColor,
                             .backgroundColor: blockBg,
-                            .font: NSFont.monospacedSystemFont(ofSize: max(10, baseSize - 2), weight: .regular),
-                        ], range: fullRange)
+                            .font: font,
+                        ], range: sub)
                     }
                 }
             }
 
             // 2. Style revealed syntax delimiters as muted syntax markers.
             for range in preview.revealedRanges {
-                guard let safe = clamped(range, length: fullLength) else { continue }
-                storage.addAttribute(.foregroundColor, value: tertiaryColor, range: safe)
+                for sub in clippedToDirty(range, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                    storage.addAttribute(.foregroundColor, value: tertiaryColor, range: sub)
+                }
             }
 
             // 3. Hide unrevealed syntax delimiters while preserving exact UTF-16 backing offsets.
@@ -482,83 +683,322 @@ struct KnowledgeTextView: NSViewRepresentable {
                 .backgroundColor: NSColor.clear,
             ]
             for range in preview.hiddenRanges {
-                guard let safe = clamped(range, length: fullLength) else { continue }
-                storage.addAttributes(hiddenAttrs, range: safe)
+                for sub in clippedToDirty(range, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                    storage.addAttributes(hiddenAttrs, range: sub)
+                }
             }
 
             // 4. Reserve inline paragraph spacing for resolved embeds and hide unedited embed tokens.
-            var metricsByID: [String: KnowledgeInlineEmbedMetrics] = [:]
-            for group in embedGroups {
-                let anyRevealed = group.placements.contains {
-                    KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
-                        for: $0,
-                        selection: selection,
-                        isFocused: focused,
-                        activeFindMatch: parent.activeFindMatchRange
-                    )
-                }
-                let isCollapsedStandalone = group.isStandaloneLine && !anyRevealed
-                let measured = view.measuredSize(forGroupID: group.id)
-                let metrics = KnowledgeInlineEmbedLayout.metrics(
-                    measuredSize: measured,
-                    isCollapsedStandalone: isCollapsedStandalone
-                )
-                metricsByID[group.id] = metrics
+            for (group, state) in zip(embedGroups, embedStates) {
+                let groupEnd = group.lineRange.location + group.lineRange.length
+                guard groupEnd > dirtyMin && group.lineRange.location < dirtyMax else { continue }
+                let revealedSet = Set(state.revealedTokenRanges)
 
-                if isCollapsedStandalone {
-                    if let safeContent = clamped(group.lineContentRange, length: fullLength) {
-                        storage.addAttributes(hiddenAttrs, range: safeContent)
+                if state.isCollapsedStandalone {
+                    for sub in clippedToDirty(group.lineContentRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                        storage.addAttributes(hiddenAttrs, range: sub)
                     }
                 } else {
                     for placement in group.placements {
-                        let reveal = KnowledgeMarkdownSyntax.shouldRevealEmbedSource(
-                            for: placement,
-                            selection: selection,
-                            isFocused: focused,
-                            activeFindMatch: parent.activeFindMatchRange
-                        )
-                        if reveal {
-                            // Ensure delimiters stay visible when revealed via standalone-line caret or active Find match.
-                            if let safeTok = clamped(placement.tokenRange, length: fullLength) {
-                                storage.addAttribute(.font, value: baseFont, range: safeTok)
+                        if revealedSet.contains(placement.tokenRange) {
+                            for sub in clippedToDirty(placement.tokenRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                                storage.addAttribute(.font, value: baseFont, range: sub)
                             }
                             if let tok = preview.tokens.first(where: { $0.range == placement.tokenRange }) {
                                 for delim in tok.syntaxRanges {
-                                    if let safeDelim = clamped(delim, length: fullLength) {
-                                        storage.addAttribute(.foregroundColor, value: tertiaryColor, range: safeDelim)
+                                    for sub in clippedToDirty(delim, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                                        storage.addAttribute(.foregroundColor, value: tertiaryColor, range: sub)
                                     }
                                 }
                             }
-                        } else if let safeTok = clamped(placement.tokenRange, length: fullLength) {
-                            storage.addAttributes(hiddenAttrs, range: safeTok)
+                        } else {
+                            for sub in clippedToDirty(placement.tokenRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                                storage.addAttributes(hiddenAttrs, range: sub)
+                            }
                         }
                     }
                 }
 
-                if let safeLine = clamped(group.lineRange, length: fullLength) {
-                    let embedParaStyle = NSMutableParagraphStyle()
-                    embedParaStyle.lineSpacing = isCollapsedStandalone ? 0 : parent.theme.lineSpacing(.body)
-                    if isCollapsedStandalone {
-                        embedParaStyle.maximumLineHeight = KnowledgeInlineEmbedLayout.collapsedStandaloneLineHeight
-                    }
-                    embedParaStyle.paragraphSpacing = metrics.reservedSpacing
-                    storage.addAttribute(.paragraphStyle, value: embedParaStyle, range: safeLine)
+                let embedParaStyle = NSMutableParagraphStyle()
+                embedParaStyle.lineSpacing = state.isCollapsedStandalone ? 0 : parent.theme.lineSpacing(.body)
+                if state.isCollapsedStandalone {
+                    embedParaStyle.maximumLineHeight = KnowledgeInlineEmbedLayout.collapsedStandaloneLineHeight
+                }
+                embedParaStyle.paragraphSpacing = state.metrics.reservedSpacing
+                for sub in clippedToDirty(group.lineRange, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                    storage.addAttribute(.paragraphStyle, value: embedParaStyle, range: sub)
                 }
             }
 
             // 5. Overlay unified ⌘F find highlights.
             for match in parent.findMatches {
-                guard let safe = clamped(match, length: fullLength) else { continue }
                 let isActive = (parent.activeFindMatchRange == match)
-                storage.addAttribute(.backgroundColor, value: isActive ? findActiveBg : findMatchBg, range: safe)
+                let bg = isActive ? findActiveBg : findMatchBg
+                for sub in clippedToDirty(match, dirtyRanges: dirtyRanges, fullLength: fullLength) {
+                    storage.addAttribute(.backgroundColor, value: bg, range: sub)
+                }
             }
 
             storage.endEditing()
 
+            view.invalidateFittingHeightCache()
             let embedLayoutChanged = view.updateEmbedLayout(groups: embedGroups, metricsByID: metricsByID)
             // Keep RenderKey in sync with any newly created host's initial measured size.
             lastRenderedKey?.embedSizes = view.measuredEmbedSizes.mapValues(RoundedSize.init)
-            return embedLayoutChanged
+            return StyleApplyResult(
+                layoutMayHaveChanged: embedLayoutChanged || dirtyPlan.mayChangeLayoutHeight,
+                embedLayoutChanged: embedLayoutChanged
+            )
+        }
+
+        private struct DirtyPlan {
+            var ranges: [NSRange]
+            var isFullDocument: Bool
+            var mayChangeLayoutHeight: Bool
+        }
+
+        private func computeDirtyRanges(
+            previous: StyleSnapshot?,
+            current: StyleSnapshot,
+            fullLength: Int
+        ) -> DirtyPlan {
+            let fullRange = NSRange(location: 0, length: fullLength)
+            guard let previous, previous.mode == current.mode else {
+                return DirtyPlan(ranges: [fullRange], isFullDocument: true, mayChangeLayoutHeight: true)
+            }
+
+            // Selection / focus / find / embed-size update with identical markdown text.
+            if previous.text == current.text {
+                if previous.revealedTokenIndices == current.revealedTokenIndices
+                    && previous.embedStates == current.embedStates
+                    && previous.findMatches == current.findMatches
+                    && previous.activeFind == current.activeFind {
+                    return DirtyPlan(ranges: [], isFullDocument: false, mayChangeLayoutHeight: false)
+                }
+
+                var rawRanges: [NSRange] = []
+                var mayChangeHeight = false
+
+                let changedReveal = previous.revealedTokenIndices.symmetricDifference(current.revealedTokenIndices)
+                for idx in changedReveal where idx < current.tokens.count {
+                    let tok = current.tokens[idx]
+                    mayChangeHeight = true
+                    if isMultiLineToken(tok.kind) {
+                        for delim in tok.syntaxRanges {
+                            rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: delim, in: current.text))
+                        }
+                    } else {
+                        rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: tok.range, in: current.text))
+                    }
+                }
+
+                if previous.embedStates != current.embedStates {
+                    mayChangeHeight = true
+                    let prevByID = Dictionary(previous.embedStates.map { ($0.groupID, $0) }, uniquingKeysWith: { _, latest in latest })
+                    let currByID = Dictionary(current.embedStates.map { ($0.groupID, $0) }, uniquingKeysWith: { _, latest in latest })
+                    for id in Set(prevByID.keys).union(currByID.keys) where prevByID[id] != currByID[id] {
+                        if let oldState = prevByID[id] {
+                            rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: oldState.lineRange, in: current.text))
+                        }
+                        if let newState = currByID[id] {
+                            rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: newState.lineRange, in: current.text))
+                        }
+                    }
+                }
+
+                if previous.findMatches != current.findMatches || previous.activeFind != current.activeFind {
+                    let prevSet = Set(previous.findMatches)
+                    let currSet = Set(current.findMatches)
+                    for r in prevSet.symmetricDifference(currSet) {
+                        rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: r, in: current.text))
+                    }
+                    if previous.activeFind != current.activeFind {
+                        if let oldActive = previous.activeFind {
+                            rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: oldActive, in: current.text))
+                        }
+                        if let newActive = current.activeFind {
+                            rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: newActive, in: current.text))
+                        }
+                    }
+                }
+
+                return DirtyPlan(
+                    ranges: mergeRanges(rawRanges, maxLength: fullLength),
+                    isFullDocument: false,
+                    mayChangeLayoutHeight: mayChangeHeight
+                )
+            }
+
+            // Text changed: compute minimal edited line span + any cross-line state transitions.
+            guard let delta = KnowledgeMarkdownSyntax.minimalEditDelta(from: previous.text, to: current.text) else {
+                return DirtyPlan(ranges: [fullRange], isFullDocument: true, mayChangeLayoutHeight: true)
+            }
+
+            let editStart = delta.oldRange.location
+            let editEndOld = delta.oldRange.location + delta.oldRange.length
+            let editEndNew = delta.newRange.location + delta.newRange.length
+            let shift = delta.newRange.length - delta.oldRange.length
+
+            func mapOldRange(_ oldRange: NSRange) -> NSRange {
+                let oldStart = oldRange.location
+                let oldEnd = oldRange.location + oldRange.length
+                let newStart: Int
+                if oldStart <= editStart {
+                    newStart = oldStart
+                } else if oldStart >= editEndOld {
+                    newStart = oldStart + shift
+                } else {
+                    newStart = editStart
+                }
+                let newEnd: Int
+                if oldEnd <= editStart {
+                    newEnd = oldEnd
+                } else if oldEnd >= editEndOld {
+                    newEnd = oldEnd + shift
+                } else {
+                    newEnd = editEndNew
+                }
+                let clampedStart = max(0, min(newStart, fullLength))
+                let clampedEnd = max(clampedStart, min(newEnd, fullLength))
+                return NSRange(location: clampedStart, length: clampedEnd - clampedStart)
+            }
+
+            var rawRanges: [NSRange] = [
+                KnowledgeMarkdownSyntax.lineSpan(covering: delta.newRange, in: current.text)
+            ]
+
+            // 1. Multi-line blocks (frontmatter, fenced code blocks): if boundaries/kinds changed, restyle affected span.
+            struct MultiLineKey: Hashable {
+                var kind: KnowledgeSyntaxKind
+                var range: NSRange
+            }
+            let prevMulti = previous.tokens.filter { isMultiLineToken($0.kind) }.map {
+                MultiLineKey(kind: $0.kind, range: mapOldRange($0.range))
+            }
+            let currMulti = current.tokens.filter { isMultiLineToken($0.kind) }.map {
+                MultiLineKey(kind: $0.kind, range: $0.range)
+            }
+            if prevMulti != currMulti {
+                let prevSet = Set(prevMulti)
+                let currSet = Set(currMulti)
+                for item in prevSet.symmetricDifference(currSet) {
+                    rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: item.range, in: current.text))
+                }
+            }
+
+            // 2. Revealed syntax tokens on other lines (e.g. selection moved across lines during edit).
+            struct RevealedKey: Hashable {
+                var kind: KnowledgeSyntaxKind
+                var range: NSRange
+                var syntaxRanges: [NSRange]
+            }
+            let prevRevealed = Set(previous.revealedTokenIndices.compactMap { idx -> RevealedKey? in
+                guard idx < previous.tokens.count else { return nil }
+                let tok = previous.tokens[idx]
+                return RevealedKey(kind: tok.kind, range: mapOldRange(tok.range), syntaxRanges: tok.syntaxRanges.map(mapOldRange))
+            })
+            let currRevealed = Set(current.revealedTokenIndices.compactMap { idx -> RevealedKey? in
+                guard idx < current.tokens.count else { return nil }
+                let tok = current.tokens[idx]
+                return RevealedKey(kind: tok.kind, range: tok.range, syntaxRanges: tok.syntaxRanges)
+            })
+            for item in prevRevealed.symmetricDifference(currRevealed) {
+                if isMultiLineToken(item.kind) {
+                    for delim in item.syntaxRanges {
+                        rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: delim, in: current.text))
+                    }
+                } else {
+                    rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: item.range, in: current.text))
+                }
+            }
+
+            // 3. Embed paragraph visual state changes outside the edited line.
+            let mappedPrevEmbeds = Dictionary(previous.embedStates.map { state in
+                let mapped = EmbedVisualState(
+                    groupID: state.groupID,
+                    lineRange: mapOldRange(state.lineRange),
+                    lineContentRange: mapOldRange(state.lineContentRange),
+                    isCollapsedStandalone: state.isCollapsedStandalone,
+                    revealedTokenRanges: state.revealedTokenRanges.map(mapOldRange),
+                    metrics: state.metrics
+                )
+                return (mapped.groupID, mapped)
+            }, uniquingKeysWith: { _, latest in latest })
+            let currEmbeds = Dictionary(current.embedStates.map { ($0.groupID, $0) }, uniquingKeysWith: { _, latest in latest })
+            for id in Set(mappedPrevEmbeds.keys).union(currEmbeds.keys) where mappedPrevEmbeds[id] != currEmbeds[id] {
+                if let oldState = mappedPrevEmbeds[id] {
+                    rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: oldState.lineRange, in: current.text))
+                }
+                if let newState = currEmbeds[id] {
+                    rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: newState.lineRange, in: current.text))
+                }
+            }
+
+            // 4. Find match highlights that shifted or changed.
+            if !previous.findMatches.isEmpty || !current.findMatches.isEmpty {
+                let mappedPrevMatches = Set(previous.findMatches.map(mapOldRange))
+                let currMatches = Set(current.findMatches)
+                for r in mappedPrevMatches.symmetricDifference(currMatches) {
+                    rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: r, in: current.text))
+                }
+                let mappedPrevActive = previous.activeFind.map(mapOldRange)
+                if mappedPrevActive != current.activeFind {
+                    if let oldActive = mappedPrevActive {
+                        rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: oldActive, in: current.text))
+                    }
+                    if let newActive = current.activeFind {
+                        rawRanges.append(KnowledgeMarkdownSyntax.lineSpan(covering: newActive, in: current.text))
+                    }
+                }
+            }
+
+            let merged = mergeRanges(rawRanges, maxLength: fullLength)
+            let isFull = merged.count == 1 && merged[0].location == 0 && merged[0].length == fullLength
+            return DirtyPlan(ranges: merged, isFullDocument: isFull, mayChangeLayoutHeight: true)
+        }
+
+        private func isMultiLineToken(_ kind: KnowledgeSyntaxKind) -> Bool {
+            switch kind {
+            case .fencedCodeBlock, .frontmatter:
+                return true
+            default:
+                return false
+            }
+        }
+
+        private func mergeRanges(_ ranges: [NSRange], maxLength: Int) -> [NSRange] {
+            let clamped = ranges.compactMap { clamped($0, length: maxLength) }
+            guard clamped.count > 1 else { return clamped }
+            let sorted = clamped.sorted { $0.location < $1.location }
+            var merged: [NSRange] = [sorted[0]]
+            for next in sorted.dropFirst() {
+                let last = merged[merged.count - 1]
+                let lastEnd = last.location + last.length
+                if next.location <= lastEnd {
+                    let newEnd = max(lastEnd, next.location + next.length)
+                    merged[merged.count - 1] = NSRange(location: last.location, length: newEnd - last.location)
+                } else {
+                    merged.append(next)
+                }
+            }
+            return merged
+        }
+
+        private func clippedToDirty(_ range: NSRange, dirtyRanges: [NSRange], fullLength: Int) -> [NSRange] {
+            guard let safe = clamped(range, length: fullLength) else { return [] }
+            let safeEnd = safe.location + safe.length
+            var result: [NSRange] = []
+            for dirty in dirtyRanges {
+                let dirtyEnd = dirty.location + dirty.length
+                if dirtyEnd <= safe.location { continue }
+                if dirty.location >= safeEnd { break }
+                let start = max(safe.location, dirty.location)
+                let end = min(safeEnd, dirtyEnd)
+                if end > start {
+                    result.append(NSRange(location: start, length: end - start))
+                }
+            }
+            return result
         }
 
         private func clamped(_ range: NSRange, length: Int) -> NSRange? {
@@ -637,6 +1077,9 @@ final class LivePreviewNSTextView: NSTextView {
     private var activeEmbedGroups: [KnowledgeInlineEmbedParagraph] = []
     private var activeEmbedMetrics: [String: KnowledgeInlineEmbedMetrics] = [:]
     private var activeEmbedFrames: [KnowledgeInlineEmbedFrame] = []
+    private var cachedFittingHeight: (width: CGFloat, height: CGFloat)?
+    private(set) var lastReportedHeight: CGFloat?
+    private(set) var layoutMeasurementCount = 0
 
     var hasMountedEmbeds: Bool { !embedHosts.isEmpty }
 
@@ -699,14 +1142,13 @@ final class LivePreviewNSTextView: NSTextView {
     // MARK: - Smart Editing & Clipboard Paste
 
     func applySmartEdit(_ result: KnowledgeMarkdownFormatting.EditResult) {
-        let current = string as NSString
-        let fullRange = NSRange(location: 0, length: current.length)
-        if result.text == string {
+        guard let delta = KnowledgeMarkdownSyntax.minimalEditDelta(from: string, to: result.text) else {
             setSelectedRange(result.selection)
             return
         }
-        guard shouldChangeText(in: fullRange, replacementString: result.text) else { return }
-        replaceCharacters(in: fullRange, with: result.text)
+        let replacement = (result.text as NSString).substring(with: delta.newRange)
+        guard shouldChangeText(in: delta.oldRange, replacementString: replacement) else { return }
+        replaceCharacters(in: delta.oldRange, with: replacement)
         let newLen = (string as NSString).length
         let loc = max(0, min(result.selection.location, newLen))
         let len = max(0, min(result.selection.length, newLen - loc))
@@ -890,7 +1332,16 @@ final class LivePreviewNSTextView: NSTextView {
     func updateContainerWidth(_ width: CGFloat) -> Bool {
         guard let container = textContainer, abs(container.size.width - width) > 0.5 else { return false }
         container.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
+        invalidateFittingHeightCache()
         return true
+    }
+
+    func invalidateFittingHeightCache() {
+        cachedFittingHeight = nil
+    }
+
+    func noteReportedHeight(_ height: CGFloat) {
+        lastReportedHeight = height
     }
 
     /// Reconciles mounted `NSHostingView` subviews with `groups`, reusing views across unrelated prose edits.
@@ -1034,17 +1485,25 @@ final class LivePreviewNSTextView: NSTextView {
     }
 
     /// Computes the TextKit 2 layout height needed at `width`, including inline embeds.
+    /// Cached per rounded width so repeated SwiftUI `sizeThatFits` probes don't re-run full-document layout.
     func fittingHeight(width: CGFloat) -> CGFloat {
+        let rounded = width.rounded()
+        if let cached = cachedFittingHeight, cached.width == rounded {
+            return cached.height
+        }
         guard let layoutManager = textLayoutManager, let container = textContainer else { return 28 }
         if abs(container.size.width - width) > 0.5 {
             container.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
+        layoutMeasurementCount += 1
         layoutManager.ensureLayout(for: layoutManager.documentRange)
         layoutEmbedViews()
-        return KnowledgeInlineEmbedLayout.totalFittingHeight(
+        let height = KnowledgeInlineEmbedLayout.totalFittingHeight(
             usageBoundsHeight: layoutManager.usageBoundsForTextContainer.height,
             embedFrames: activeEmbedFrames,
             verticalInset: textContainerInset.height
         )
+        cachedFittingHeight = (rounded, height)
+        return height
     }
 }
