@@ -634,10 +634,7 @@ struct KnowledgeEditorView: View {
     }
 
     private func exportDocx() {
-        guard let data = DocEditorLogic.exportDocx(markdown: document.serialize(), title: page.title) else {
-            context.showToast(ToastItemModel(id: "knowledge.export.docx", title: "Could not export .docx", tone: .error))
-            return
-        }
+        let data = DocEditorLogic.exportDocx(markdown: document.serialize(), title: page.title)
         saveExportPanel(data: data, defaultName: DocEditorLogic.sanitizedFileName(page.title, ext: "docx"), contentType: UTType(filenameExtension: "docx") ?? .data)
     }
 
