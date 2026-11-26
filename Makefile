@@ -3,7 +3,7 @@
 # headless design worker on the host against a local Postgres for development.
 SHELL := /bin/bash
 
-.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api worker worker-deps runner gen gen-check test test-server test-worker lint build reset mac-app mac-test mac-run mac-dmg mac-reinstall mac-release mac-golden
+.PHONY: help signin dev-infra dev-infra-stop stop-dev dev api worker worker-deps runner gen gen-check test test-server test-worker test-mac lint build reset mac-app mac-golden
 
 help: ## List targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-13s %s\n", $$1, $$2}'
@@ -80,6 +80,9 @@ test-worker: worker-deps ## Typecheck the design worker and run its unit tests
 	cd design-worker && npm run typecheck
 	cd design-worker && npm test
 
+test-mac: ## Run the macOS app Swift tests (macos/Makefile)
+	$(MAKE) -C macos test
+
 lint: worker-deps ## Vet Go, typecheck design-worker
 	cd server && go vet ./... && test -z "$$(gofmt -l cmd internal)"
 	cd design-worker && npm run typecheck
@@ -92,25 +95,9 @@ reset: ## Stop the dev Postgres and delete all local dev data (.dev/pgdata, blob
 	-@scripts/dev-postgres.sh stop
 	rm -rf .dev/pgdata .dev/postgres.log server/.lazyagents/blobs
 
-# The native macOS app lives in macos/ and has its own Makefile.
-mac-app: ## Build the macOS app bundle (macos/Makefile)
-	$(MAKE) -C macos app
-
-mac-test: ## Run the macOS app tests (macos/Makefile)
-	$(MAKE) -C macos test
-
-mac-run: ## Build and launch the macOS app (macos/Makefile)
-	$(MAKE) -C macos run
-
-mac-dmg: ## Build macos/build/Vesper-arm64.dmg (macos/Makefile)
-	$(MAKE) -C macos dmg
-
-mac-reinstall: ## Rebuild and replace the installed macOS app (macos/Makefile)
-	$(MAKE) -C macos reinstall
-
-mac-release: ## Build and upload a GitHub release locally (usage: make mac-release TAG=v0.3.0 ARGS="--from-run")
-	@if [ -z "$(TAG)" ]; then echo "Usage: make mac-release TAG=v0.3.0 [ARGS='--from-run']"; exit 1; fi
-	@scripts/mac-release-local.sh "$(TAG)" $(ARGS)
+# The native macOS app lives in macos/.
+mac-app: ## Auto-rebuild VM images if needed, build Vesper.app, and install to /Applications
+	@scripts/install-mac-app.sh
 
 # macOS guest VM golden image for personas' `mac` command (Apple Silicon only).
 # Optional overrides: MACOS_GOLDEN_DIR, VESPER_MACOS_SOURCE, VESPER_USER_DATA_DIR.

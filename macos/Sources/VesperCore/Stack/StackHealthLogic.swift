@@ -83,7 +83,7 @@ public enum StackHealthLogic {
             return ClassifiedStackError(
                 title: "Virtualization unavailable",
                 message: "macOS refused to start a virtual machine for runs.",
-                nextStep: "Vesper needs Apple Silicon with macOS 15 or later. A self-built app must sign bin/vesper with deploy/microvm/vz.entitlements (make -C macos app does this)."
+                nextStep: "Vesper needs Apple Silicon with macOS 15 or later. A self-built app must sign bin/vesper with deploy/microvm/vz.entitlements (make mac-app does this)."
             )
         }
         if matches(text, #"ENOSPC|no space left"#) {

@@ -33,7 +33,7 @@ Options:
                         locally before building the DMG.
   --dmg-only            Upload only Vesper-arm64.dmg (+ .sha256) to an
                         existing release; skips agent-base.erofs.
-  --skip-build          Skip `make mac-dmg` and upload the existing
+  --skip-build          Skip `make -C macos dmg` and upload the existing
                         macos/build/Vesper-arm64.dmg (+ .sha256).
   --no-upload           Build locally without creating or updating the release.
   --allow-head-mismatch Allow building even if HEAD is not at <tag>.
@@ -237,7 +237,7 @@ if [[ "$skip_build" == "0" ]]; then
   printf '%s\n' "$version" > "${repo_root}/VERSION"
 
   log "building macos/build/Vesper-arm64.dmg (VESPER_IMAGES_DIR=${img_dir})"
-  VESPER_IMAGES_DIR="$img_dir" make -C "$repo_root" mac-dmg
+  VESPER_IMAGES_DIR="$img_dir" make -C "${repo_root}/macos" dmg
 fi
 
 dmg_file="${repo_root}/macos/build/Vesper-arm64.dmg"

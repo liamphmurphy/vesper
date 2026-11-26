@@ -240,7 +240,7 @@ public final class StackController {
         guard let base = options.resourcesDirectory ?? BundledResources.locate(environment: env),
               let resources = BundledResources.resolve(baseDir: base)
         else {
-            throw StackStartError("Vesper's bundled resources (bin/vesper, postgres) weren't found. Rebuild the app (make -C macos app).")
+            throw StackStartError("Vesper's bundled resources (bin/vesper, postgres) weren't found. Rebuild the app (make mac-app).")
         }
 
         let secretsKey: String
