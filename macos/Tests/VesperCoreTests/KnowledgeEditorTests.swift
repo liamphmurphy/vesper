@@ -639,4 +639,107 @@ final class KnowledgeEditorTests: XCTestCase {
             )
         }
     }
+
+    // MARK: - 6. Fast-Path Scanner, Code-Region & Diff Parity Tests
+
+    func testScanHeadingsMatchesFullScanAcrossFrontmatterAndFences() {
+        let md = """
+        ---
+        # Not a heading in frontmatter
+        title: Spec
+        ---
+
+        # Title One
+        Plain paragraph with #inline-tag and **bold**.
+          ## Indented Two
+        ```swift
+        # Not a heading in backtick fence
+        ```
+        ~~~
+        ## Not a heading in tilde fence
+        ~~~
+        ### Three
+        #### Unclosed fence ahead
+        ```
+        # Still inside unclosed fence
+        """
+        let fullHeadings = KnowledgeMarkdownSyntax.scan(md).filter {
+            if case .heading = $0.kind { return true }
+            return false
+        }
+        let fastHeadings = KnowledgeMarkdownSyntax.scanHeadings(md)
+        XCTAssertEqual(fastHeadings, fullHeadings)
+    }
+
+    func testIsInsideCodeOrFrontmatterMatchesFullScanAtEveryOffset() {
+        let samples = [
+            "---\ntitle: Demo\n---\n\n# Heading\nInline `code` here and [[link]].\n```swift\nlet x = 1\n```\nTail.\n",
+            "Before\n```\nunclosed fence\n",
+            "```\n",
+            "No frontmatter\n---\nStill prose `tick` end",
+            "Line 1\r\n```\r\ninside crlf\r\n```\r\nAfter\r\n",
+        ]
+
+        for md in samples {
+            let tokens = KnowledgeMarkdownSyntax.scan(md)
+            let len = (md as NSString).length
+            for offset in 0...len {
+                let expectedAll = tokens.contains { tok in
+                    switch tok.kind {
+                    case .fencedCodeBlock, .inlineCode, .frontmatter:
+                        return offset > tok.range.location && offset < tok.range.location + tok.range.length
+                    default:
+                        return false
+                    }
+                }
+                let expectedBlockOnly = tokens.contains { tok in
+                    switch tok.kind {
+                    case .fencedCodeBlock, .frontmatter:
+                        return offset > tok.range.location && offset < tok.range.location + tok.range.length
+                    default:
+                        return false
+                    }
+                }
+                XCTAssertEqual(
+                    KnowledgeMarkdownSyntax.isInsideCodeOrFrontmatter(utf16Offset: offset, in: md),
+                    expectedAll,
+                    "Mismatch for includeInlineCode=true at offset \(offset) in sample"
+                )
+                XCTAssertEqual(
+                    KnowledgeMarkdownSyntax.isInsideFencedCodeOrFrontmatter(utf16Offset: offset, in: md),
+                    expectedBlockOnly,
+                    "Mismatch for includeInlineCode=false at offset \(offset) in sample"
+                )
+            }
+        }
+    }
+
+    func testMinimalEditDeltaAndLineSpanCoverExactChangedLines() {
+        XCTAssertNil(KnowledgeMarkdownSyntax.minimalEditDelta(from: "same", to: "same"))
+
+        let old = "First line\nSecond line\nThird line"
+        let inserted = "First line\nSecond X line\nThird line"
+        let delta = try! XCTUnwrap(KnowledgeMarkdownSyntax.minimalEditDelta(from: old, to: inserted))
+        let oldNS = old as NSString
+        let newNS = inserted as NSString
+        let applied = oldNS.replacingCharacters(in: delta.oldRange, with: newNS.substring(with: delta.newRange))
+        XCTAssertEqual(applied, inserted)
+        XCTAssertEqual(delta.oldRange.length, 0)
+        XCTAssertEqual(delta.newRange.length, 2)
+
+        let span = KnowledgeMarkdownSyntax.lineSpan(covering: delta.newRange, in: inserted)
+        XCTAssertEqual(newNS.substring(with: span), "Second X line\n")
+
+        // Pre-matched trigger update on KnowledgeCompletionSession matches text-based update.
+        let text = "Check [[Wat"
+        let caret = (text as NSString).length
+        let candidate = KnowledgeCompletionCandidate(kind: .page, title: "Watchtower", insertRef: "Watchtower")
+        var sessionA = KnowledgeCompletionSession()
+        sessionA.update(text: text, caretUTF16: caret, allCandidates: [candidate])
+        var sessionB = KnowledgeCompletionSession()
+        let trigger = KnowledgeCompletionLogic.matchTrigger(in: text, caretUTF16: caret)
+        sessionB.update(trigger: trigger, allCandidates: [candidate])
+        XCTAssertEqual(sessionA, sessionB)
+        XCTAssertTrue(sessionB.isOpen)
+    }
 }

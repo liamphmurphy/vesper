@@ -356,18 +356,6 @@ public enum KnowledgeSmartEditing: Sendable {
     }
 
     private static func isInsideFencedCodeOrFrontmatter(utf16Offset: Int, in markdown: String) -> Bool {
-        for token in KnowledgeMarkdownSyntax.scan(markdown) {
-            switch token.kind {
-            case .fencedCodeBlock, .frontmatter:
-                let start = token.range.location
-                let end = start + token.range.length
-                if utf16Offset > start && utf16Offset < end {
-                    return true
-                }
-            default:
-                continue
-            }
-        }
-        return false
+        KnowledgeMarkdownSyntax.isInsideFencedCodeOrFrontmatter(utf16Offset: utf16Offset, in: markdown)
     }
 }

@@ -204,6 +204,13 @@ public enum KnowledgePanelsLogic: Sendable {
             .filter { seen.insert($0.lowercased()).inserted }
     }
 
+    private static let protectedRegexes: [NSRegularExpression] = [
+        try! NSRegularExpression(pattern: "\\[\\[[^\\]]+\\]\\]"),
+        try! NSRegularExpression(pattern: "`[^`]+`"),
+        try! NSRegularExpression(pattern: "\\[[^\\]]+\\]\\([^\\)]+\\)"),
+    ]
+    private static let wikiLinkUnlinkRegex = try! NSRegularExpression(pattern: "\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]")
+
     public static func findUnlinkedMentions(
         of targetPage: KnowledgePage,
         in candidates: [KnowledgePageRow],
@@ -212,13 +219,23 @@ public enum KnowledgePanelsLogic: Sendable {
         let terms = mentionTerms(for: targetPage)
         guard !terms.isEmpty else { return [] }
 
+        let compiledTerms: [(term: String, regex: NSRegularExpression)] = terms.compactMap { term in
+            let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty, let regex = wholeWordRegex(for: trimmed) else { return nil }
+            return (term, regex)
+        }
+        guard !compiledTerms.isEmpty else { return [] }
+
         var mentions: [KnowledgeUnlinkedMention] = []
         for row in candidates {
             if row.id == targetPage.id || linkedSourceIds.contains(row.id) { continue }
             let haystack = row.summary
             guard !haystack.isEmpty else { continue }
-            for term in terms {
-                if let range = firstUnlinkedMatchRange(of: term, in: haystack) {
+            var cachedProtected: [Range<String.Index>]?
+            for (term, regex) in compiledTerms {
+                // Fast case-insensitive substring check skips regex + protected-range scans on non-matching summaries.
+                guard haystack.range(of: term, options: .caseInsensitive) != nil else { continue }
+                if let range = firstUnlinkedMatchRange(regex: regex, in: haystack, cachedProtected: &cachedProtected) {
                     let snippet = excerpt(around: range, in: haystack)
                     mentions.append(KnowledgeUnlinkedMention(
                         pageId: row.id,
@@ -249,16 +266,39 @@ public enum KnowledgePanelsLogic: Sendable {
         return updated
     }
 
+    private static func wholeWordRegex(for term: String) -> NSRegularExpression? {
+        let escaped = NSRegularExpression.escapedPattern(for: term)
+        return try? NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}_])\(escaped)(?![\\p{L}\\p{N}_])", options: [.caseInsensitive])
+    }
+
     private static func firstUnlinkedMatchRange(of term: String, in text: String) -> Range<String.Index>? {
         let trimmed = term.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return nil }
-        let escaped = NSRegularExpression.escapedPattern(for: trimmed)
-        guard let regex = try? NSRegularExpression(pattern: "(?<![\\p{L}\\p{N}_])\(escaped)(?![\\p{L}\\p{N}_])", options: [.caseInsensitive]) else {
+        guard !trimmed.isEmpty,
+              text.range(of: trimmed, options: .caseInsensitive) != nil,
+              let regex = wholeWordRegex(for: trimmed) else {
             return nil
         }
-        let protected = protectedRanges(in: text)
+        var cachedProtected: [Range<String.Index>]?
+        return firstUnlinkedMatchRange(regex: regex, in: text, cachedProtected: &cachedProtected)
+    }
+
+    private static func firstUnlinkedMatchRange(
+        regex: NSRegularExpression,
+        in text: String,
+        cachedProtected: inout [Range<String.Index>]?
+    ) -> Range<String.Index>? {
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        for match in regex.matches(in: text, range: nsRange) {
+        let matches = regex.matches(in: text, range: nsRange)
+        guard !matches.isEmpty else { return nil }
+        let protected: [Range<String.Index>]
+        if let existing = cachedProtected {
+            protected = existing
+        } else {
+            let computed = protectedRanges(in: text)
+            cachedProtected = computed
+            protected = computed
+        }
+        for match in matches {
             guard let range = Range(match.range, in: text) else { continue }
             if !protected.contains(where: { $0.overlaps(range) }) {
                 return range
@@ -268,15 +308,10 @@ public enum KnowledgePanelsLogic: Sendable {
     }
 
     private static func protectedRanges(in text: String) -> [Range<String.Index>] {
+        guard text.contains("[") || text.contains("`") else { return [] }
         var ranges: [Range<String.Index>] = []
-        let patterns = [
-            "\\[\\[[^\\]]+\\]\\]",
-            "`[^`]+`",
-            "\\[[^\\]]+\\]\\([^\\)]+\\)",
-        ]
         let nsRange = NSRange(text.startIndex..<text.endIndex, in: text)
-        for pattern in patterns {
-            guard let regex = try? NSRegularExpression(pattern: pattern) else { continue }
+        for regex in protectedRegexes {
             for match in regex.matches(in: text, range: nsRange) {
                 if let range = Range(match.range, in: text) {
                     ranges.append(range)
@@ -406,11 +441,9 @@ public enum KnowledgePanelsLogic: Sendable {
     }
 
     public static func unlinkWikiText(_ text: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: "\\[\\[([^\\]|]+)(?:\\|([^\\]]+))?\\]\\]") else {
-            return text
-        }
+        guard text.contains("[[") else { return text }
         let nsText = text as NSString
-        let matches = regex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
+        let matches = wikiLinkUnlinkRegex.matches(in: text, range: NSRange(location: 0, length: nsText.length))
         guard !matches.isEmpty else { return text }
         var out = text
         for match in matches.reversed() {
