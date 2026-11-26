@@ -7,18 +7,18 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/agentdef"
 )
 
-func TestChatAgentsMDNamesTheDefaultProject(t *testing.T) {
+func TestChatAgentsMDOmitsProjectAndWorkInstructions(t *testing.T) {
 	with := string(ChatAgentsMD(agentdef.Resolved{}, nil, "PAY", "", nil))
-	if !strings.Contains(with, "# Vesper chat: default project PAY") || !strings.Contains(with, "unless you pass another project key") {
-		t.Fatalf("missing default project:\n%s", with)
-	}
 	without := string(ChatAgentsMD(agentdef.Resolved{}, nil, "", "", nil))
-	if strings.Contains(without, "project \n") || !strings.Contains(without, "no default project") || strings.Contains(without, "attach a project") {
-		t.Fatalf("no-project preamble:\n%s", without)
+	if with != without {
+		t.Fatalf("project key leaked into ChatAgentsMD:\nwith:\n%s\nwithout:\n%s", with, without)
 	}
-	for _, md := range []string{with, without} {
-		if !strings.Contains(md, "in any project") {
-			t.Fatalf("reads aren't described as workspace-wide:\n%s", md)
+	if !strings.Contains(with, "# Vesper chat\n\n") {
+		t.Fatalf("missing chat heading:\n%s", with)
+	}
+	for _, bad := range []string{"PAY", "default project", "ticket", "epic", "list_projects", "claim_ticket"} {
+		if strings.Contains(strings.ToLower(with), strings.ToLower(bad)) {
+			t.Errorf("ChatAgentsMD still mentions %q:\n%s", bad, with)
 		}
 	}
 }

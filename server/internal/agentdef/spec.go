@@ -365,7 +365,7 @@ func SubagentTypes(spec Resolved) []string {
 // schema in every prompt, so keep the list to tools a turn really starts with.
 var EagerVesperTools = []string{
 	// Chats.
-	"set_chat_title", "list_projects", "list_tickets", "get_ticket", "update_ticket", "request_push",
+	"set_chat_title", "request_push",
 	// Ticket runs.
 	"claim_ticket", "post_plan", "update_step", "check_criterion", "complete_run",
 	// Shared in-turn subagents.

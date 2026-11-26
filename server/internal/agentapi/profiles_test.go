@@ -97,3 +97,21 @@ func TestAsideProfile(t *testing.T) {
 		}
 	}
 }
+
+func TestChatProfileInstructionsOmitWorkReferences(t *testing.T) {
+	for name, text := range map[string]string{
+		"profileChat":      profileInstructions[profileChat],
+		"chatInstructions": chatInstructions,
+	} {
+		for _, bad := range []string{"ticket", "epic", "list_projects", "list_runs", "get_run"} {
+			if strings.Contains(strings.ToLower(text), bad) {
+				t.Errorf("%s still mentions %q:\n%s", name, bad, text)
+			}
+		}
+	}
+	for _, want := range []string{"list_spaces", "create_space"} {
+		if !strings.Contains(chatInstructions, want) {
+			t.Errorf("chatInstructions missing %q", want)
+		}
+	}
+}

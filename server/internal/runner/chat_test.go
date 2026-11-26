@@ -89,7 +89,7 @@ func TestChatTurnsResumeWithoutTools(t *testing.T) {
 				t.Fatal("chat scratch workspace contains git repository")
 			}
 			md, err := os.ReadFile(filepath.Join(root, "AGENTS.md"))
-			if err != nil || !strings.Contains(string(md), "Vesper chat: default project PAY") || strings.Contains(string(md), "claim_ticket first") {
+			if err != nil || !strings.Contains(string(md), "# Vesper chat\n") || strings.Contains(string(md), "claim_ticket") || strings.Contains(string(md), "## Projects") {
 				t.Fatalf("chat instructions %s: %v", md, err)
 			}
 			// Exhaust the cumulative runtime and turn count: a chat still gets a full next turn.

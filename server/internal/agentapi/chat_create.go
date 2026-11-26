@@ -4,6 +4,8 @@ import (
 	"context"
 	"strings"
 
+	"github.com/google/uuid"
+
 	"github.com/liamphmurphy/vesper/server/internal/agents"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
 	"github.com/liamphmurphy/vesper/server/internal/runs"
@@ -36,6 +38,42 @@ func personChatScope(ctx context.Context, d Deps, c agents.Caller, tool string) 
 	return chatScopeFor(ctx, d, c)
 }
 
+type ListSpacesIn struct{}
+
+type chatSpaceRow struct {
+	ID          uuid.UUID `json:"id"`
+	Name        string    `json:"name"`
+	Description string    `json:"description,omitempty"`
+	Color       string    `json:"color"`
+	SpaceMemory bool      `json:"space_memory"`
+	Current     bool      `json:"current,omitempty"`
+	Href        string    `json:"href"`
+}
+
+func listSpaces(ctx context.Context, d Deps, c agents.Caller, _ ListSpacesIn) (any, error) {
+	s, err := requireChat(ctx, d, c)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := d.Q.ListChatSpaces(ctx, store.ListChatSpacesParams{WorkspaceID: c.Agent.WorkspaceID, UserID: s.UserID})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]chatSpaceRow, 0, len(rows))
+	for _, sp := range rows {
+		out = append(out, chatSpaceRow{
+			ID:          sp.ID,
+			Name:        sp.Name,
+			Description: sp.Description,
+			Color:       sp.Color,
+			SpaceMemory: sp.SpaceMemory,
+			Current:     s.SpaceID != nil && sp.ID == *s.SpaceID,
+			Href:        "/spaces/" + sp.ID.String(),
+		})
+	}
+	return map[string]any{"spaces": out}, nil
+}
+
 type CreateSpaceIn struct {
 	Name         string `json:"name" jsonschema:"The space's name, 1–80 characters, e.g. Health"`
 	Description  string `json:"description,omitempty" jsonschema:"One line on what it's for, at most 300 characters"`
@@ -65,7 +103,7 @@ func createSpace(ctx context.Context, d Deps, c agents.Caller, in CreateSpaceIn)
 type CreateScheduledTaskIn struct {
 	Name          string         `json:"name" jsonschema:"A short name, 1–120 characters"`
 	Instructions  string         `json:"instructions,omitempty" jsonschema:"For prompt tasks: what to do each time, written as the message you'll get. Nobody watches it run and the result goes to the person's Inbox, so make it self-contained"`
-	Space         *string        `json:"space,omitempty" jsonschema:"Optional space name or project key (e.g. Vesper or LAZYAGENTS) from list_projects; defaults to the chat's space when omitted. Pass an empty string for none"`
+	Space         *string        `json:"space,omitempty" jsonschema:"Optional space name (from list_spaces); defaults to the chat's space when omitted. Pass an empty string for none"`
 	CustomAppSlug string         `json:"custom_app_slug,omitempty" jsonschema:"For custom_app tasks: Custom App URL slug with an MCP server (runs without an LLM turn)"`
 	CustomAppTool string         `json:"custom_app_tool,omitempty" jsonschema:"For custom_app tasks: MCP tool name exported by that app"`
 	CustomAppArgs map[string]any `json:"custom_app_args,omitempty" jsonschema:"Optional JSON object arguments passed to custom_app_tool"`
