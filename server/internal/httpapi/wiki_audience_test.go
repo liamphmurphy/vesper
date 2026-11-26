@@ -214,3 +214,35 @@ func TestWikiAudiencePropertyReaders(t *testing.T) {
 		t.Fatalf("tag discovery leaked private page: %v %v", rows, err)
 	}
 }
+
+func TestWikiAudiencePersonaCreatesInAgentAndMovesToPersonal(t *testing.T) {
+	e := newChatEnv(t)
+	chat := e.newChat(nil)
+	personaToken := e.canvasToken(uuid.MustParse(chat["id"].(string)))
+
+	code, created := e.tool(personaToken, "create_page", map[string]any{
+		"title": "Persona Draft",
+		"body":  "Drafted in chat",
+	})
+	if code != 200 {
+		t.Fatalf("create_page = %d %v", code, created)
+	}
+	id := created["id"].(string)
+
+	page := e.want("GET", "/knowledge/pages/"+id, nil, 200)
+	if page["audience"] != "agent" {
+		t.Fatalf("persona-created page audience = %v, want agent", page["audience"])
+	}
+
+	// Person can promote the persona-created page to Personal (private).
+	moved := e.want("PUT", "/wiki/pages/"+id, map[string]any{"audience": "private"}, 200)
+	if moved["audience"] != "private" {
+		t.Fatalf("moved page audience = %v, want private", moved["audience"])
+	}
+
+	// And can move it back to Personas (agent) if desired.
+	back := e.want("PUT", "/wiki/pages/"+id, map[string]any{"audience": "agent"}, 200)
+	if back["audience"] != "agent" {
+		t.Fatalf("moved-back page audience = %v, want agent", back["audience"])
+	}
+}

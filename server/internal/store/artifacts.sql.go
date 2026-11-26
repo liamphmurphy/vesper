@@ -1180,7 +1180,7 @@ func (q *Queries) SetArtifactCurrentVersion(ctx context.Context, arg SetArtifact
 const setPageAudience = `-- name: SetPageAudience :one
 UPDATE artifacts SET audience=$1, owner_user_id=$2
 WHERE id=$3 AND workspace_id=$4
- AND $5::uuid IS NOT NULL AND audience <> 'agent'
+ AND $5::uuid IS NOT NULL
  AND artifact_visible(audience, owner_user_id, $5::uuid)
 RETURNING id, workspace_id, project_id, epic_id, type, title, number, summary, author_type, author_id, current_version_id, search_text, search, created_at, updated_at, path, audience, owner_user_id, persona_direct, persona_paused, chat_session_id, canvas_id
 `
