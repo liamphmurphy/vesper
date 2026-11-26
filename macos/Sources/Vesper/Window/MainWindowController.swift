@@ -42,6 +42,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     var state: ShellState { content.state }
     var kind: WindowKind { content.kind }
     var hasSidebar: Bool { sidebarItem != nil }
+    var isSidebarCollapsed: Bool { sidebarItem?.isCollapsed ?? false }
     var hasInspector: Bool { inspectorItem != nil }
     var isInspectorCollapsed: Bool { inspectorItem?.isCollapsed ?? true }
     var inspectorDividerIndex: Int { InspectorLogic.inspectorDividerIndex(hasSidebar: hasSidebar) }
@@ -122,7 +123,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             sidebar.sizingOptions = []
             let item = NSSplitViewItem(sidebarWithViewController: sidebar)
             item.allowsFullHeightLayout = true
-            item.minimumThickness = 220
+            item.minimumThickness = 185
             item.maximumThickness = 400
             item.canCollapse = true
             split.addSplitViewItem(item)
