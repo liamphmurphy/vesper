@@ -259,7 +259,7 @@ struct KnowledgeExplorerView: View {
     private var modePicker: some View {
         Picker("View", selection: $controller.viewMode) {
             Text("Yours").tag(KnowledgeViewMode.yours)
-            Text("Agent").tag(KnowledgeViewMode.agent)
+            Text("Personas").tag(KnowledgeViewMode.agent)
         }
         .pickerStyle(.segmented)
         .labelsHidden()
@@ -722,7 +722,11 @@ struct KnowledgeExplorerView: View {
             Button("Duplicate") {
                 controller.duplicatePage(page, in: context)
             }
-            if page.audience != .agent {
+            if page.audience == .agent {
+                Button("Move to Personal") {
+                    controller.setPageAudience(page, audience: .private, in: context)
+                }
+            } else {
                 Menu("Audience") {
                     Button {
                         controller.setPageAudience(page, audience: .private, in: context)
