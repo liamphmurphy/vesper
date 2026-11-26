@@ -246,23 +246,57 @@ public struct KnowledgeEmbed: Codable, Sendable, Equatable, Hashable {
         data = try c.decodeIfPresent([String: JSONValue].self, forKey: .data)
     }
 
+    private var lowercaseFilenameExtension: String {
+        let candidate = (title?.isEmpty == false ? title! : ref)
+        let base = candidate.components(separatedBy: "#").first ?? candidate
+        let ext = (base as NSString).pathExtension.lowercased()
+        if !ext.isEmpty { return ext }
+        if let url {
+            return (url as NSString).pathExtension.lowercased()
+        }
+        return ""
+    }
+
     /// True when this embed represents an image asset or library image with a loadable URL.
     public var isImageEmbed: Bool {
         guard available, let url, !url.isEmpty else { return false }
         let ct = contentType?.lowercased() ?? ""
-        return ct.hasPrefix("image/") || kind.lowercased() == "image"
+        if ct.hasPrefix("image/") || kind.lowercased() == "image" { return true }
+        return ["png", "jpg", "jpeg", "gif", "webp", "svg", "heic", "heif", "avif", "bmp", "tiff", "tif", "ico"].contains(lowercaseFilenameExtension)
+    }
+
+    /// True when this embed represents a video attachment or library video with a loadable URL.
+    public var isVideoEmbed: Bool {
+        guard available, let url, !url.isEmpty else { return false }
+        let ct = contentType?.lowercased() ?? ""
+        if ct.hasPrefix("video/") || kind.lowercased() == "video" { return true }
+        return ["mp4", "mov", "m4v", "webm", "mkv", "avi"].contains(lowercaseFilenameExtension)
+    }
+
+    /// True when this embed represents an audio attachment with a loadable URL.
+    public var isAudioEmbed: Bool {
+        guard available, let url, !url.isEmpty else { return false }
+        let ct = contentType?.lowercased() ?? ""
+        if ct.hasPrefix("audio/") || kind.lowercased() == "audio" { return true }
+        return ["mp3", "m4a", "m4b", "wav", "flac", "ogg", "opus", "aac", "aiff", "aif"].contains(lowercaseFilenameExtension)
     }
 
     /// True when this embed represents a PDF attachment with a loadable URL.
     public var isPDFEmbed: Bool {
         guard available, let url, !url.isEmpty else { return false }
         let ct = contentType?.lowercased() ?? ""
-        return ct.contains("pdf") || url.lowercased().hasSuffix(".pdf")
+        return ct.contains("pdf") || lowercaseFilenameExtension == "pdf"
+    }
+
+    /// True when this embed represents a generic file attachment with a loadable URL.
+    public var isFileEmbed: Bool {
+        guard available, let url, !url.isEmpty else { return false }
+        return kind.lowercased() == "file"
     }
 
     /// True when the native Knowledge editor renders an inline preview card for this embed.
     public var hasInlinePreview: Bool {
-        if isImageEmbed || isPDFEmbed { return true }
+        if isImageEmbed || isVideoEmbed || isAudioEmbed || isPDFEmbed || isFileEmbed { return true }
         return available && !(markdown?.isEmpty ?? true)
     }
 }
@@ -799,16 +833,129 @@ public struct KnowledgeAssetsResponse: Codable, Sendable, Equatable {
     public var images: [KnowledgeAssetSuggestion]
 }
 
+public struct KnowledgeAttachment: Codable, Sendable, Equatable, Hashable, Identifiable {
+    public var id: String
+    public var filename: String
+    public var title: String
+    public var path: String
+    public var ref: String
+    public var url: String
+    public var contentType: String
+    public var sizeBytes: Int64
+    public var createdAt: String
+
+    enum CodingKeys: String, CodingKey {
+        case id, filename, title, path, ref, url
+        case contentType = "content_type"
+        case sizeBytes = "size_bytes"
+        case createdAt = "created_at"
+    }
+
+    public init(
+        id: String,
+        filename: String,
+        title: String? = nil,
+        path: String? = nil,
+        ref: String,
+        url: String,
+        contentType: String,
+        sizeBytes: Int64 = 0,
+        createdAt: String = ""
+    ) {
+        self.id = id
+        self.filename = filename
+        self.title = title ?? filename
+        self.path = path ?? "attachments/\(filename)"
+        self.ref = ref
+        self.url = url
+        self.contentType = contentType
+        self.sizeBytes = sizeBytes
+        self.createdAt = createdAt
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        id = try c.decode(String.self, forKey: .id)
+        filename = try c.decodeIfPresent(String.self, forKey: .filename) ?? ""
+        title = try c.decodeIfPresent(String.self, forKey: .title) ?? filename
+        path = try c.decodeIfPresent(String.self, forKey: .path) ?? "attachments/\(filename)"
+        ref = try c.decodeIfPresent(String.self, forKey: .ref) ?? ""
+        url = try c.decodeIfPresent(String.self, forKey: .url) ?? ""
+        contentType = try c.decodeIfPresent(String.self, forKey: .contentType) ?? "application/octet-stream"
+        sizeBytes = try c.decodeIfPresent(Int64.self, forKey: .sizeBytes) ?? 0
+        createdAt = try c.decodeIfPresent(String.self, forKey: .createdAt) ?? ""
+    }
+
+    public func asKnowledgeEmbed() -> KnowledgeEmbed {
+        KnowledgeEmbed(
+            ref: "![[\(ref)]]",
+            kind: "file",
+            title: filename.isEmpty ? title : filename,
+            url: url,
+            contentType: contentType,
+            available: true
+        )
+    }
+}
+
+public struct KnowledgeAttachmentsResponse: Codable, Sendable, Equatable {
+    public var folder: String
+    public var attachments: [KnowledgeAttachment]
+
+    public init(folder: String = "attachments", attachments: [KnowledgeAttachment] = []) {
+        self.folder = folder
+        self.attachments = attachments
+    }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        folder = try c.decodeIfPresent(String.self, forKey: .folder) ?? "attachments"
+        attachments = try c.decodeIfPresent([KnowledgeAttachment].self, forKey: .attachments) ?? []
+    }
+}
+
 public struct KnowledgeUploadedAsset: Codable, Sendable, Equatable, Identifiable {
     public var id: String
     public var ref: String
     public var url: String
     public var filename: String?
+    public var path: String?
     public var contentType: String?
+    public var sizeBytes: Int64?
 
     enum CodingKeys: String, CodingKey {
-        case id, ref, url, filename
+        case id, ref, url, filename, path
         case contentType = "content_type"
+        case sizeBytes = "size_bytes"
+    }
+
+    public init(
+        id: String,
+        ref: String,
+        url: String,
+        filename: String? = nil,
+        path: String? = nil,
+        contentType: String? = nil,
+        sizeBytes: Int64? = nil
+    ) {
+        self.id = id
+        self.ref = ref
+        self.url = url
+        self.filename = filename
+        self.path = path
+        self.contentType = contentType
+        self.sizeBytes = sizeBytes
+    }
+
+    public func asKnowledgeEmbed() -> KnowledgeEmbed {
+        KnowledgeEmbed(
+            ref: "![[\(ref)]]",
+            kind: "file",
+            title: filename ?? ref,
+            url: url,
+            contentType: contentType,
+            available: true
+        )
     }
 }
 
@@ -1117,6 +1264,18 @@ public enum KnowledgeAPI {
             method: "GET",
             template: "/knowledge/assets",
             path: "/api/v1/knowledge/assets",
+            query: query,
+            decode: .json
+        )
+    }
+
+    public static func listAttachments(q: String? = nil) -> APIRequest<KnowledgeAttachmentsResponse> {
+        var query: [URLQueryItem] = []
+        if let q, !q.isEmpty { APIQuery.append(&query, "q", q) }
+        return APIRequest(
+            method: "GET",
+            template: "/knowledge/attachments",
+            path: "/api/v1/knowledge/attachments",
             query: query,
             decode: .json
         )

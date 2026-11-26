@@ -154,6 +154,7 @@ public enum KnowledgeInspectorLogic {
             }
         case .page: return "Page"
         case .legacyWiki: return "Wiki"
+        case .attachment: return "Attachment"
         }
     }
 
