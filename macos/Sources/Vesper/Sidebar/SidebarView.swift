@@ -217,8 +217,7 @@ private struct AreaButton: View {
         }
         .buttonStyle(.plain)
         .onHover { hovered = $0 }
-        .help(label)
-        .accessibilityLabel(label)
+        .hoverTooltip(label)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
