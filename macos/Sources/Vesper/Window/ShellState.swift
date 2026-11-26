@@ -13,8 +13,10 @@ final class ShellState {
     }
     /// The tab's effective color mode (may differ from macOS's when the person forces Dark or Light).
     var pageMode: ColorMode?
-    /// Screen requested the sidebar to fold (e.g. Dev terminal theater mode); per tab, so switching tabs restores it.
+    /// Screen requested the sidebar to fold (e.g. Dev terminal theater mode, Browser focus mode); per tab, so switching tabs restores it.
     var sidebarHidden = false
+    /// Screen requested the trailing 44pt rail to hide (e.g. Browser focus mode); per tab, so switching tabs restores it.
+    var railHidden = false
     /// Playground web view's document title.
     var documentTitle: String?
     /// Active palette and text size for native screens.

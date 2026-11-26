@@ -118,6 +118,8 @@ final class BrowserStore {
     var adBlockEnabled: Bool = true
     var adBlockConfig: BrowserAdBlockConfig = .default
     var securityConfig: BrowserSecurityConfig = .default
+    var layoutConfig: BrowserLayoutConfig = .default
+    var isFocusMode: Bool = false
     var openExternalLinksInBrowser: Bool = true
     var searchEngine: BrowserSearchEngine = .duckDuckGo
     var autofillEnabled: Bool = true
@@ -250,6 +252,7 @@ final class BrowserStore {
         adBlockEnabled = persisted.adBlockEnabled
         adBlockConfig = persisted.adBlockConfig
         securityConfig = persisted.securityConfig
+        layoutConfig = persisted.layoutConfig
         openExternalLinksInBrowser = persisted.openExternalLinksInBrowser
         searchEngine = persisted.searchEngine
         autofillEnabled = persisted.autofillEnabled
@@ -378,7 +381,8 @@ final class BrowserStore {
             activeProfileId: activeProfileId,
             autofillEnabled: autofillEnabled,
             adBlockConfig: adBlockConfig,
-            securityConfig: securityConfig
+            securityConfig: securityConfig,
+            layoutConfig: layoutConfig
         )
         do {
             try BrowserStorage.save(snapshot, to: storageURL)
@@ -482,9 +486,10 @@ final class BrowserStore {
             self.setSitePermission(host: host, kind: kind, setting: setting, in: runtime)
         }
         session.neverShareProvider = { [weak self] in self?.extensionConfig.neverShare ?? BrowserNeverShareLists() }
-        session.hostZoomProvider = { [weak runtime] host in
-            guard let runtime, let normalized = BrowserPageGuard.normalizeHost(host) else { return nil }
-            return runtime.siteZooms[normalized]
+        session.hostZoomProvider = { [weak self, weak runtime] host in
+            guard let self, let runtime else { return nil }
+            let normalized = BrowserPageGuard.normalizeHost(host)
+            return self.layoutConfig.effectiveZoom(for: normalized, siteZooms: runtime.siteZooms)
         }
         session.onOpenNewTab = { [weak self, weak runtime] url, isPrivate in
             guard let self, let runtime else { return }
@@ -1160,6 +1165,37 @@ final class BrowserStore {
         }
     }
 
+    // MARK: Compact Layout & Focus Mode
+
+    func toggleFocusMode() {
+        isFocusMode.toggle()
+    }
+
+    func setAutoHideOmnibox(_ enabled: Bool) {
+        layoutConfig.autoHideOmnibox = enabled
+        scheduleSave()
+    }
+
+    func setHoverPeekSidebar(_ enabled: Bool) {
+        layoutConfig.hoverPeekSidebar = enabled
+        scheduleSave()
+    }
+
+    func setDefaultZoom(_ zoom: Double) {
+        let clamped = BrowserLayoutConfig.clampZoom(zoom)
+        layoutConfig.defaultZoom = clamped
+        for runtime in runtimes {
+            for tab in runtime.tabs {
+                let host = BrowserPageGuard.normalizeHost(tab.urlString)
+                if let host, runtime.siteZooms[host] != nil {
+                    continue
+                }
+                tab.setZoom(clamped)
+            }
+        }
+        scheduleSave()
+    }
+
     // MARK: Zoom & Ad-Block
 
     func adjustZoom(delta: Double, for tab: BrowserTabSession? = nil) {
@@ -1170,14 +1206,14 @@ final class BrowserStore {
 
     func resetZoom(for tab: BrowserTabSession? = nil) {
         guard let tab = tab ?? activeTab else { return }
-        applyZoom(1.0, to: tab)
+        applyZoom(layoutConfig.defaultZoom, to: tab)
     }
 
     private func applyZoom(_ zoom: Double, to tab: BrowserTabSession) {
         tab.setZoom(zoom)
         guard let runtime = runtimes.first(where: { $0.id == tab.profileID }) else { return }
         if !tab.isPrivate, let host = BrowserPageGuard.normalizeHost(tab.urlString) {
-            if abs(zoom - 1.0) < 0.01 {
+            if abs(zoom - layoutConfig.defaultZoom) < 0.01 {
                 runtime.siteZooms.removeValue(forKey: host)
             } else {
                 runtime.siteZooms[host] = zoom

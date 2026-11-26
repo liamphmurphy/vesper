@@ -314,6 +314,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.browser.toggleSplitView()
     }
 
+    @objc func toggleBrowserFocusMode(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.toggleFocusMode()
+    }
+
     @objc func swapBrowserSplitPanes(_ sender: Any?) {
         guard app.keyController?.isBrowserActive == true else { return }
         app.browser.swapSplitPanes()

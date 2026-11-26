@@ -124,6 +124,7 @@ enum MainMenu {
             sep(),
             item("Toggle Split View", #selector(AppDelegate.toggleBrowserSplitView(_:)), "\\", [.command, .control]),
             item("Swap Split Panes", #selector(AppDelegate.swapBrowserSplitPanes(_:))),
+            item("Toggle Focus Mode", #selector(AppDelegate.toggleBrowserFocusMode(_:)), "f", [.command, .shift]),
             item("Mute / Unmute Tab", #selector(AppDelegate.toggleBrowserTabMute(_:)), "m", [.command, .option]),
             item("Toggle Reader Mode", #selector(AppDelegate.toggleBrowserReaderMode(_:)), "r", [.command, .option]),
             item("Bookmark Page", #selector(AppDelegate.toggleBrowserBookmark(_:)), "b", [.command, .shift]),

@@ -21,6 +21,12 @@ struct BrowserScreen: View {
     @State private var autofillPopoverOpen = false
     @State private var extensionsPopoverOpen = false
     @State private var downloadsPopoverOpen = false
+    @State private var omniboxPeekVisible = false
+    @State private var sidebarPeekVisible = false
+
+    private var anyPopoverOpen: Bool {
+        sharePopoverOpen || shieldPopoverOpen || siteSecurityPopoverOpen || autofillPopoverOpen || extensionsPopoverOpen || downloadsPopoverOpen
+    }
 
     @State private var askPrompt = ""
     @State private var shareUntil = "page"
@@ -58,18 +64,29 @@ struct BrowserScreen: View {
     @ViewBuilder
     private func browserContent(store: BrowserStore) -> some View {
         let activeTab = store.activeTab
+        let chromeAutoHidden = store.isFocusMode || store.layoutConfig.autoHideOmnibox
+        let showOmnibox = !chromeAutoHidden || isEditingOmnibox || omniboxPeekVisible || anyPopoverOpen
+        let canHoverPeekSidebar = store.layoutConfig.hoverPeekSidebar && (context.window()?.isSidebarCollapsed == true || store.isFocusMode)
+
         VStack(spacing: 0) {
-            omniboxBar(store: store, tab: activeTab)
-            if let tab = activeTab, tab.isLoading {
-                GeometryReader { geo in
-                    Rectangle()
-                        .fill(theme.palette.accent)
-                        .frame(width: max(12, geo.size.width * min(1, max(0.05, tab.estimatedProgress))), height: 2)
-                        .animation(.easeOut(duration: 0.15), value: tab.estimatedProgress)
+            if showOmnibox {
+                omniboxBar(store: store, tab: activeTab)
+                    .onHover { hovering in
+                        if chromeAutoHidden && !hovering && !isEditingOmnibox && !anyPopoverOpen {
+                            omniboxPeekVisible = false
+                        }
+                    }
+                if let tab = activeTab, tab.isLoading {
+                    GeometryReader { geo in
+                        Rectangle()
+                            .fill(theme.palette.accent)
+                            .frame(width: max(12, geo.size.width * min(1, max(0.05, tab.estimatedProgress))), height: 2)
+                            .animation(.easeOut(duration: 0.15), value: tab.estimatedProgress)
+                    }
+                    .frame(height: 2)
+                } else {
+                    Divider().opacity(0.45)
                 }
-                .frame(height: 2)
-            } else {
-                Divider().opacity(0.45)
             }
 
             if let tab = activeTab, let pending = tab.pendingCredentialSave {
@@ -82,7 +99,7 @@ struct BrowserScreen: View {
                 Divider().opacity(0.4)
             }
 
-            ZStack(alignment: .top) {
+            ZStack(alignment: .topLeading) {
                 if store.isSplitViewActive, let left = store.primaryTab, let right = store.splitTab {
                     splitBrowserCanvas(store: store, left: left, right: right)
                 } else if let tab = activeTab {
@@ -91,11 +108,72 @@ struct BrowserScreen: View {
                     Color.clear
                 }
 
+                // Top-edge hover sensor to peek the hidden omnibox in Auto-Hide / Focus Mode.
+                if chromeAutoHidden && !showOmnibox {
+                    Color.clear
+                        .frame(maxWidth: .infinity)
+                        .frame(height: 6)
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering {
+                                withAnimation(.easeOut(duration: 0.14)) {
+                                    omniboxPeekVisible = true
+                                }
+                            }
+                        }
+                }
+
+                // Arc-style left-edge hover-peek sidebar when the native sidebar is collapsed.
+                if canHoverPeekSidebar && !sidebarPeekVisible {
+                    Color.clear
+                        .frame(width: 6)
+                        .frame(maxHeight: .infinity)
+                        .contentShape(Rectangle())
+                        .onHover { hovering in
+                            if hovering {
+                                withAnimation(.easeOut(duration: 0.15)) {
+                                    sidebarPeekVisible = true
+                                }
+                            }
+                        }
+                }
+
+                if canHoverPeekSidebar && sidebarPeekVisible {
+                    HStack(spacing: 0) {
+                        BrowserSidebarView(store: store, context: context)
+                            .frame(width: 215)
+                            .frame(maxHeight: .infinity)
+                            .background(theme.palette.surface)
+                            .overlay(alignment: .trailing) {
+                                Rectangle()
+                                    .fill(theme.palette.border.opacity(0.65))
+                                    .frame(width: 1)
+                            }
+                            .shadow(color: .black.opacity(0.28), radius: 14, x: 4, y: 0)
+                            .onHover { hovering in
+                                if !hovering {
+                                    withAnimation(.easeOut(duration: 0.15)) {
+                                        sidebarPeekVisible = false
+                                    }
+                                }
+                            }
+                        Spacer(minLength: 0)
+                    }
+                    .transition(.move(edge: .leading).combined(with: .opacity))
+                }
+
                 if isEditingOmnibox {
                     omniboxSuggestionsOverlay(store: store)
                 }
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .onChange(of: store.isFocusMode) { _, focus in
+            syncFocusModeToShell(focus)
+            if !focus {
+                omniboxPeekVisible = false
+                sidebarPeekVisible = false
+            }
         }
         .onChange(of: store.activeProfileId) { _, _ in
             syncActiveTabChrome(store: store)
@@ -587,13 +665,13 @@ struct BrowserScreen: View {
                     .hoverTooltip(bookmarked ? "Remove Bookmark" : "Bookmark Page")
                 }
             }
-            .padding(.horizontal, 9)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
             .background(
-                RoundedRectangle(cornerRadius: 8)
+                RoundedRectangle(cornerRadius: 7)
                     .fill(theme.palette.surface)
                     .overlay(
-                        RoundedRectangle(cornerRadius: 8)
+                        RoundedRectangle(cornerRadius: 7)
                             .stroke(omniboxFocused ? theme.palette.accent.opacity(0.75) : theme.palette.border.opacity(0.6), lineWidth: 1)
                     )
             )
@@ -660,13 +738,26 @@ struct BrowserScreen: View {
                 store.toggleSplitView()
             } label: {
                 Image(systemName: store.isSplitViewActive ? "rectangle.split.2x1.fill" : "rectangle.split.2x1")
-                    .font(.system(size: 12, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(store.isSplitViewActive ? theme.palette.accent : theme.palette.secondaryText)
-                    .frame(width: 26, height: 26)
+                    .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .hoverTooltip(store.isSplitViewActive ? "Close Split View (⌘⌃\\)" : "Split View Side-by-Side (⌘⌃\\)")
+
+            // Focus Mode Toggle
+            Button {
+                store.toggleFocusMode()
+            } label: {
+                Image(systemName: store.isFocusMode ? "arrow.down.right.and.arrow.up.left" : "arrow.up.left.and.arrow.down.right")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(store.isFocusMode ? theme.palette.accent : theme.palette.secondaryText)
+                    .frame(width: 22, height: 22)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .hoverTooltip(store.isFocusMode ? "Exit Focus Mode (⌘⇧F)" : "Focus Mode — Hide Chrome (⌘⇧F)")
 
             // Downloads indicator (shown when downloads exist)
             if !downloads.recentDownloads.isEmpty {
@@ -766,8 +857,8 @@ struct BrowserScreen: View {
                 }
             }
         }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
         .background(theme.palette.background)
     }
 
@@ -793,9 +884,9 @@ struct BrowserScreen: View {
     private func barIconButton(_ symbol: String, help: String, disabled: Bool = false, action: @escaping () -> Void) -> some View {
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 12, weight: .medium))
+                .font(.system(size: 11.5, weight: .medium))
                 .foregroundStyle(disabled ? theme.palette.tertiaryText.opacity(0.45) : theme.palette.secondaryText)
-                .frame(width: 26, height: 26)
+                .frame(width: 22, height: 22)
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
@@ -902,8 +993,8 @@ struct BrowserScreen: View {
                         .foregroundStyle(Color.orange)
                 }
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 2.5)
             .background(
                 Capsule().fill(isSharing ? Color.orange.opacity(0.14) : theme.palette.surface)
                     .overlay(Capsule().stroke(isSharing ? Color.orange.opacity(0.45) : theme.palette.border.opacity(0.55), lineWidth: 1))
@@ -1360,7 +1451,14 @@ struct BrowserScreen: View {
     private func attachToShell() {
         guard let store else { return }
         context.sidebarView = AnyView(BrowserSidebarView(store: store, context: context))
+        syncFocusModeToShell(store.isFocusMode)
         syncActiveTabChrome(store: store)
+    }
+
+    private func syncFocusModeToShell(_ focus: Bool) {
+        guard let state = context.window()?.state else { return }
+        state.sidebarHidden = focus
+        state.railHidden = focus
     }
 
     private func handleIncomingQueryURL() {
@@ -1466,6 +1564,7 @@ struct BrowserScreen: View {
     }
 
     private func focusOmnibox(store: BrowserStore) {
+        omniboxPeekVisible = true
         omniboxText = store.activeTab?.urlString ?? ""
         context.window()?.window?.makeFirstResponder(nil)
         omniboxFocused = true
@@ -2347,6 +2446,51 @@ private struct BrowserShieldPopover: View {
                 Text("Hold ⌥ while clicking any link to open it in Safari.")
                     .font(.system(size: 10))
                     .foregroundStyle(.secondary)
+
+                Divider()
+
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Display & Compact Layout")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Text("Default page zoom")
+                            .font(.system(size: 12))
+                        Spacer()
+                        Picker("", selection: Binding(
+                            get: { store.layoutConfig.defaultZoom },
+                            set: { store.setDefaultZoom($0) }
+                        )) {
+                            ForEach(BrowserLayoutConfig.presetZooms, id: \.self) { level in
+                                Text("\(Int((level * 100).rounded()))%").tag(level)
+                            }
+                        }
+                        .labelsHidden()
+                        .controlSize(.small)
+                        .frame(width: 90)
+                    }
+
+                    Toggle("Auto-hide address bar", isOn: Binding(
+                        get: { store.layoutConfig.autoHideOmnibox },
+                        set: { store.setAutoHideOmnibox($0) }
+                    ))
+                    .font(.system(size: 12))
+
+                    Toggle("Hover-peek sidebar when collapsed", isOn: Binding(
+                        get: { store.layoutConfig.hoverPeekSidebar },
+                        set: { store.setHoverPeekSidebar($0) }
+                    ))
+                    .font(.system(size: 12))
+
+                    Toggle("Focus Mode (⌘⇧F)", isOn: Binding(
+                        get: { store.isFocusMode },
+                        set: { if store.isFocusMode != $0 { store.toggleFocusMode() } }
+                    ))
+                    .font(.system(size: 12))
+                }
+
+                Divider()
 
                 HStack {
                     Text("Search engine")
