@@ -194,6 +194,24 @@ final class KnowledgePanelsAndGraphTests: XCTestCase {
         let linked = KnowledgePanelsLogic.linkFirstMention(in: md, term: "North Tower", targetTitle: "Watchtower")
         XCTAssertEqual(linked, "See `Watchtower` and [[Watchtower]] before visiting the [[Watchtower|north tower]].")
         XCTAssertNil(KnowledgePanelsLogic.linkFirstMention(in: "Only [[Watchtower]] here.", term: "Watchtower", targetTitle: "Watchtower"))
+
+        // Protected markdown link + second unlinked mention later on the same summary still matches.
+        let mixedCandidates = [
+            KnowledgePageRow(
+                id: "src4",
+                title: "Mixed",
+                path: "Mixed",
+                summary: "Has [Watchtower](https://example.com) and `Watchtower` plus a plain Watchtower mention."
+            ),
+            KnowledgePageRow(
+                id: "src5",
+                title: "PartialWord",
+                path: "PartialWord",
+                summary: "Watchtowers should not match the singular whole-word term."
+            ),
+        ]
+        let mixedMentions = KnowledgePanelsLogic.findUnlinkedMentions(of: page, in: mixedCandidates, linkedSourceIds: [])
+        XCTAssertEqual(mixedMentions.map(\.pageId), ["src4"])
     }
 
     // MARK: - Typed Properties Inspector

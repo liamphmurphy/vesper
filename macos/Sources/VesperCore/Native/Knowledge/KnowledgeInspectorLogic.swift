@@ -54,7 +54,7 @@ public enum KnowledgeInspectorLogic {
         for (segIdx, segment) in segments.enumerated() {
             guard case .prose(let prose) = segment else { continue }
             let ns = prose.text as NSString
-            for token in KnowledgeMarkdownSyntax.scan(prose.text) {
+            for token in KnowledgeMarkdownSyntax.scanHeadings(prose.text) {
                 guard case .heading(let level) = token.kind else { continue }
                 guard token.contentRange.location >= 0,
                       token.contentRange.location + token.contentRange.length <= ns.length else { continue }

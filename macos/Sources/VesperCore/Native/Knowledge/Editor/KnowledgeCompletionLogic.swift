@@ -102,31 +102,36 @@ public enum KnowledgeCompletionLogic: Sendable {
     public static func matchTrigger(in text: String, caretUTF16: Int) -> KnowledgeCompletionTrigger? {
         let ns = text as NSString
         guard caretUTF16 >= 0, caretUTF16 <= ns.length else { return nil }
-        if KnowledgeMarkdownSyntax.isInsideCodeOrFrontmatter(utf16Offset: caretUTF16, in: text) {
-            return nil
-        }
 
-        // Find current line bounds around `caretUTF16`.
+        // Find current line bounds around `caretUTF16` and test trigger syntax first so ordinary
+        // prose keystrokes never scan the document for fences/frontmatter.
         let lineStart = findLineStart(in: ns, before: caretUTF16)
         let lineEnd = findLineEnd(in: ns, from: caretUTF16)
         let before = ns.substring(with: NSRange(location: lineStart, length: caretUTF16 - lineStart))
         let after = ns.substring(with: NSRange(location: caretUTF16, length: lineEnd - caretUTF16))
 
+        let matched: KnowledgeCompletionTrigger?
         if let linkTrigger = matchBracketTrigger(
             before: before,
             after: after,
             lineStart: lineStart,
             caretUTF16: caretUTF16
         ) {
-            return linkTrigger
+            matched = linkTrigger
+        } else {
+            matched = matchTagTrigger(
+                before: before,
+                after: after,
+                lineStart: lineStart,
+                caretUTF16: caretUTF16
+            )
         }
 
-        return matchTagTrigger(
-            before: before,
-            after: after,
-            lineStart: lineStart,
-            caretUTF16: caretUTF16
-        )
+        guard let matched else { return nil }
+        if KnowledgeMarkdownSyntax.isInsideCodeOrFrontmatter(utf16Offset: caretUTF16, in: text) {
+            return nil
+        }
+        return matched
     }
 
     private static func matchBracketTrigger(
@@ -453,7 +458,16 @@ public struct KnowledgeCompletionSession: Sendable, Equatable {
         allCandidates: [KnowledgeCompletionCandidate],
         limit: Int? = 20
     ) {
-        guard let next = KnowledgeCompletionLogic.matchTrigger(in: text, caretUTF16: caretUTF16) else {
+        let next = KnowledgeCompletionLogic.matchTrigger(in: text, caretUTF16: caretUTF16)
+        update(trigger: next, allCandidates: allCandidates, limit: limit)
+    }
+
+    public mutating func update(
+        trigger next: KnowledgeCompletionTrigger?,
+        allCandidates: [KnowledgeCompletionCandidate],
+        limit: Int? = 20
+    ) {
+        guard let next else {
             dismissedAtOffset = nil
             close()
             return

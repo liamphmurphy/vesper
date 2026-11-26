@@ -40,6 +40,11 @@ final class NativeScreenContext {
     @ObservationIgnored private let open: (String, Bool) -> Void
     /// False once the tab has swapped this screen out. See `detach()`.
     @ObservationIgnored private(set) var isAttached = true
+    /// Returns whether this screen's tab is currently the active tab in its window.
+    /// Defaults to `true` when unhosted (e.g. standalone windows or tests).
+    @ObservationIgnored var isActiveTabCheck: (() -> Bool)?
+    /// True while this screen is still attached to its tab and that tab is currently shown.
+    var isActiveTab: Bool { isAttached && (isActiveTabCheck?() ?? true) }
 
     init(match: NativeRouteMatch, store: QueryStore, open: @escaping (_ path: String, _ newTab: Bool) -> Void) {
         self.match = match
@@ -54,6 +59,7 @@ final class NativeScreenContext {
     /// person went.
     func detach() {
         isAttached = false
+        isActiveTabCheck = nil
         onChromeChange = nil
         onSidebarViewChange = nil
         onInspectorViewChange = nil

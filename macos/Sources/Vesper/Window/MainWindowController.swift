@@ -711,6 +711,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     func detachTab(_ tab: WebContentController) -> WebContentController? {
         guard let index = tabs.list.items.firstIndex(where: { $0 === tab }) else { return nil }
         tabs.list.remove(at: index)
+        container.detach(tab)
         if tab.host === self { tab.host = nil }
         if !tabs.list.isEmpty { activeTabChanged(focus: false) } else { container.show(nil) }
         return tab

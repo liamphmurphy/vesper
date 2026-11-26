@@ -208,7 +208,8 @@ public struct KnowledgeEditorDocument: Sendable, Equatable {
     /// Serializes the document back to markdown.
     /// Untouched tables emit their `originalRawText` verbatim, guaranteeing byte-for-byte identity on no-op saves.
     public func serialize() -> String {
-        segments.map(\.serializedText).joined()
+        if segments.count == 1 { return segments[0].serializedText }
+        return segments.map(\.serializedText).joined()
     }
 
     /// Indices of all `.table` segments in `segments`.

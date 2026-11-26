@@ -1350,7 +1350,7 @@ struct KnowledgeScreen: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onReceive(NotificationCenter.default.publisher(for: .vesperOpenKnowledgeQuickSwitcher)) { note in
-            guard context.isAttached else { return }
+            guard context.isActiveTab else { return }
             if let targetWindow = note.object as? NSWindow, targetWindow !== context.window()?.window {
                 return
             }
@@ -1440,7 +1440,7 @@ struct KnowledgeScreen: View {
     private func installSpaceQuickLookMonitor() {
         removeSpaceQuickLookMonitor()
         spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard context.isAttached,
+            guard context.isActiveTab,
                   let window = context.window()?.window,
                   event.window === window,
                   window.isKeyWindow,

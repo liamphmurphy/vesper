@@ -440,7 +440,7 @@ public enum KnowledgeMarkdownSyntax: Sendable {
             let lineNS = line.text as NSString
             let fullLineRange = NSRange(location: 0, length: lineNS.length)
 
-            if let fenceMatch = fenceRegex.firstMatch(in: line.text, range: fullLineRange) {
+            if lineMayBeFence(lineNS), let fenceMatch = fenceRegex.firstMatch(in: line.text, range: fullLineRange) {
                 let marker = lineNS.substring(with: fenceMatch.range(at: 1))
                 let info = lineNS.substring(with: fenceMatch.range(at: 2)).trimmingCharacters(in: .whitespaces)
                 if let currentChar = openFenceChar {
@@ -502,14 +502,138 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return tokens
     }
 
+    /// Scans only ATX heading tokens in `markdown`, skipping frontmatter and fenced code blocks
+    /// without running any inline markdown regexes.
+    public static func scanHeadings(_ markdown: String) -> [KnowledgeSyntaxToken] {
+        guard markdown.contains("#") else { return [] }
+        let lines = splitLines(markdown)
+        var tokens: [KnowledgeSyntaxToken] = []
+        var lineIndex = 0
+
+        if let first = lines.first, first.text == "---" {
+            var idx = 1
+            while idx < lines.count {
+                if lines[idx].text == "---" || lines[idx].text == "..." {
+                    lineIndex = idx + 1
+                    break
+                }
+                idx += 1
+            }
+        }
+
+        var openFenceChar: Character?
+        var openFenceLength = 0
+
+        while lineIndex < lines.count {
+            let line = lines[lineIndex]
+            let lineNS = line.text as NSString
+            let fullLineRange = NSRange(location: 0, length: lineNS.length)
+
+            if lineMayBeFence(lineNS), let fenceMatch = fenceRegex.firstMatch(in: line.text, range: fullLineRange) {
+                let marker = lineNS.substring(with: fenceMatch.range(at: 1))
+                let info = lineNS.substring(with: fenceMatch.range(at: 2)).trimmingCharacters(in: .whitespaces)
+                if let currentChar = openFenceChar {
+                    if marker.first == currentChar && marker.count >= openFenceLength && info.isEmpty {
+                        openFenceChar = nil
+                        openFenceLength = 0
+                    }
+                } else {
+                    openFenceChar = marker.first
+                    openFenceLength = marker.count
+                }
+                lineIndex += 1
+                continue
+            }
+
+            if openFenceChar == nil,
+               lineMayBeHeading(lineNS),
+               let m = headingRegex.firstMatch(in: line.text, range: fullLineRange) {
+                let hashes = m.range(at: 1)
+                let space = m.range(at: 2)
+                let content = m.range(at: 3)
+                let base = line.utf16Offset
+                let prefixRange = NSRange(location: base + m.range.location, length: hashes.length + space.length)
+                tokens.append(KnowledgeSyntaxToken(
+                    kind: .heading(level: hashes.length),
+                    range: NSRange(location: base, length: line.contentUTF16Length),
+                    contentRange: NSRange(location: base + content.location, length: content.length),
+                    syntaxRanges: [prefixRange]
+                ))
+            }
+            lineIndex += 1
+        }
+        return tokens
+    }
+
+    private static func lineMayBeFence(_ lineNS: NSString) -> Bool {
+        let len = lineNS.length
+        guard len >= 3 else { return false }
+        var i = 0
+        while i < len && i < 3 && lineNS.character(at: i) == 0x20 { i += 1 }
+        guard i + 2 < len else { return false }
+        let ch = lineNS.character(at: i)
+        return (ch == 0x60 || ch == 0x7E) // '`' or '~'
+            && lineNS.character(at: i + 1) == ch
+            && lineNS.character(at: i + 2) == ch
+    }
+
+    private static func lineMayBeHeading(_ lineNS: NSString) -> Bool {
+        let len = lineNS.length
+        guard len >= 2 else { return false }
+        var i = 0
+        while i < len && i < 3 && lineNS.character(at: i) == 0x20 { i += 1 }
+        return i < len && lineNS.character(at: i) == 0x23 // '#'
+    }
+
     private static func scanNormalLine(_ line: LineSlice, into tokens: inout [KnowledgeSyntaxToken]) {
         guard line.contentUTF16Length > 0 else { return }
         let lineNS = line.text as NSString
-        let whole = NSRange(location: 0, length: lineNS.length)
+        let len = lineNS.length
+        let whole = NSRange(location: 0, length: len)
         let base = line.utf16Offset
 
+        // Single-pass UTF-16 character inventory so plain prose lines skip all unused NSRegularExpressions.
+        var leadingSpaces = 0
+        var leadingSpacesOnly = true
+        var firstNonWS: unichar = 0
+        var backtickCount = 0
+        var openBracketCount = 0
+        var closeBracketCount = 0
+        var hashCount = 0
+        var caretCount = 0
+        var starCount = 0
+        var underCount = 0
+        var tildeCount = 0
+
+        for i in 0..<len {
+            let ch = lineNS.character(at: i)
+            if firstNonWS == 0 {
+                if ch == 0x20 { // ' '
+                    leadingSpaces += 1
+                    continue
+                } else if ch == 0x09 { // '\t'
+                    leadingSpacesOnly = false
+                    continue
+                } else {
+                    firstNonWS = ch
+                }
+            }
+            switch ch {
+            case 0x60: backtickCount += 1      // '`'
+            case 0x5B: openBracketCount += 1   // '['
+            case 0x5D: closeBracketCount += 1  // ']'
+            case 0x23: hashCount += 1          // '#'
+            case 0x5E: caretCount += 1         // '^'
+            case 0x2A: starCount += 1          // '*'
+            case 0x5F: underCount += 1         // '_'
+            case 0x7E: tildeCount += 1         // '~'
+            default: break
+            }
+        }
+
         // Block-level prefixes: heading, blockquote, list item.
-        if let m = headingRegex.firstMatch(in: line.text, range: whole) {
+        let canBlockPrefix = leadingSpacesOnly && leadingSpaces <= 3
+        if canBlockPrefix, firstNonWS == 0x23, let m = headingRegex.firstMatch(in: line.text, range: whole) {
             let hashes = m.range(at: 1)
             let space = m.range(at: 2)
             let content = m.range(at: 3)
@@ -520,7 +644,7 @@ public enum KnowledgeMarkdownSyntax: Sendable {
                 contentRange: NSRange(location: base + content.location, length: content.length),
                 syntaxRanges: [prefixRange]
             ))
-        } else if let m = blockquoteRegex.firstMatch(in: line.text, range: whole) {
+        } else if canBlockPrefix, firstNonWS == 0x3E, let m = blockquoteRegex.firstMatch(in: line.text, range: whole) {
             let prefix = m.range(at: 1)
             let prefixText = lineNS.substring(with: prefix)
             let depth = prefixText.filter { $0 == ">" }.count
@@ -531,7 +655,8 @@ public enum KnowledgeMarkdownSyntax: Sendable {
                 contentRange: NSRange(location: base + contentStart, length: max(0, line.contentUTF16Length - contentStart)),
                 syntaxRanges: [NSRange(location: base + prefix.location, length: prefix.length)]
             ))
-        } else if let m = unorderedListRegex.firstMatch(in: line.text, range: whole) {
+        } else if (firstNonWS == 0x2D || firstNonWS == 0x2A || firstNonWS == 0x2B),
+                  let m = unorderedListRegex.firstMatch(in: line.text, range: whole) {
             let checked = checkboxState(lineNS, range: m.range(at: 2))
             let contentStart = m.range.location + m.range.length
             tokens.append(KnowledgeSyntaxToken(
@@ -540,7 +665,8 @@ public enum KnowledgeMarkdownSyntax: Sendable {
                 contentRange: NSRange(location: base + contentStart, length: max(0, line.contentUTF16Length - contentStart)),
                 syntaxRanges: [NSRange(location: base + m.range.location, length: m.range.length)]
             ))
-        } else if let m = orderedListRegex.firstMatch(in: line.text, range: whole) {
+        } else if firstNonWS >= 0x30 && firstNonWS <= 0x39,
+                  let m = orderedListRegex.firstMatch(in: line.text, range: whole) {
             let checked = checkboxState(lineNS, range: m.range(at: 2))
             let contentStart = m.range.location + m.range.length
             tokens.append(KnowledgeSyntaxToken(
@@ -551,73 +677,89 @@ public enum KnowledgeMarkdownSyntax: Sendable {
             ))
         }
 
+        // Fast exit for plain prose lines with no inline syntax markers at all.
+        let hasInlineMarkers = backtickCount >= 2
+            || (openBracketCount >= 2 && closeBracketCount >= 2)
+            || hashCount >= 1
+            || caretCount >= 1
+            || starCount >= 2
+            || underCount >= 2
+            || tildeCount >= 4
+        guard hasInlineMarkers else { return }
+
         // Inline code spans first — their ranges are excluded from Obsidian and emphasis scanning.
         var excluded: [NSRange] = []
-        for m in codeSpanRegex.matches(in: line.text, range: whole) {
-            let tickLen = m.range(at: 1).length
-            let full = NSRange(location: base + m.range.location, length: m.range.length)
-            let openDelim = NSRange(location: full.location, length: tickLen)
-            let closeDelim = NSRange(location: full.location + full.length - tickLen, length: tickLen)
-            let content = NSRange(location: base + m.range(at: 2).location, length: m.range(at: 2).length)
-            tokens.append(KnowledgeSyntaxToken(
-                kind: .inlineCode,
-                range: full,
-                contentRange: content,
-                syntaxRanges: [openDelim, closeDelim]
-            ))
-            excluded.append(m.range)
+        if backtickCount >= 2 {
+            for m in codeSpanRegex.matches(in: line.text, range: whole) {
+                let tickLen = m.range(at: 1).length
+                let full = NSRange(location: base + m.range.location, length: m.range.length)
+                let openDelim = NSRange(location: full.location, length: tickLen)
+                let closeDelim = NSRange(location: full.location + full.length - tickLen, length: tickLen)
+                let content = NSRange(location: base + m.range(at: 2).location, length: m.range(at: 2).length)
+                tokens.append(KnowledgeSyntaxToken(
+                    kind: .inlineCode,
+                    range: full,
+                    contentRange: content,
+                    syntaxRanges: [openDelim, closeDelim]
+                ))
+                excluded.append(m.range)
+            }
         }
 
         // Wikilinks and embeds: `[[...]]` and `![[...]]`.
-        for m in wikiLinkRegex.matches(in: line.text, range: whole) {
-            if overlapsAny(m.range, in: excluded) { continue }
-            let raw = lineNS.substring(with: m.range)
-            guard let target = parseWikiTarget(raw: raw) else { continue }
-            let full = NSRange(location: base + m.range.location, length: m.range.length)
-            let openLen = target.isEmbed ? 3 : 2
-            let closeLen = 2
-            let openRange: NSRange
-            let contentRange: NSRange
-            let closeRange = NSRange(location: full.location + full.length - closeLen, length: closeLen)
+        if openBracketCount >= 2 && closeBracketCount >= 2 {
+            for m in wikiLinkRegex.matches(in: line.text, range: whole) {
+                if overlapsAny(m.range, in: excluded) { continue }
+                let raw = lineNS.substring(with: m.range)
+                guard let target = parseWikiTarget(raw: raw) else { continue }
+                let full = NSRange(location: base + m.range.location, length: m.range.length)
+                let openLen = target.isEmbed ? 3 : 2
+                let closeLen = 2
+                let openRange: NSRange
+                let contentRange: NSRange
+                let closeRange = NSRange(location: full.location + full.length - closeLen, length: closeLen)
 
-            if let alias = target.alias, !alias.isEmpty, let barRange = (raw as NSString).range(of: "|", options: .backwards).optionalValid {
-                let prefixLen = barRange.location + barRange.length
-                openRange = NSRange(location: full.location, length: prefixLen)
-                contentRange = NSRange(location: full.location + prefixLen, length: max(0, full.length - prefixLen - closeLen))
-            } else {
-                openRange = NSRange(location: full.location, length: openLen)
-                contentRange = NSRange(location: full.location + openLen, length: max(0, full.length - openLen - closeLen))
+                if let alias = target.alias, !alias.isEmpty, let barRange = (raw as NSString).range(of: "|", options: .backwards).optionalValid {
+                    let prefixLen = barRange.location + barRange.length
+                    openRange = NSRange(location: full.location, length: prefixLen)
+                    contentRange = NSRange(location: full.location + prefixLen, length: max(0, full.length - prefixLen - closeLen))
+                } else {
+                    openRange = NSRange(location: full.location, length: openLen)
+                    contentRange = NSRange(location: full.location + openLen, length: max(0, full.length - openLen - closeLen))
+                }
+
+                tokens.append(KnowledgeSyntaxToken(
+                    kind: target.isEmbed ? .embed(target) : .wikiLink(target),
+                    range: full,
+                    contentRange: contentRange,
+                    syntaxRanges: [openRange, closeRange]
+                ))
+                excluded.append(m.range)
             }
-
-            tokens.append(KnowledgeSyntaxToken(
-                kind: target.isEmbed ? .embed(target) : .wikiLink(target),
-                range: full,
-                contentRange: contentRange,
-                syntaxRanges: [openRange, closeRange]
-            ))
-            excluded.append(m.range)
         }
 
         // `#tags` outside code and wikilinks.
-        for m in tagRegex.matches(in: line.text, range: whole) {
-            let tagRange = m.range(at: 1)
-            if overlapsAny(tagRange, in: excluded) { continue }
-            let nameRange = m.range(at: 2)
-            let name = lineNS.substring(with: nameRange)
-            let full = NSRange(location: base + tagRange.location, length: tagRange.length)
-            let hashDelim = NSRange(location: full.location, length: 1)
-            let content = NSRange(location: base + nameRange.location, length: nameRange.length)
-            tokens.append(KnowledgeSyntaxToken(
-                kind: .tag(name),
-                range: full,
-                contentRange: content,
-                syntaxRanges: [hashDelim]
-            ))
-            excluded.append(tagRange)
+        if hashCount >= 1 {
+            for m in tagRegex.matches(in: line.text, range: whole) {
+                let tagRange = m.range(at: 1)
+                if overlapsAny(tagRange, in: excluded) { continue }
+                let nameRange = m.range(at: 2)
+                let name = lineNS.substring(with: nameRange)
+                let full = NSRange(location: base + tagRange.location, length: tagRange.length)
+                let hashDelim = NSRange(location: full.location, length: 1)
+                let content = NSRange(location: base + nameRange.location, length: nameRange.length)
+                tokens.append(KnowledgeSyntaxToken(
+                    kind: .tag(name),
+                    range: full,
+                    contentRange: content,
+                    syntaxRanges: [hashDelim]
+                ))
+                excluded.append(tagRange)
+            }
         }
 
         // `^block-id` at end of line outside code and wikilinks.
-        if let m = blockIDRegex.firstMatch(in: line.text, range: whole) {
+        if caretCount >= 1, let m = blockIDRegex.firstMatch(in: line.text, range: whole) {
             let blockRange = m.range(at: 1)
             if !overlapsAny(blockRange, in: excluded) {
                 let idRange = m.range(at: 2)
@@ -635,11 +777,21 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         }
 
         // Inline emphasis: bold-italic, bold, strikethrough, italic (outside code/wikilinks/tags).
-        scanEmphasis(boldItalicRegex, kind: .boldItalic, delimLength: 3, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
-        scanEmphasis(boldRegex, kind: .bold, delimLength: 2, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
-        scanEmphasis(strikethroughRegex, kind: .strikethrough, delimLength: 2, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
-        scanEmphasis(italicStarRegex, kind: .italic, delimLength: 1, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
-        scanEmphasis(italicUnderRegex, kind: .italic, delimLength: 1, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
+        if starCount >= 6 || underCount >= 6 {
+            scanEmphasis(boldItalicRegex, kind: .boldItalic, delimLength: 3, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
+        }
+        if starCount >= 4 || underCount >= 4 {
+            scanEmphasis(boldRegex, kind: .bold, delimLength: 2, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
+        }
+        if tildeCount >= 4 {
+            scanEmphasis(strikethroughRegex, kind: .strikethrough, delimLength: 2, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
+        }
+        if starCount >= 2 {
+            scanEmphasis(italicStarRegex, kind: .italic, delimLength: 1, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
+        }
+        if underCount >= 2 {
+            scanEmphasis(italicUnderRegex, kind: .italic, delimLength: 1, lineText: line.text, whole: whole, base: base, excluded: &excluded, tokens: &tokens)
+        }
     }
 
     private static func scanEmphasis(
@@ -1123,22 +1275,232 @@ public enum KnowledgeMarkdownSyntax: Sendable {
         return true
     }
 
-    // MARK: Code-Exclusion Helper for Completion
+    // MARK: Code-Exclusion & Incremental Diff Helpers
+
+    /// Computes which syntax delimiter ranges should be hidden vs. revealed for `selection`
+    /// using pre-scanned `tokens`, avoiding a redundant full-document scan on selection-only updates.
+    public static func livePreview(
+        tokens: [KnowledgeSyntaxToken],
+        selection: NSRange?,
+        isFocused: Bool = true
+    ) -> KnowledgeLivePreviewState {
+        var revealedIndices = Set<Int>()
+        var hidden: [NSRange] = []
+        var revealed: [NSRange] = []
+
+        for (index, token) in tokens.enumerated() {
+            let shouldReveal: Bool
+            if isFocused, let selection {
+                shouldReveal = intersects(tokenRange: token.range, selection: selection)
+            } else {
+                shouldReveal = false
+            }
+
+            if shouldReveal {
+                revealedIndices.insert(index)
+                revealed.append(contentsOf: token.syntaxRanges)
+            } else {
+                hidden.append(contentsOf: token.syntaxRanges)
+            }
+        }
+
+        return KnowledgeLivePreviewState(
+            tokens: tokens,
+            revealedTokenIndices: revealedIndices,
+            hiddenRanges: hidden,
+            revealedRanges: revealed
+        )
+    }
+
+    /// Minimal UTF-16 replacement ranges transforming `oldText` into `newText`, or `nil` when equal.
+    public static func minimalEditDelta(
+        from oldText: String,
+        to newText: String
+    ) -> (oldRange: NSRange, newRange: NSRange)? {
+        if oldText == newText { return nil }
+        let oldNS = oldText as NSString
+        let newNS = newText as NSString
+        let oldLen = oldNS.length
+        let newLen = newNS.length
+        let minLen = min(oldLen, newLen)
+
+        var prefix = 0
+        while prefix < minLen && oldNS.character(at: prefix) == newNS.character(at: prefix) {
+            prefix += 1
+        }
+
+        var suffix = 0
+        let maxSuffix = minLen - prefix
+        while suffix < maxSuffix && oldNS.character(at: oldLen - 1 - suffix) == newNS.character(at: newLen - 1 - suffix) {
+            suffix += 1
+        }
+
+        return (
+            oldRange: NSRange(location: prefix, length: oldLen - prefix - suffix),
+            newRange: NSRange(location: prefix, length: newLen - prefix - suffix)
+        )
+    }
+
+    /// Expands `range` to the full UTF-16 line span(s) covering it (including trailing newline if present).
+    public static func lineSpan(covering range: NSRange, in text: String) -> NSRange {
+        let ns = text as NSString
+        let len = ns.length
+        guard len > 0 else { return NSRange(location: 0, length: 0) }
+
+        let clampedStart = max(0, min(range.location, len))
+        let clampedEnd = max(clampedStart, min(range.location + range.length, len))
+
+        var lineStart = clampedStart
+        // If range starts right at EOF after a trailing newline, include that empty line only;
+        // otherwise walk back to the start of the line containing `clampedStart`.
+        while lineStart > 0 && ns.character(at: lineStart - 1) != 0x0A {
+            lineStart -= 1
+        }
+
+        var lineEnd = clampedEnd
+        // If a non-empty range ends exactly after '\n', it already ends at a line boundary.
+        let endsAfterNewline = clampedEnd > clampedStart && clampedEnd > 0 && ns.character(at: clampedEnd - 1) == 0x0A
+        if !endsAfterNewline {
+            while lineEnd < len {
+                let ch = ns.character(at: lineEnd)
+                lineEnd += 1
+                if ch == 0x0A { break }
+            }
+        }
+        return NSRange(location: lineStart, length: lineEnd - lineStart)
+    }
+
+    /// Returns `true` if `utf16Offset` falls strictly inside a YAML frontmatter block or fenced code block.
+    static func isInsideFencedCodeOrFrontmatter(utf16Offset: Int, in markdown: String) -> Bool {
+        isInsideCodeRegion(utf16Offset: utf16Offset, in: markdown, includeInlineCode: false)
+    }
 
     /// Returns `true` if `utf16Offset` falls inside a fenced code block, frontmatter, or inline code span.
     static func isInsideCodeOrFrontmatter(utf16Offset: Int, in markdown: String) -> Bool {
-        for token in scan(markdown) {
-            switch token.kind {
-            case .fencedCodeBlock, .inlineCode, .frontmatter:
-                let start = token.range.location
-                let end = start + token.range.length
-                if utf16Offset > start && utf16Offset < end {
-                    return true
+        isInsideCodeRegion(utf16Offset: utf16Offset, in: markdown, includeInlineCode: true)
+    }
+
+    private static func isInsideCodeRegion(
+        utf16Offset: Int,
+        in markdown: String,
+        includeInlineCode: Bool
+    ) -> Bool {
+        let ns = markdown as NSString
+        let totalLength = ns.length
+        guard utf16Offset > 0, utf16Offset < totalLength else { return false }
+
+        // Walk line by line only up to `utf16Offset`, skipping all inline regexes on preceding lines.
+        var pos = 0
+        var lineIndex = 0
+        var inFrontmatter = false
+        var openFenceChar: Character?
+        var openFenceLength = 0
+        var fenceStartOffset = 0
+
+        while pos < totalLength {
+            var end = pos
+            while end < totalLength && ns.character(at: end) != 0x0A {
+                end += 1
+            }
+            let hasLF = end < totalLength && ns.character(at: end) == 0x0A
+            let hasCR = end > pos && ns.character(at: end - 1) == 0x0D
+            let contentEnd = hasCR ? end - 1 : end
+            let lineEnd = hasLF ? end + 1 : end
+            let contentLen = contentEnd - pos
+            let lineText = ns.substring(with: NSRange(location: pos, length: contentLen))
+
+            if lineIndex == 0 && lineText == "---" {
+                // Only counts as frontmatter if a closing `---` or `...` exists later in the document.
+                var scanPos = lineEnd
+                var closingEnd: Int?
+                while scanPos < totalLength {
+                    var sEnd = scanPos
+                    while sEnd < totalLength && ns.character(at: sEnd) != 0x0A { sEnd += 1 }
+                    let sHasCR = sEnd > scanPos && ns.character(at: sEnd - 1) == 0x0D
+                    let sContentEnd = sHasCR ? sEnd - 1 : sEnd
+                    let sText = ns.substring(with: NSRange(location: scanPos, length: sContentEnd - scanPos))
+                    if sText == "---" || sText == "..." {
+                        closingEnd = sContentEnd
+                        break
+                    }
+                    scanPos = (sEnd < totalLength && ns.character(at: sEnd) == 0x0A) ? sEnd + 1 : sEnd
                 }
-            default:
+                if let closingEnd {
+                    if utf16Offset < closingEnd {
+                        return true
+                    }
+                    inFrontmatter = true
+                }
+            } else if inFrontmatter {
+                if lineText == "---" || lineText == "..." {
+                    inFrontmatter = false
+                }
+                lineIndex += 1
+                pos = lineEnd
                 continue
             }
+
+            let lineNS = lineText as NSString
+            if lineMayBeFence(lineNS),
+               let fenceMatch = fenceRegex.firstMatch(in: lineText, range: NSRange(location: 0, length: lineNS.length)) {
+                let marker = lineNS.substring(with: fenceMatch.range(at: 1))
+                let info = lineNS.substring(with: fenceMatch.range(at: 2)).trimmingCharacters(in: .whitespaces)
+                if let currentChar = openFenceChar {
+                    if marker.first == currentChar && marker.count >= openFenceLength && info.isEmpty {
+                        let fenceEndOffset = contentEnd
+                        if utf16Offset > fenceStartOffset && utf16Offset < fenceEndOffset {
+                            return true
+                        }
+                        if utf16Offset < lineEnd {
+                            return false
+                        }
+                        openFenceChar = nil
+                        openFenceLength = 0
+                        lineIndex += 1
+                        pos = lineEnd
+                        continue
+                    }
+                } else {
+                    openFenceChar = marker.first
+                    openFenceLength = marker.count
+                    fenceStartOffset = pos
+                    if utf16Offset < lineEnd {
+                        let fenceEnd = (lineEnd == totalLength) ? contentEnd : totalLength
+                        return utf16Offset > fenceStartOffset && utf16Offset < fenceEnd
+                    }
+                    lineIndex += 1
+                    pos = lineEnd
+                    continue
+                }
+            }
+
+            // Reached the line containing `utf16Offset`.
+            if utf16Offset >= pos && utf16Offset < lineEnd {
+                if openFenceChar != nil {
+                    let fenceEnd = (lineEnd == totalLength) ? contentEnd : totalLength
+                    return utf16Offset > fenceStartOffset && utf16Offset < fenceEnd
+                }
+                guard includeInlineCode else { return false }
+                // Only check inline code spans on this single line (and only if it has >= 2 backticks).
+                var ticks = 0
+                for i in 0..<lineNS.length where lineNS.character(at: i) == 0x60 {
+                    ticks += 1
+                    if ticks >= 2 { break }
+                }
+                guard ticks >= 2 else { return false }
+                let localOffset = utf16Offset - pos
+                for m in codeSpanRegex.matches(in: lineText, range: NSRange(location: 0, length: lineNS.length)) {
+                    if localOffset > m.range.location && localOffset < m.range.location + m.range.length {
+                        return true
+                    }
+                }
+                return false
+            }
+
+            lineIndex += 1
+            pos = lineEnd
         }
+
         return false
     }
 }

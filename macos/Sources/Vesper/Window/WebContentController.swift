@@ -247,6 +247,11 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             context.onSidebarViewChange = { [weak self] view in self?.state.nativeSidebar = view }
             context.onInspectorViewChange = { [weak self] builder in self?.state.nativeInspectorView = builder }
             context.window = { [weak self] in self?.host }
+            context.isActiveTabCheck = { [weak self] in
+                guard let self else { return false }
+                guard let host = self.host else { return true }
+                return host.content === self
+            }
             context.baseURL = { [weak self] in self?.app.connection?.baseURL }
             context.openCustomAppWindow = { [weak self] slug in self?.app.aux.openCustomAppWindow(slug: slug) }
             context.closeCustomAppWindow = { [weak self] slug in self?.app.aux.closeCustomAppWindow(slug: slug) }
