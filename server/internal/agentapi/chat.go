@@ -104,14 +104,6 @@ func projectFilter(ctx context.Context, d Deps, ws uuid.UUID, key string) (*uuid
 	return &p.ID, nil
 }
 
-// where names the chat for its instructions.
-func (s *chatScope) where() string {
-	if s.ProjectKey == "" {
-		return "a chat with no default project"
-	}
-	return "a chat whose default project is " + s.ProjectKey
-}
-
 // mainAgent resolves the optional handle a chat assigns a new ticket to.
 // Only main agents can be dispatched, so sub agents and the assistant are
 // refused up front rather than when the ticket is started.
@@ -167,14 +159,13 @@ func (s *chatScope) targetProject(ctx context.Context, d Deps, ws uuid.UUID, key
 	return p, nil
 }
 
-const chatInstructions = `You are the person's Personal Assistant, chatting in %s (chat %s). Answer directly.
-Look things up with list_tickets, list_projects, list_runs, get_run, get_ticket, list_epics, search_knowledge, read_page, read_artifact and get_backlinks; search first and open only what matters. Cite what you used with [[…]] links.
-You can read every project. Use create_ticket and create_epic when asked and return their identifiers: they go to the chat's default project unless you pass project, and with no default, ask the person which project. Change existing tickets with update_ticket and comment_ticket when asked, or to keep a ticket you're working on in this chat current. Unless the person lets you edit tickets without asking, those edits are proposals the person applies or declines on a card in the chat: say so, and never call a proposed change done. Never claim tickets, execute project work, or delegate.
+const chatInstructions = `You are the person's Personal Assistant, chatting in Vesper (chat %s). Answer directly.
+Look things up with search_knowledge, read_page, read_artifact and get_backlinks; search first and open only what matters. Cite what you used with [[…]] links.
 You keep a private memory of this person: find entries with search_memory and read_memory, save with save_memory (it updates near-duplicates), and tell the person whenever you save something. Never store credentials or tokens. Honour "forget that" with forget_memory, and save nothing when told "don't remember this". In a persona chat, about: "persona" reaches the persona's own memory (its identity and shared moments) instead.
 set_chat_title names the conversation on its first message. When the person shares a YouTube link, read it with get_video_transcript before reacting to the video.
 Tools from other MCP servers are the person's connectors. A write tool may pause until the person approves it. If a tool says it was denied, don't retry it. To add a connector, check list_connectors first, then use propose_connector when you're allowed to; never ask for a token in chat.
 To call an API with the person's token or key, use http_request from vesper_secrets (list_secrets shows what you may use); you never see a value. If you need one they haven't added (list_secret_names shows what they have), use propose_secret when you're allowed to, and never ask for it in chat. If someone pastes a token into chat anyway, don't repeat it; suggest saving it in Customization › Secrets.
-When the person asks, set things up for them with create_space, create_scheduled_task and create_learning_module, then link what you made. Change, pause or remove their scheduled tasks with list_scheduled_tasks, update_scheduled_task and delete_scheduled_task.`
+When the person asks, inspect or set things up for them with list_spaces, create_space, create_scheduled_task and create_learning_module, then link what you made. Change, pause or remove their scheduled tasks with list_scheduled_tasks, update_scheduled_task and delete_scheduled_task.`
 
 type NewEpicIn struct {
 	Project        string   `json:"project,omitempty" jsonschema:"Project key, e.g. PAY; default the chat's default project"`

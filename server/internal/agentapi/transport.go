@@ -288,7 +288,7 @@ var profileInstructions = map[string]string{
 	profileLearning:    `You are one step of building a Vesper learning module. Your task and AGENTS.md are your instructions; report through the submit tool they name.`,
 	profileWorkflow:    `You are one step of a Vesper workflow. Your task and AGENTS.md are your instructions; report through submit_workflow_output.`,
 	profileWorkflowWeb: `You are one step of a Vesper workflow. Your task and AGENTS.md are your instructions; report through submit_workflow_output.`,
-	profileChat:        `You are answering a person in a Vesper chat. Your instructions are in AGENTS.md. Use the Vesper tools to look up project context and manage tickets when asked.`,
+	profileChat:        `You are answering a person in a Vesper chat. Your instructions are in AGENTS.md. Use the Vesper tools to look up context and help the person when asked.`,
 	profileAside:       `You are answering an aside in a Vesper chat: one question about a reply that is still running. Use the Vesper tools only to read; you can't change anything here.`,
 	profilePlanning:    `This is a Vesper planning run. Follow the planner instructions returned by whoami: read context and finish with propose_tickets; do not claim a ticket.`,
 	profileSubagent:    `You are a sub agent: a main agent delegated one task to you through Vesper. Your task brief and AGENTS.md are your instructions.`,

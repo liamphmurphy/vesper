@@ -121,11 +121,11 @@ func TestChatSpecCapabilities(t *testing.T) {
 				if listed := strings.Contains(ins, "Branches you already pushed in this chat, oldest first: feat/add-search."); listed {
 					t.Errorf("pushed branches listed=%v for %v", listed, tc.caps.WorkBranches)
 				}
-				if tc.coding == strings.Contains(ins, "Never claim tickets, run or execute project work, change code") {
+				if tc.coding == strings.Contains(ins, "Never change code or hand work to other personas.") {
 					t.Errorf("the no-code bullet must go exactly when coding")
 				}
-				if !strings.Contains(ins, "Never claim tickets or hand work to other personas") && tc.coding {
-					t.Errorf("the coder bullet lost the ticket and delegation limits")
+				if !strings.Contains(ins, "Don't hand work to other personas.") && tc.coding {
+					t.Errorf("the coder bullet lost the delegation limit")
 				}
 				if strings.Contains(ins, "write the shared wiki") {
 					t.Errorf("instructions must not forbid writing the shared wiki")

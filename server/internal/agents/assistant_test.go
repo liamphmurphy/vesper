@@ -120,3 +120,22 @@ func TestAssistantCodingChatChecksConflictsBeforePush(t *testing.T) {
 		t.Errorf("non-coding instructions should not include git conflict instructions")
 	}
 }
+
+func TestAssistantInstructionsSpacesAndNoWorkReferences(t *testing.T) {
+	for _, want := range []string{"list_spaces", "create_space"} {
+		if !strings.Contains(agents.AssistantInstructions, want) {
+			t.Errorf("AssistantInstructions missing %q", want)
+		}
+	}
+	for name, section := range map[string]string{
+		"AssistantInstructions":         agents.AssistantInstructions,
+		"AssistantCanvasSection":        agents.AssistantCanvasSection,
+		"AssistantWorkflowBuildSection": agents.AssistantWorkflowBuildSection,
+	} {
+		for _, bad := range []string{"ticket", "epic", "list_projects", "LAZYAGENTS"} {
+			if strings.Contains(strings.ToLower(section), strings.ToLower(bad)) {
+				t.Errorf("%s still mentions %q", name, bad)
+			}
+		}
+	}
+}

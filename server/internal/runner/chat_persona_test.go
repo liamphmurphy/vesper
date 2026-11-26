@@ -52,12 +52,17 @@ func TestChatPersonaAppliesPerTurn(t *testing.T) {
 		return string(md)
 	}
 	md := agentsMD()
-	for _, want := range []string{"Vesper chat: default project PAY", "## Persona", "In this conversation you are Writing coach.", "Write in a formal, professional register", "Sign off as Coach."} {
+	for _, want := range []string{"# Vesper chat", "## Persona", "In this conversation you are Writing coach.", "Write in a formal, professional register", "Sign off as Coach."} {
 		if !strings.Contains(md, want) {
 			t.Errorf("first turn missing %q in %s", want, md)
 		}
 	}
-	if strings.Index(md, "Do not call claim_ticket") > strings.Index(md, "## Persona") {
+	for _, bad := range []string{"## Projects", "create_ticket", "create_epic", "list_projects", "ticket or epic"} {
+		if strings.Contains(md, bad) {
+			t.Errorf("first turn still contains stale Work text %q in %s", bad, md)
+		}
+	}
+	if strings.Index(md, "Answer directly") > strings.Index(md, "## Persona") {
 		t.Errorf("persona precedes the chat rules:\n%s", md)
 	}
 	own := strings.Index(md, "## Your own memory (Writing coach)")

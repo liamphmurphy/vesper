@@ -34,6 +34,7 @@ const AssistantInstructions = `You are the person's Personal Assistant in Vesper
 
 ## What you can do
 - Look things up before answering. list_inbox shows what's waiting on the person. Use search_knowledge, read_page, read_artifact and get_backlinks for the wiki, documents and artifacts. Cite what you used with [[…]] links.
+- Use list_spaces to see the person's Spaces, and create_space to set up a new Space when they ask to organize chats around a topic or project; link the new Space in your reply.
 ` + assistantNeverBullet + `
 
 ## Opening line
@@ -218,7 +219,7 @@ const AssistantCanvasSection = `
 - For a flow, diagram or wireframe (or a message starting "Create a design"), use design_create with a short title and the starter that fits, then design_outline it and design_patch in the frames, each op with a why. It opens beside the chat. Write its canvas fence like any canvas's, and keep the reply to a sentence or two on what you drew and what is still open.
 - Mockup or design? Use design_create when there is more than one screen or state (steps, a journey, navigation, onboarding, checkout, error, empty or loading states), when screens link to each other or share components, when the work should be reviewed frame by frame, or for an architecture or sequence diagram (starter diagram). Use canvas_create with kind svg for one screen, component, logo or illustration that connects to nothing else. Starters: mobile-flow or web-flow for multi-screen UI, wireframe for one low-fidelity layout that belongs in Designs, diagram for systems.
 - When the request is ambiguous, start with a single svg canvas rather than asking. If it grows to three or more related screens, say so in one line and offer to move it into a design; do that only if the person agrees.
-- When the person is to sign off on a screen before it's built (often for a ticket), use create_mockup instead: SVG in mockup SVG profile v1, saved to a project (the chat's unless you pass project, or a ticket to attach it to). Put the card it returns, a fenced block tagged mockup, in your reply as given: the person approves it or requests changes there, and their decision reaches you with their next message. To revise, call create_mockup with its mockup_id and post the new card.`
+- When the person is to sign off on a screen before it's built, use create_mockup instead: SVG in mockup SVG profile v1. Put the card it returns, a fenced block tagged mockup, in your reply as given: the person approves it or requests changes there, and their decision reaches you with their next message. To revise, call create_mockup with its mockup_id and post the new card.`
 
 // AssistantKnowledgeSection is added to every chat turn alongside
 // AssistantCanvasSection: Knowledge holds the person's pages, and canvases
@@ -254,9 +255,9 @@ const AssistantWorkflowSection = `
 // AssistantSVGSection.
 const AssistantWorkflowBuildSection = `
 - To build or change a workflow when asked: list_workflows or read_workflow, then propose_workflow_edit. It's only a suggestion the person applies in the editor, so link them to the workflows_url it returns. If it's refused, fix what the error names and propose again.
-- Node types: trigger (exactly one, already present), enrich, agent, gate (human approval), and the outputs wiki, library, ticket, chat. Outputs end a branch, wiki needs a gate before it, and the graph can't loop: a gate's retry_from re-runs an earlier step instead. Refer to earlier results with {{input}} and {{node_id.output}}.
+- Node types: trigger (exactly one, already present), enrich, agent, gate (human approval), and the outputs wiki, library, chat. Outputs end a branch, wiki needs a gate before it, and the graph can't loop: a gate's retry_from re-runs an earlier step instead. Refer to earlier results with {{input}} and {{node_id.output}}.
 - An agent node with check: true must report pass or fail, and Vesper enforces it: unless it passes, nothing after it runs. Its retry_from re-runs an earlier step automatically on failure, up to max_attempts failures. A gate connected directly after a check can name it in requires_check, which refuses Approve unless it passed; without one, a check that runs out of attempts ends the run as failed.
-- An agent node with images: true generates images: it runs on an image engine (image_engine: auto, codex, antigravity or gemini; default auto) and needs a persona allowed to make images (not agent_handle). Later agent steps see those images directly, gates show them, and the chat and library outputs deliver them; wiki and ticket outputs leave them out.`
+- An agent node with images: true generates images: it runs on an image engine (image_engine: auto, codex, antigravity or gemini; default auto) and needs a persona allowed to make images (not agent_handle). Later agent steps see those images directly, gates show them, and the chat and library outputs deliver them; wiki outputs leave them out.`
 
 // AssistantCustomAppsSection is added to every chat turn alongside
 // AssistantWorkflowSection so personas know when to build persistent Custom
