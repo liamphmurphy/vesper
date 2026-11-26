@@ -114,6 +114,137 @@ func AttachmentFolderPath(filename string) string {
 	return AttachmentFolder + "/" + base
 }
 
+// SanitizeAttachmentFilename cleans a user-supplied attachment filename to a
+// safe single path segment, returning "" if nothing usable remains.
+func SanitizeAttachmentFilename(raw string) string {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" || strings.ContainsAny(trimmed, "/\\\x00\r\n") {
+		return ""
+	}
+	base := path.Base(trimmed)
+	if base == "." || base == ".." || base == "/" || base == "" {
+		return ""
+	}
+	return base
+}
+
+// AttachmentFilenameTarget extracts a candidate attachment filename from an
+// Obsidian-style embed target such as "diagram.png" or "attachments/diagram.png".
+// Returns "" when the target does not look like a file name (e.g. a note title
+// without an extension or a nested folder path outside attachments/).
+func AttachmentFilenameTarget(target string) string {
+	t := strings.TrimSpace(strings.ReplaceAll(target, "\\", "/"))
+	if t == "" {
+		return ""
+	}
+	lower := strings.ToLower(t)
+	if strings.HasPrefix(lower, AttachmentFolder+"/") {
+		t = t[len(AttachmentFolder)+1:]
+	}
+	if strings.Contains(t, "/") {
+		return ""
+	}
+	clean := SanitizeAttachmentFilename(t)
+	if clean == "" || path.Ext(clean) == "" {
+		return ""
+	}
+	return clean
+}
+
+// RenameKnowledgeAsset renames an attachment owned by user. Returns
+// apperr.ErrNotFound if the attachment does not exist or is not visible to user,
+// ErrAttachmentForbidden if visible via a shared page owned by someone else,
+// and apperr.Invalid if the filename is invalid.
+func (s *Service) RenameKnowledgeAsset(ctx context.Context, ws, user, id uuid.UUID, filename string) (store.KnowledgeAsset, error) {
+	clean := SanitizeAttachmentFilename(filename)
+	if clean == "" {
+		return store.KnowledgeAsset{}, apperr.Invalid("filename", "must be a valid file name without slashes")
+	}
+	q := store.New(s.Pool)
+	existing, err := q.GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: ws, Viewer: &user})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	if existing.OwnerUserID != user {
+		return store.KnowledgeAsset{}, ErrAttachmentForbidden
+	}
+	updated, err := q.RenameKnowledgeAsset(ctx, store.RenameKnowledgeAssetParams{
+		ID:          id,
+		WorkspaceID: ws,
+		OwnerUserID: user,
+		Filename:    clean,
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	return updated, err
+}
+
+// DeleteKnowledgeAsset deletes an attachment owned by user and cleans up its
+// backing blob if no remaining knowledge_assets row references that blob key.
+func (s *Service) DeleteKnowledgeAsset(ctx context.Context, ws, user, id uuid.UUID) (store.KnowledgeAsset, error) {
+	q := store.New(s.Pool)
+	existing, err := q.GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: ws, Viewer: &user})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+	if existing.OwnerUserID != user {
+		return store.KnowledgeAsset{}, ErrAttachmentForbidden
+	}
+
+	var deleted store.KnowledgeAsset
+	err = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+		tq := store.New(tx)
+		if err := tq.LockKnowledgeBlob(ctx, existing.BlobKey); err != nil {
+			return err
+		}
+		var err error
+		deleted, err = tq.DeleteKnowledgeAsset(ctx, store.DeleteKnowledgeAssetParams{
+			ID:          id,
+			WorkspaceID: ws,
+			OwnerUserID: user,
+		})
+		if err != nil {
+			return err
+		}
+		return tq.QueueKnowledgeAssetDeletion(ctx, deleted.BlobKey)
+	})
+	if errors.Is(err, pgx.ErrNoRows) {
+		return store.KnowledgeAsset{}, apperr.ErrNotFound
+	}
+	if err != nil {
+		return store.KnowledgeAsset{}, err
+	}
+
+	// Best-effort immediate blob cleanup; any failure stays queued in
+	// knowledge_asset_deletions for SweepKnowledgeAssets.
+	if objects, bucket, err := s.vaultObjects(); err == nil {
+		_ = pgx.BeginFunc(ctx, s.Pool, func(tx pgx.Tx) error {
+			tq := store.New(tx)
+			if err := tq.LockKnowledgeBlob(ctx, deleted.BlobKey); err != nil {
+				return err
+			}
+			used, err := tq.KnowledgeBlobInUse(ctx, deleted.BlobKey)
+			if err != nil {
+				return err
+			}
+			if !used {
+				if err := objects.Delete(ctx, bucket, deleted.BlobKey); err != nil {
+					return err
+				}
+			}
+			return tq.ClearKnowledgeAssetDeletion(ctx, deleted.BlobKey)
+		})
+	}
+	return deleted, nil
+}
+
 // DetectAssetContentType sniffs a Knowledge asset's MIME type from its leading
 // bytes, preserving SVG detection for .svg files and recognizing common
 // container formats that http.DetectContentType leaves as octet-stream.
@@ -291,6 +422,8 @@ var (
 	ErrAssetTooLarge = errors.New("asset exceeds size limit")
 	// ErrAssetNoFile is returned when a Library item has no backing blob (such as a saved link).
 	ErrAssetNoFile = errors.New("library item has no file")
+	// ErrAttachmentForbidden is returned when a non-owner tries to rename or delete a shared attachment.
+	ErrAttachmentForbidden = errors.New("only the uploader can modify this attachment")
 )
 
 func readBoundedObject(ctx context.Context, objects VaultObjects, bucket, key string, maxBytes int64) ([]byte, error) {

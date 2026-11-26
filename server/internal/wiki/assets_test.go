@@ -97,3 +97,28 @@ func TestAttachmentFolderPath(t *testing.T) {
 		t.Fatalf("got %q", got)
 	}
 }
+
+func TestSanitizeAndTargetAttachmentFilename(t *testing.T) {
+	if got := SanitizeAttachmentFilename("  diagram.png "); got != "diagram.png" {
+		t.Fatalf("got %q, want diagram.png", got)
+	}
+	for _, bad := range []string{"", "   ", ".", "..", "a/b.png", `a\b.png`, "foo\nbar.png"} {
+		if got := SanitizeAttachmentFilename(bad); got != "" {
+			t.Fatalf("SanitizeAttachmentFilename(%q) = %q, want empty", bad, got)
+		}
+	}
+	if got := AttachmentFilenameTarget("img.png"); got != "img.png" {
+		t.Fatalf("got %q", got)
+	}
+	if got := AttachmentFilenameTarget("attachments/img.png"); got != "img.png" {
+		t.Fatalf("got %q", got)
+	}
+	if got := AttachmentFilenameTarget("Attachments/photo.heic"); got != "photo.heic" {
+		t.Fatalf("got %q", got)
+	}
+	for _, nonFile := range []string{"", "Plain Note", "Folder/Note.md", "attachments/sub/a.png", "NoExtension"} {
+		if got := AttachmentFilenameTarget(nonFile); got != "" {
+			t.Fatalf("AttachmentFilenameTarget(%q) = %q, want empty", nonFile, got)
+		}
+	}
+}

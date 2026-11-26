@@ -67,6 +67,37 @@ func (q *Queries) CopyCanvasCommentsToPage(ctx context.Context, arg CopyCanvasCo
 	return err
 }
 
+const deleteKnowledgeAsset = `-- name: DeleteKnowledgeAsset :one
+DELETE FROM knowledge_assets
+WHERE id = $1
+AND workspace_id = $2
+AND owner_user_id = $3
+RETURNING id, workspace_id, owner_user_id, content_hash, blob_key, filename, content_type, size_bytes, created_at
+`
+
+type DeleteKnowledgeAssetParams struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	OwnerUserID uuid.UUID
+}
+
+func (q *Queries) DeleteKnowledgeAsset(ctx context.Context, arg DeleteKnowledgeAssetParams) (KnowledgeAsset, error) {
+	row := q.db.QueryRow(ctx, deleteKnowledgeAsset, arg.ID, arg.WorkspaceID, arg.OwnerUserID)
+	var i KnowledgeAsset
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.OwnerUserID,
+		&i.ContentHash,
+		&i.BlobKey,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
+}
+
 const deleteUndoneImportVersion = `-- name: DeleteUndoneImportVersion :exec
 DELETE FROM artifact_versions v USING artifacts a WHERE v.id=$1 AND v.artifact_id=a.id AND a.id=$2
 AND a.current_version_id IS DISTINCT FROM v.id AND artifact_visible(a.audience,a.owner_user_id,$3::uuid)
@@ -123,6 +154,40 @@ func (q *Queries) ExportKnowledgeAssets(ctx context.Context, arg ExportKnowledge
 		return nil, err
 	}
 	return items, nil
+}
+
+const findKnowledgeAssetByFilename = `-- name: FindKnowledgeAssetByFilename :one
+SELECT k.id, k.workspace_id, k.owner_user_id, k.content_hash, k.blob_key, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
+WHERE k.workspace_id = $1
+AND lower(k.filename) = lower($2::text)
+AND (k.owner_user_id = $3::uuid OR EXISTS (
+ SELECT 1 FROM page_asset_refs r JOIN artifact_versions v ON v.id = r.version_id JOIN artifacts a ON a.id = v.artifact_id
+ WHERE r.asset_id = k.id AND artifact_visible(a.audience, a.owner_user_id, $3::uuid)))
+ORDER BY (k.owner_user_id = $3::uuid) DESC, k.created_at DESC, k.id
+LIMIT 1
+`
+
+type FindKnowledgeAssetByFilenameParams struct {
+	WorkspaceID uuid.UUID
+	Filename    string
+	Viewer      *uuid.UUID
+}
+
+func (q *Queries) FindKnowledgeAssetByFilename(ctx context.Context, arg FindKnowledgeAssetByFilenameParams) (KnowledgeAsset, error) {
+	row := q.db.QueryRow(ctx, findKnowledgeAssetByFilename, arg.WorkspaceID, arg.Filename, arg.Viewer)
+	var i KnowledgeAsset
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.OwnerUserID,
+		&i.ContentHash,
+		&i.BlobKey,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const finishedKnowledgeArchives = `-- name: FinishedKnowledgeArchives :many
@@ -387,8 +452,98 @@ func (q *Queries) ListKnowledgeAssetDeletions(ctx context.Context) ([]KnowledgeA
 	return items, nil
 }
 
+const listKnowledgeAssetUsages = `-- name: ListKnowledgeAssetUsages :many
+SELECT DISTINCT r.asset_id, a.id AS page_id, a.title, a.path
+FROM page_asset_refs r
+JOIN artifacts a ON a.current_version_id = r.version_id
+WHERE a.workspace_id = $1
+AND a.type = 'note'
+AND artifact_visible(a.audience, a.owner_user_id, $2::uuid)
+ORDER BY a.title, a.id
+`
+
+type ListKnowledgeAssetUsagesParams struct {
+	WorkspaceID uuid.UUID
+	Viewer      *uuid.UUID
+}
+
+type ListKnowledgeAssetUsagesRow struct {
+	AssetID uuid.UUID
+	PageID  uuid.UUID
+	Title   string
+	Path    *string
+}
+
+func (q *Queries) ListKnowledgeAssetUsages(ctx context.Context, arg ListKnowledgeAssetUsagesParams) ([]ListKnowledgeAssetUsagesRow, error) {
+	rows, err := q.db.Query(ctx, listKnowledgeAssetUsages, arg.WorkspaceID, arg.Viewer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListKnowledgeAssetUsagesRow{}
+	for rows.Next() {
+		var i ListKnowledgeAssetUsagesRow
+		if err := rows.Scan(
+			&i.AssetID,
+			&i.PageID,
+			&i.Title,
+			&i.Path,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKnowledgeAssetUsagesForAsset = `-- name: ListKnowledgeAssetUsagesForAsset :many
+SELECT DISTINCT a.id AS page_id, a.title, a.path
+FROM page_asset_refs r
+JOIN artifacts a ON a.current_version_id = r.version_id
+WHERE r.asset_id = $1
+AND a.workspace_id = $2
+AND a.type = 'note'
+AND artifact_visible(a.audience, a.owner_user_id, $3::uuid)
+ORDER BY a.title, a.id
+`
+
+type ListKnowledgeAssetUsagesForAssetParams struct {
+	AssetID     uuid.UUID
+	WorkspaceID uuid.UUID
+	Viewer      *uuid.UUID
+}
+
+type ListKnowledgeAssetUsagesForAssetRow struct {
+	PageID uuid.UUID
+	Title  string
+	Path   *string
+}
+
+func (q *Queries) ListKnowledgeAssetUsagesForAsset(ctx context.Context, arg ListKnowledgeAssetUsagesForAssetParams) ([]ListKnowledgeAssetUsagesForAssetRow, error) {
+	rows, err := q.db.Query(ctx, listKnowledgeAssetUsagesForAsset, arg.AssetID, arg.WorkspaceID, arg.Viewer)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListKnowledgeAssetUsagesForAssetRow{}
+	for rows.Next() {
+		var i ListKnowledgeAssetUsagesForAssetRow
+		if err := rows.Scan(&i.PageID, &i.Title, &i.Path); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
 const listKnowledgeAssets = `-- name: ListKnowledgeAssets :many
-SELECT k.id, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
+SELECT k.id, k.owner_user_id, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
 WHERE k.workspace_id=$1
 AND ($2::text = '' OR strpos(lower(k.filename), lower($2::text)) > 0)
 AND (k.owner_user_id=$3::uuid OR EXISTS (
@@ -406,6 +561,7 @@ type ListKnowledgeAssetsParams struct {
 
 type ListKnowledgeAssetsRow struct {
 	ID          uuid.UUID
+	OwnerUserID uuid.UUID
 	Filename    string
 	ContentType string
 	SizeBytes   int64
@@ -423,10 +579,78 @@ func (q *Queries) ListKnowledgeAssets(ctx context.Context, arg ListKnowledgeAsse
 		var i ListKnowledgeAssetsRow
 		if err := rows.Scan(
 			&i.ID,
+			&i.OwnerUserID,
 			&i.Filename,
 			&i.ContentType,
 			&i.SizeBytes,
 			&i.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		items = append(items, i)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, err
+	}
+	return items, nil
+}
+
+const listKnowledgeHeadings = `-- name: ListKnowledgeHeadings :many
+SELECT a.id AS page_id, a.title AS page_title, a.path AS page_path, a.audience,
+  s.level, s.anchor, s.heading, s.position
+FROM artifact_sections s
+JOIN artifacts a ON a.current_version_id = s.version_id
+WHERE a.workspace_id = $1
+AND a.type = 'note'
+AND artifact_visible(a.audience, a.owner_user_id, $2::uuid)
+AND ($3::boolean OR a.audience <> 'agent')
+AND left(s.anchor, 1) <> '^'
+AND ($4::text = '' OR strpos(lower(s.heading), lower($4::text)) > 0 OR strpos(lower(a.title), lower($4::text)) > 0)
+ORDER BY a.updated_at DESC, s.position ASC
+LIMIT 1000
+`
+
+type ListKnowledgeHeadingsParams struct {
+	WorkspaceID  uuid.UUID
+	Viewer       *uuid.UUID
+	IncludeAgent bool
+	Query        string
+}
+
+type ListKnowledgeHeadingsRow struct {
+	PageID    uuid.UUID
+	PageTitle string
+	PagePath  *string
+	Audience  string
+	Level     int32
+	Anchor    string
+	Heading   string
+	Position  int32
+}
+
+func (q *Queries) ListKnowledgeHeadings(ctx context.Context, arg ListKnowledgeHeadingsParams) ([]ListKnowledgeHeadingsRow, error) {
+	rows, err := q.db.Query(ctx, listKnowledgeHeadings,
+		arg.WorkspaceID,
+		arg.Viewer,
+		arg.IncludeAgent,
+		arg.Query,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []ListKnowledgeHeadingsRow{}
+	for rows.Next() {
+		var i ListKnowledgeHeadingsRow
+		if err := rows.Scan(
+			&i.PageID,
+			&i.PageTitle,
+			&i.PagePath,
+			&i.Audience,
+			&i.Level,
+			&i.Anchor,
+			&i.Heading,
+			&i.Position,
 		); err != nil {
 			return nil, err
 		}
@@ -800,6 +1024,53 @@ func (q *Queries) QueryPages(ctx context.Context, arg QueryPagesParams) ([]Query
 		return nil, err
 	}
 	return items, nil
+}
+
+const queueKnowledgeAssetDeletion = `-- name: QueueKnowledgeAssetDeletion :exec
+INSERT INTO knowledge_asset_deletions(blob_key) VALUES ($1) ON CONFLICT DO NOTHING
+`
+
+func (q *Queries) QueueKnowledgeAssetDeletion(ctx context.Context, blobKey string) error {
+	_, err := q.db.Exec(ctx, queueKnowledgeAssetDeletion, blobKey)
+	return err
+}
+
+const renameKnowledgeAsset = `-- name: RenameKnowledgeAsset :one
+UPDATE knowledge_assets
+SET filename = $1
+WHERE id = $2
+AND workspace_id = $3
+AND owner_user_id = $4
+RETURNING id, workspace_id, owner_user_id, content_hash, blob_key, filename, content_type, size_bytes, created_at
+`
+
+type RenameKnowledgeAssetParams struct {
+	Filename    string
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	OwnerUserID uuid.UUID
+}
+
+func (q *Queries) RenameKnowledgeAsset(ctx context.Context, arg RenameKnowledgeAssetParams) (KnowledgeAsset, error) {
+	row := q.db.QueryRow(ctx, renameKnowledgeAsset,
+		arg.Filename,
+		arg.ID,
+		arg.WorkspaceID,
+		arg.OwnerUserID,
+	)
+	var i KnowledgeAsset
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.OwnerUserID,
+		&i.ContentHash,
+		&i.BlobKey,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.CreatedAt,
+	)
+	return i, err
 }
 
 const restoreMigratedPageTimes = `-- name: RestoreMigratedPageTimes :exec

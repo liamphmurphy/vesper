@@ -78,7 +78,7 @@ ORDER BY k.created_at DESC, k.id
 LIMIT 12;
 
 -- name: ListKnowledgeAssets :many
-SELECT k.id, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
+SELECT k.id, k.owner_user_id, k.filename, k.content_type, k.size_bytes, k.created_at FROM knowledge_assets k
 WHERE k.workspace_id=sqlc.arg(workspace_id)
 AND (sqlc.arg(query)::text = '' OR strpos(lower(k.filename), lower(sqlc.arg(query)::text)) > 0)
 AND (k.owner_user_id=sqlc.narg(viewer)::uuid OR EXISTS (
@@ -86,6 +86,67 @@ AND (k.owner_user_id=sqlc.narg(viewer)::uuid OR EXISTS (
  WHERE r.asset_id=k.id AND artifact_visible(a.audience,a.owner_user_id,sqlc.narg(viewer)::uuid)))
 ORDER BY k.created_at DESC, k.id
 LIMIT 500;
+
+-- name: ListKnowledgeAssetUsages :many
+SELECT DISTINCT r.asset_id, a.id AS page_id, a.title, a.path
+FROM page_asset_refs r
+JOIN artifacts a ON a.current_version_id = r.version_id
+WHERE a.workspace_id = sqlc.arg(workspace_id)
+AND a.type = 'note'
+AND artifact_visible(a.audience, a.owner_user_id, sqlc.narg(viewer)::uuid)
+ORDER BY a.title, a.id;
+
+-- name: ListKnowledgeAssetUsagesForAsset :many
+SELECT DISTINCT a.id AS page_id, a.title, a.path
+FROM page_asset_refs r
+JOIN artifacts a ON a.current_version_id = r.version_id
+WHERE r.asset_id = sqlc.arg(asset_id)
+AND a.workspace_id = sqlc.arg(workspace_id)
+AND a.type = 'note'
+AND artifact_visible(a.audience, a.owner_user_id, sqlc.narg(viewer)::uuid)
+ORDER BY a.title, a.id;
+
+-- name: RenameKnowledgeAsset :one
+UPDATE knowledge_assets
+SET filename = sqlc.arg(filename)
+WHERE id = sqlc.arg(id)
+AND workspace_id = sqlc.arg(workspace_id)
+AND owner_user_id = sqlc.arg(owner_user_id)
+RETURNING *;
+
+-- name: DeleteKnowledgeAsset :one
+DELETE FROM knowledge_assets
+WHERE id = sqlc.arg(id)
+AND workspace_id = sqlc.arg(workspace_id)
+AND owner_user_id = sqlc.arg(owner_user_id)
+RETURNING *;
+
+-- name: QueueKnowledgeAssetDeletion :exec
+INSERT INTO knowledge_asset_deletions(blob_key) VALUES ($1) ON CONFLICT DO NOTHING;
+
+-- name: FindKnowledgeAssetByFilename :one
+SELECT k.* FROM knowledge_assets k
+WHERE k.workspace_id = sqlc.arg(workspace_id)
+AND lower(k.filename) = lower(sqlc.arg(filename)::text)
+AND (k.owner_user_id = sqlc.narg(viewer)::uuid OR EXISTS (
+ SELECT 1 FROM page_asset_refs r JOIN artifact_versions v ON v.id = r.version_id JOIN artifacts a ON a.id = v.artifact_id
+ WHERE r.asset_id = k.id AND artifact_visible(a.audience, a.owner_user_id, sqlc.narg(viewer)::uuid)))
+ORDER BY (k.owner_user_id = sqlc.narg(viewer)::uuid) DESC, k.created_at DESC, k.id
+LIMIT 1;
+
+-- name: ListKnowledgeHeadings :many
+SELECT a.id AS page_id, a.title AS page_title, a.path AS page_path, a.audience,
+  s.level, s.anchor, s.heading, s.position
+FROM artifact_sections s
+JOIN artifacts a ON a.current_version_id = s.version_id
+WHERE a.workspace_id = sqlc.arg(workspace_id)
+AND a.type = 'note'
+AND artifact_visible(a.audience, a.owner_user_id, sqlc.narg(viewer)::uuid)
+AND (sqlc.arg(include_agent)::boolean OR a.audience <> 'agent')
+AND left(s.anchor, 1) <> '^'
+AND (sqlc.arg(query)::text = '' OR strpos(lower(s.heading), lower(sqlc.arg(query)::text)) > 0 OR strpos(lower(a.title), lower(sqlc.arg(query)::text)) > 0)
+ORDER BY a.updated_at DESC, s.position ASC
+LIMIT 1000;
 
 -- name: AddPageAssetRef :exec
 INSERT INTO page_asset_refs(version_id,asset_id)

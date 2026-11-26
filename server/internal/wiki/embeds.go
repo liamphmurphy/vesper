@@ -96,6 +96,27 @@ func ResolvePageEmbeds(ctx context.Context, q *store.Queries, ws, pageID uuid.UU
 			if !errors.Is(err, pgx.ErrNoRows) && !errors.Is(err, apperr.ErrNotFound) {
 				return nil, err
 			}
+			if ref.Anchor == "" {
+				if filename := AttachmentFilenameTarget(target); filename != "" {
+					asset, aerr := q.FindKnowledgeAssetByFilename(ctx, store.FindKnowledgeAssetByFilenameParams{
+						WorkspaceID: ws,
+						Filename:    filename,
+						Viewer:      pageview.From(ctx).UserID,
+					})
+					if aerr == nil {
+						e = Embed{
+							Ref:         ref.Raw,
+							Kind:        "file",
+							Title:       asset.Filename,
+							Available:   true,
+							URL:         "/api/v1/knowledge/assets/" + asset.ID.String(),
+							ContentType: asset.ContentType,
+						}
+					} else if !errors.Is(aerr, pgx.ErrNoRows) {
+						return nil, aerr
+					}
+				}
+			}
 			out = append(out, e)
 			continue
 		}

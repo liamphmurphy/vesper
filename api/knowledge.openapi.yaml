@@ -364,6 +364,66 @@ paths:
       responses:
         "200": { description: "The file", content: { "*/*": { schema: { type: string, format: binary } } } }
         "404": { description: "Not found or not visible" }
+  /knowledge/attachments:
+    get:
+      tags: [knowledge-pages]
+      summary: List all visible Knowledge attachments with current-page usage counts
+      parameters:
+        - { name: q, in: query, schema: { type: string }, description: "Case-insensitive filename substring" }
+      responses:
+        "200":
+          description: Visible attachments organized under attachments/
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [folder, attachments]
+                properties:
+                  folder: { type: string }
+                  attachments: { type: array, items: { type: object } }
+  /knowledge/attachments/{id}:
+    patch:
+      tags: [knowledge-pages]
+      summary: Rename an attachment owned by the caller
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [filename]
+              properties:
+                filename: { type: string }
+      responses:
+        "200": { description: "Updated attachment metadata" }
+        "403": { description: "Caller is not the uploader" }
+        "404": { description: "Not found or not visible" }
+    delete:
+      tags: [knowledge-pages]
+      summary: Delete an attachment owned by the caller
+      parameters: [{ name: id, in: path, required: true, schema: { type: string, format: uuid } }]
+      responses:
+        "200": { description: "Deleted attachment id" }
+        "403": { description: "Caller is not the uploader" }
+        "404": { description: "Not found or not visible" }
+  /knowledge/headings:
+    get:
+      tags: [knowledge-pages]
+      summary: List headings from current versions of visible Knowledge pages
+      parameters:
+        - { name: q, in: query, schema: { type: string } }
+        - { name: include_agent, in: query, schema: { type: boolean } }
+      responses:
+        "200":
+          description: Headings for Quick Switcher navigation
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [headings]
+                properties:
+                  headings: { type: array, items: { type: object } }
   /knowledge/imports:
     post:
       tags: [knowledge-imports]

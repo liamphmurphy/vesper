@@ -327,22 +327,44 @@ func writeVersion(ctx context.Context, q *store.Queries, a store.Artifact, r res
 	}
 	if r.body != nil && a.Type == "note" {
 		for _, ref := range links.Parse(*r.body) {
-			raw, ok := strings.CutPrefix(ref.Target, "attachment:")
-			if !ok {
+			var assetID uuid.UUID
+			if raw, ok := strings.CutPrefix(ref.Target, "attachment:"); ok {
+				id, err := uuid.Parse(strings.SplitN(raw, "/", 2)[0])
+				if err != nil {
+					continue
+				}
+				_, err = q.GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: a.WorkspaceID, Viewer: pageview.From(ctx).UserID})
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				}
+				if err != nil {
+					return v, err
+				}
+				assetID = id
+			} else if ref.Embed && ref.Anchor == "" && !strings.Contains(ref.Target, ":") {
+				candidate := strings.TrimSpace(strings.ReplaceAll(ref.Target, "\\", "/"))
+				if strings.HasPrefix(strings.ToLower(candidate), "attachments/") {
+					candidate = candidate[len("attachments/"):]
+				}
+				if candidate == "" || strings.Contains(candidate, "/") || !strings.Contains(candidate, ".") {
+					continue
+				}
+				asset, err := q.FindKnowledgeAssetByFilename(ctx, store.FindKnowledgeAssetByFilenameParams{
+					WorkspaceID: a.WorkspaceID,
+					Filename:    candidate,
+					Viewer:      pageview.From(ctx).UserID,
+				})
+				if errors.Is(err, pgx.ErrNoRows) {
+					continue
+				}
+				if err != nil {
+					return v, err
+				}
+				assetID = asset.ID
+			} else {
 				continue
 			}
-			id, err := uuid.Parse(strings.SplitN(raw, "/", 2)[0])
-			if err != nil {
-				continue
-			}
-			_, err = q.GetKnowledgeAsset(ctx, store.GetKnowledgeAssetParams{ID: id, WorkspaceID: a.WorkspaceID, Viewer: pageview.From(ctx).UserID})
-			if errors.Is(err, pgx.ErrNoRows) {
-				continue
-			}
-			if err != nil {
-				return v, err
-			}
-			if err = q.AddPageAssetRef(ctx, store.AddPageAssetRefParams{VersionID: v.ID, AssetID: id, Viewer: pageview.From(ctx).UserID}); err != nil {
+			if err = q.AddPageAssetRef(ctx, store.AddPageAssetRefParams{VersionID: v.ID, AssetID: assetID, Viewer: pageview.From(ctx).UserID}); err != nil {
 				return v, err
 			}
 		}
