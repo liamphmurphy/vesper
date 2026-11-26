@@ -133,7 +133,7 @@ struct KnowledgeExplorerView: View {
         let p = theme.palette
         let starters = context.store.entry(KnowledgeShellController.slideStartersRequest).data?.starters ?? []
 
-        return HStack(spacing: 6) {
+        return HStack(spacing: 2) {
             headerIconButton(symbol: "point.3.connected.trianglepath.dotted", help: "Graph view") {
                 context.navigate("/knowledge/graph")
             }
@@ -153,8 +153,6 @@ struct KnowledgeExplorerView: View {
                     controller.selection.clear()
                 }
             }
-
-            Spacer(minLength: 4)
 
             Menu {
                 Button {
@@ -224,17 +222,18 @@ struct KnowledgeExplorerView: View {
                 Image(systemName: "plus")
                     .font(.system(size: 12, weight: .semibold))
                     .foregroundStyle(p.accent)
-                    .frame(width: 22, height: 22)
+                    .frame(maxWidth: .infinity, minHeight: 24)
                     .background(theme.swiftUIColor("accent-soft", fallback: p.selected), in: RoundedRectangle(cornerRadius: 5))
+                    .contentShape(Rectangle())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
-            .fixedSize()
+            .frame(maxWidth: .infinity)
             .hoverTooltip("New page, deck, design or folder")
         }
         .padding(.horizontal, 10)
-        .padding(.top, 6)
-        .padding(.bottom, 4)
+        .padding(.top, 4)
+        .padding(.bottom, 6)
     }
 
     private func headerIconButton(
@@ -248,12 +247,12 @@ struct KnowledgeExplorerView: View {
             Image(systemName: symbol)
                 .font(.system(size: 12))
                 .foregroundStyle(active ? p.accent : p.secondaryText)
-                .frame(width: 22, height: 22)
-                .background(active ? theme.swiftUIColor("accent-soft", fallback: p.selected) : .clear, in: RoundedRectangle(cornerRadius: 4))
+                .frame(maxWidth: .infinity, minHeight: 24)
+                .background(active ? theme.swiftUIColor("accent-soft", fallback: p.selected) : .clear, in: RoundedRectangle(cornerRadius: 5))
                 .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
-        .hoverTooltip(help, highlightHover: !active, cornerRadius: 4)
+        .hoverTooltip(help, highlightHover: !active, cornerRadius: 5)
     }
 
     private var modePicker: some View {
