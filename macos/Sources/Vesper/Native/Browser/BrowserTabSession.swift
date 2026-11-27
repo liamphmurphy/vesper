@@ -73,6 +73,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored var javascriptAllowedProvider: ((String) -> Bool)?
     @ObservationIgnored var sitePermissionProvider: ((String, BrowserPermissionKind) -> BrowserPermissionSetting)?
     @ObservationIgnored var onSitePermissionChanged: ((String, BrowserPermissionKind, BrowserPermissionSetting) -> Void)?
+    @ObservationIgnored var highlightsProvider: ((String) -> [BrowserWebHighlight])?
 
     var hasLoadedPage: Bool { !urlString.isEmpty }
 
@@ -565,6 +566,49 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         return BrowserPageGuard.redactCardNumbers(raw)
     }
 
+    struct SelectionContext: Sendable {
+        var quote: String
+        var prefix: String
+        var suffix: String
+    }
+
+    func extractSelectionContext() async -> SelectionContext {
+        guard let raw = (try? await webView.evaluateJavaScript(BrowserHighlightScripts.extractSelectionContextJS)) as? [String: Any] else {
+            let fallback = await extractSelection()
+            return SelectionContext(quote: fallback, prefix: "", suffix: "")
+        }
+        let quote = BrowserPageGuard.redactCardNumbers((raw["quote"] as? String ?? "").trimmingCharacters(in: .whitespacesAndNewlines))
+        let prefix = BrowserPageGuard.redactCardNumbers(raw["prefix"] as? String ?? "")
+        let suffix = BrowserPageGuard.redactCardNumbers(raw["suffix"] as? String ?? "")
+        return SelectionContext(quote: quote, prefix: prefix, suffix: suffix)
+    }
+
+    func applySavedHighlights() {
+        guard !isPrivate, !urlString.isEmpty, let highlights = highlightsProvider?(urlString), !highlights.isEmpty else {
+            return
+        }
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            await self.applyHighlights(highlights)
+        }
+    }
+
+    func applyHighlights(_ highlights: [BrowserWebHighlight]) async {
+        guard !highlights.isEmpty else { return }
+        let js = BrowserHighlightScripts.applyHighlightsJS(highlights: highlights)
+        _ = try? await webView.evaluateJavaScript(js)
+    }
+
+    func scrollToHighlight(id: UUID) {
+        let js = BrowserHighlightScripts.scrollToHighlightJS(id: id)
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
+    func removeHighlightMark(id: UUID) {
+        let js = BrowserHighlightScripts.removeHighlightJS(id: id)
+        webView.evaluateJavaScript(js, completionHandler: nil)
+    }
+
     /// Captures the visible viewport (or a cropped sub-rect) as a PNG using `WKWebView.takeSnapshot`
     /// (requires zero macOS Screen Recording permissions).
     func captureScreenshotPNG(rect: CGRect? = nil) async -> Data? {
@@ -802,6 +846,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         if isMuted { applyMuteToPage() }
         refreshMediaState()
         refreshFavicon()
+        applySavedHighlights()
         onPageFinished?(self)
         scheduleSnapshotUpdate()
     }

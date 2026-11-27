@@ -385,6 +385,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.browser.toggleBookmark()
     }
 
+    @objc func highlightBrowserSelection(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        Task { await app.browser.highlightSelection() }
+    }
+
+    @objc func toggleBrowserAutoFollow(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.setAutoFollowCompanionTab(!app.browser.isAutoFollowEnabled)
+    }
+
     @objc func openBrowserPageInSafari(_ sender: Any?) {
         guard app.keyController?.isBrowserActive == true,
               let raw = app.browser.activeTab?.urlString,

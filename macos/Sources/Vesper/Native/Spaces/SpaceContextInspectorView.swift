@@ -68,6 +68,8 @@ struct SpaceContextInspectorView: View {
                     knowledgeSection(links: links, p: p)
                     Divider()
                     if let space {
+                        browserTabsSection(space: space, p: p)
+                        Divider()
                         connectorsSection(space: space, connectors: connectors, p: p)
                         Divider()
                         sourcesSection(space: space, sourcesData: sourcesData, p: p)
@@ -155,6 +157,120 @@ struct SpaceContextInspectorView: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
                     .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+            }
+        }
+    }
+
+    // MARK: - Linked Browser Tabs
+
+    @ViewBuilder
+    private func browserTabsSection(space: API.ChatSpace, p: NativePalette) -> some View {
+        if let browser = context.window()?.app.browser {
+            let linked = browser.linkedTabGroups(forSpaceId: space.id)
+            let totalTabs = linked.reduce(0) { $0 + $1.tabs.count }
+            VStack(alignment: .leading, spacing: 8) {
+                HStack {
+                    Text("BROWSER TABS")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(p.tertiaryText)
+                    if totalTabs > 0 {
+                        Text("\(totalTabs)")
+                            .font(.system(size: 10.5))
+                            .foregroundStyle(p.tertiaryText)
+                    }
+                    Spacer()
+                    Button {
+                        _ = browser.createLinkedTabGroup(forSpace: space, openBrowser: true)
+                    } label: {
+                        Image(systemName: "plus")
+                            .font(.system(size: 11, weight: .medium))
+                            .foregroundStyle(p.accent)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Create Browser tab group linked to \(space.name)")
+                }
+
+                if linked.isEmpty {
+                    Text("No Browser tab groups linked yet. Link one to auto-route web clippings and highlights into this Space.")
+                        .font(.system(size: 11.5))
+                        .foregroundStyle(p.tertiaryText)
+                } else {
+                    ForEach(linked) { entry in
+                        VStack(alignment: .leading, spacing: 4) {
+                            HStack(spacing: 5) {
+                                if let group = entry.group {
+                                    Circle()
+                                        .fill(group.color.swiftUIColor)
+                                        .frame(width: 7, height: 7)
+                                    Text(group.name)
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(p.text)
+                                        .lineLimit(1)
+                                } else {
+                                    Image(systemName: "person.crop.circle")
+                                        .font(.system(size: 10.5))
+                                        .foregroundStyle(p.secondaryText)
+                                    Text("\(entry.profileName) profile")
+                                        .font(.system(size: 11.5, weight: .semibold))
+                                        .foregroundStyle(p.text)
+                                        .lineLimit(1)
+                                }
+                                Spacer()
+                                if let group = entry.group, !entry.tabs.isEmpty {
+                                    Button("Share Group") {
+                                        Task { await browser.shareTabGroup(group, openInCompanion: true) }
+                                    }
+                                    .buttonStyle(.plain)
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(p.accent)
+                                }
+                            }
+
+                            if entry.tabs.isEmpty {
+                                Text("No open tabs in this group.")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(p.tertiaryText)
+                            } else {
+                                ForEach(entry.tabs.prefix(8)) { tab in
+                                    Button {
+                                        browser.openTabFromSpace(profileId: entry.profileId, tabId: tab.id)
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            if let favicon = tab.favicon {
+                                                Image(nsImage: favicon)
+                                                    .resizable()
+                                                    .aspectRatio(contentMode: .fit)
+                                                    .frame(width: 12, height: 12)
+                                                    .clipShape(RoundedRectangle(cornerRadius: 2))
+                                            } else {
+                                                Image(systemName: "globe")
+                                                    .font(.system(size: 10))
+                                                    .foregroundStyle(p.tertiaryText)
+                                                    .frame(width: 12)
+                                            }
+                                            Text(tab.displayTitle)
+                                                .font(.system(size: 11.5))
+                                                .foregroundStyle(p.text)
+                                                .lineLimit(1)
+                                            Spacer(minLength: 4)
+                                            if !tab.displayHost.isEmpty {
+                                                Text(tab.displayHost)
+                                                    .font(.system(size: 10))
+                                                    .foregroundStyle(p.tertiaryText)
+                                                    .lineLimit(1)
+                                            }
+                                        }
+                                        .padding(.horizontal, 6)
+                                        .padding(.vertical, 3.5)
+                                        .background(p.surface, in: RoundedRectangle(cornerRadius: 5))
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }

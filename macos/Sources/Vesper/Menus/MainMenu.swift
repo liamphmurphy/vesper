@@ -128,6 +128,8 @@ enum MainMenu {
             item("Mute / Unmute Tab", #selector(AppDelegate.toggleBrowserTabMute(_:)), "m", [.command, .option]),
             item("Toggle Reader Mode", #selector(AppDelegate.toggleBrowserReaderMode(_:)), "r", [.command, .option]),
             item("Bookmark Page", #selector(AppDelegate.toggleBrowserBookmark(_:)), "b", [.command, .shift]),
+            item("Highlight Selection to Knowledge", #selector(AppDelegate.highlightBrowserSelection(_:)), "h", [.command, .shift]),
+            item("Toggle Companion Auto-Follow", #selector(AppDelegate.toggleBrowserAutoFollow(_:))),
             item("Capture Region Screenshot…", #selector(AppDelegate.captureBrowserRegionScreenshot(_:))),
             item("Open Page in Safari", #selector(AppDelegate.openBrowserPageInSafari(_:)), "o", [.command, .option]),
             sep(),

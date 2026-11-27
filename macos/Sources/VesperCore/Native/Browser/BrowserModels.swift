@@ -77,17 +77,21 @@ public struct BrowserTabGroup: Codable, Sendable, Equatable, Hashable, Identifia
     public var name: String
     public var color: BrowserProfileColor
     public var isCollapsed: Bool
+    /// Optional Vesper Space ID bound to this tab group for smart clip & persona routing.
+    public var spaceId: String?
 
     public init(
         id: UUID = UUID(),
         name: String,
         color: BrowserProfileColor = .blue,
-        isCollapsed: Bool = false
+        isCollapsed: Bool = false,
+        spaceId: String? = nil
     ) {
         self.id = id
         self.name = name
         self.color = color
         self.isCollapsed = isCollapsed
+        self.spaceId = spaceId
     }
 
     enum CodingKeys: String, CodingKey {
@@ -95,6 +99,7 @@ public struct BrowserTabGroup: Codable, Sendable, Equatable, Hashable, Identifia
         case name
         case color
         case isCollapsed = "is_collapsed"
+        case spaceId = "space_id"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -103,6 +108,7 @@ public struct BrowserTabGroup: Codable, Sendable, Equatable, Hashable, Identifia
         name = try c.decodeIfPresent(String.self, forKey: .name) ?? "Group"
         color = try c.decodeIfPresent(BrowserProfileColor.self, forKey: .color) ?? .blue
         isCollapsed = try c.decodeIfPresent(Bool.self, forKey: .isCollapsed) ?? false
+        spaceId = try c.decodeIfPresent(String.self, forKey: .spaceId)
     }
 }
 
@@ -294,6 +300,10 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
     public var javascriptDisabledHosts: [String]
     public var sitePermissions: [String: [String: BrowserPermissionSetting]]
     public var proxyConfig: BrowserProxyConfig
+    /// Optional Vesper Space ID bound to this entire profile (overridden by Tab Group binding).
+    public var spaceId: String?
+    /// Persistent web highlights stored per profile and synced to Knowledge notes.
+    public var highlights: [BrowserWebHighlight]
 
     public init(
         id: UUID = UUID(),
@@ -317,7 +327,9 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         lockdownDisabledHosts: [String] = [],
         javascriptDisabledHosts: [String] = [],
         sitePermissions: [String: [String: BrowserPermissionSetting]] = [:],
-        proxyConfig: BrowserProxyConfig = .none
+        proxyConfig: BrowserProxyConfig = .none,
+        spaceId: String? = nil,
+        highlights: [BrowserWebHighlight] = []
     ) {
         self.id = id
         self.name = name
@@ -341,6 +353,8 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         self.javascriptDisabledHosts = javascriptDisabledHosts
         self.sitePermissions = sitePermissions
         self.proxyConfig = proxyConfig
+        self.spaceId = spaceId
+        self.highlights = highlights
     }
 
     public static func defaultPersonal(
@@ -389,6 +403,8 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         case javascriptDisabledHosts = "javascript_disabled_hosts"
         case sitePermissions = "site_permissions"
         case proxyConfig = "proxy_config"
+        case spaceId = "space_id"
+        case highlights
     }
 
     public init(from decoder: any Decoder) throws {
@@ -415,6 +431,8 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         javascriptDisabledHosts = try c.decodeIfPresent([String].self, forKey: .javascriptDisabledHosts) ?? []
         sitePermissions = try c.decodeIfPresent([String: [String: BrowserPermissionSetting]].self, forKey: .sitePermissions) ?? [:]
         proxyConfig = try c.decodeIfPresent(BrowserProxyConfig.self, forKey: .proxyConfig) ?? .none
+        spaceId = try c.decodeIfPresent(String.self, forKey: .spaceId)
+        highlights = try c.decodeIfPresent([BrowserWebHighlight].self, forKey: .highlights) ?? []
     }
 }
 
@@ -426,17 +444,21 @@ public struct BrowserLayoutConfig: Codable, Sendable, Equatable, Hashable {
     public var autoHideOmnibox: Bool
     public var hoverPeekSidebar: Bool
     public var defaultZoom: Double
+    /// When enabled, automatically pushes the active non-private, shareable tab to Companion Chat.
+    public var autoFollowCompanionTab: Bool
 
     public static let `default` = BrowserLayoutConfig()
 
     public init(
         autoHideOmnibox: Bool = false,
         hoverPeekSidebar: Bool = true,
-        defaultZoom: Double = 1.0
+        defaultZoom: Double = 1.0,
+        autoFollowCompanionTab: Bool = false
     ) {
         self.autoHideOmnibox = autoHideOmnibox
         self.hoverPeekSidebar = hoverPeekSidebar
         self.defaultZoom = Self.clampZoom(defaultZoom)
+        self.autoFollowCompanionTab = autoFollowCompanionTab
     }
 
     public static func clampZoom(_ value: Double) -> Double {
@@ -456,6 +478,7 @@ public struct BrowserLayoutConfig: Codable, Sendable, Equatable, Hashable {
         case autoHideOmnibox = "auto_hide_omnibox"
         case hoverPeekSidebar = "hover_peek_sidebar"
         case defaultZoom = "default_zoom"
+        case autoFollowCompanionTab = "auto_follow_companion_tab"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -463,6 +486,7 @@ public struct BrowserLayoutConfig: Codable, Sendable, Equatable, Hashable {
         autoHideOmnibox = try c.decodeIfPresent(Bool.self, forKey: .autoHideOmnibox) ?? false
         hoverPeekSidebar = try c.decodeIfPresent(Bool.self, forKey: .hoverPeekSidebar) ?? true
         defaultZoom = Self.clampZoom(try c.decodeIfPresent(Double.self, forKey: .defaultZoom) ?? 1.0)
+        autoFollowCompanionTab = try c.decodeIfPresent(Bool.self, forKey: .autoFollowCompanionTab) ?? false
     }
 }
 
