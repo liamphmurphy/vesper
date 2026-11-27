@@ -200,6 +200,7 @@ struct KnowledgeTextView: NSViewRepresentable {
         private struct StyleSnapshot {
             var text: String
             var mode: ColorMode
+            var typeScale: Double
             var tokens: [KnowledgeSyntaxToken]
             var revealedTokenIndices: Set<Int>
             var embedStates: [EmbedVisualState]
@@ -212,6 +213,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             var selection: NSRange
             var isFocused: Bool
             var mode: ColorMode
+            var typeScale: Double
             var findMatches: [NSRange]
             var activeFind: NSRange?
             var embeds: [KnowledgeEmbed]
@@ -373,6 +375,7 @@ struct KnowledgeTextView: NSViewRepresentable {
                 selection: selection,
                 isFocused: focused,
                 mode: parent.theme.mode,
+                typeScale: parent.theme.typeScale,
                 findMatches: parent.findMatches,
                 activeFind: parent.activeFindMatchRange,
                 embeds: parent.embeds,
@@ -506,6 +509,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             let nextSnapshot = StyleSnapshot(
                 text: markdown,
                 mode: parent.theme.mode,
+                typeScale: parent.theme.typeScale,
                 tokens: tokens,
                 revealedTokenIndices: preview.revealedTokenIndices,
                 embedStates: embedStates,
@@ -768,7 +772,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             fullLength: Int
         ) -> DirtyPlan {
             let fullRange = NSRange(location: 0, length: fullLength)
-            guard let previous, previous.mode == current.mode else {
+            guard let previous, previous.mode == current.mode, previous.typeScale == current.typeScale else {
                 return DirtyPlan(ranges: [fullRange], isFullDocument: true, mayChangeLayoutHeight: true)
             }
 

@@ -254,21 +254,45 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             app.browser.adjustZoom(delta: 0.1)
             return
         }
-        if let web { web.pageZoom = min(web.pageZoom + 0.1, 3) }
+        if let web {
+            web.pageZoom = min(web.pageZoom + 0.1, 3)
+            return
+        }
+        app.aux.update { s in
+            var next = s.effectiveAppearance
+            next.textSize = next.textSize.steppedIn()
+            s.appearance = next
+        }
     }
     @objc func zoomOut(_ sender: Any?) {
         if app.keyController?.isBrowserActive == true {
             app.browser.adjustZoom(delta: -0.1)
             return
         }
-        if let web { web.pageZoom = max(web.pageZoom - 0.1, 0.3) }
+        if let web {
+            web.pageZoom = max(web.pageZoom - 0.1, 0.3)
+            return
+        }
+        app.aux.update { s in
+            var next = s.effectiveAppearance
+            next.textSize = next.textSize.steppedOut()
+            s.appearance = next
+        }
     }
     @objc func zoomReset(_ sender: Any?) {
         if app.keyController?.isBrowserActive == true {
             app.browser.resetZoom()
             return
         }
-        web?.pageZoom = 1
+        if let web {
+            web.pageZoom = 1
+            return
+        }
+        app.aux.update { s in
+            var next = s.effectiveAppearance
+            next.textSize = .default
+            s.appearance = next
+        }
     }
     @objc func goBack(_ sender: Any?) {
         if app.keyController?.isBrowserActive == true, let tab = app.browser.activeTab, tab.canGoBack {
@@ -507,9 +531,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return true
         case #selector(find(_:)), #selector(useSelectionForFind(_:)):
             return (NSApp.keyWindow?.windowController as? MainWindowController) != nil
-        case #selector(reload(_:)), #selector(forceReload(_:)),
-             #selector(zoomIn(_:)), #selector(zoomOut(_:)), #selector(zoomReset(_:)), #selector(showInspector(_:)):
+        case #selector(reload(_:)), #selector(forceReload(_:)), #selector(showInspector(_:)):
             return web != nil
+        case #selector(zoomIn(_:)):
+            if app.keyController?.isBrowserActive == true || web != nil { return true }
+            return app.settings.settings.effectiveAppearance.textSize.canStepIn
+        case #selector(zoomOut(_:)):
+            if app.keyController?.isBrowserActive == true || web != nil { return true }
+            return app.settings.settings.effectiveAppearance.textSize.canStepOut
+        case #selector(zoomReset(_:)):
+            if app.keyController?.isBrowserActive == true || web != nil { return true }
+            return app.settings.settings.effectiveAppearance.textSize != .default
         case #selector(findNext(_:)), #selector(findPrevious(_:)):
             guard let controller = app.keyController else { return false }
             return controller.isFindBarVisible && controller.hasFindQuery

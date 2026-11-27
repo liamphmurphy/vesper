@@ -10,7 +10,9 @@ struct SidebarHost: View {
 
     var body: some View {
         if let tab = tabs.list.active {
-            SidebarView(state: tab.state, send: send, openInNewTab: openInNewTab).id(ObjectIdentifier(tab))
+            SidebarView(state: tab.state, send: send, openInNewTab: openInNewTab)
+                .environment(\.vesperTheme, tab.state.theme ?? ThemeTokens(mode: .dark))
+                .id(ObjectIdentifier(tab))
         }
     }
 }
@@ -27,6 +29,7 @@ struct SidebarView: View {
     let state: ShellState
     let send: (NativeCommand) -> Void
     let openInNewTab: (String) -> Void
+    @Environment(\.vesperTheme) private var theme
 
     static func isCommandClick() -> Bool {
         NSEvent.modifierFlags.contains(.command) || NSApp.currentEvent?.modifierFlags.contains(.command) == true
@@ -62,7 +65,7 @@ struct SidebarView: View {
                     }
                     .listStyle(.sidebar)
                     // Denser rows than the sidebar default, so a long chat list or file tree shows more of itself.
-                    .environment(\.defaultMinListRowHeight, 22)
+                    .environment(\.defaultMinListRowHeight, max(20, (22 * theme.typeScale).rounded()))
                     .task(id: scrollTarget) {
                         guard let target = scrollTarget, !state.recentlyActivated(target.itemId) else { return }
                         // Let newly expanded DisclosureGroups materialize child rows in NSOutlineView before scrolling.
@@ -246,6 +249,7 @@ private struct NavContent: View {
 private struct NavHeader: View {
     let nav: NavModel
     let send: (NativeCommand) -> Void
+    @Environment(\.vesperTheme) private var theme
     @State private var search = ""
     @State private var searchOpen = false
     @FocusState private var searchFocused: Bool
@@ -275,7 +279,7 @@ private struct NavHeader: View {
             if nav.title != nil || nav.search != nil || !(nav.actions ?? []).isEmpty {
                 HStack(spacing: 4) {
                     if let title = nav.title {
-                        Text(title).font(.subheadline.weight(.semibold)).lineLimit(1).layoutPriority(1)
+                        Text(title).font(theme.scaledFont(size: 12, weight: .semibold)).lineLimit(1).layoutPriority(1)
                     }
                     Spacer(minLength: 4)
                     if nav.search != nil {
@@ -499,6 +503,7 @@ private struct NavSectionView: View {
     let section: NavSection
     let state: ShellState
     let send: (NativeCommand) -> Void
+    @Environment(\.vesperTheme) private var theme
     @State private var titleHovered = false
 
     private var isExpanded: Bool {
@@ -541,7 +546,7 @@ private struct NavSectionView: View {
                 Button(action: toggleSection) {
                     HStack(spacing: 6) {
                         Text(title)
-                            .font(.system(size: 11, weight: .semibold))
+                            .font(theme.scaledFont(size: 11, weight: .semibold))
                             .foregroundStyle(titleHovered ? Color.primary : Color.secondary)
                             .lineLimit(1)
                         if let badge = section.badge { BadgeView(text: badge.text, tone: badge.tone) }
@@ -568,7 +573,7 @@ private struct NavSectionView: View {
     @ViewBuilder private var rows: some View {
         if section.items.isEmpty {
             if let empty = section.emptyText {
-                Text(empty).font(.callout).foregroundStyle(.secondary)
+                Text(empty).font(theme.font(.small)).foregroundStyle(.secondary)
                     .lineLimit(nil).fixedSize(horizontal: false, vertical: true).selectionDisabled()
             }
         } else {
@@ -636,6 +641,7 @@ private struct NavRow: View {
 
 private struct NavRowLabel: View {
     let item: NavItem
+    @Environment(\.vesperTheme) private var theme
 
     var body: some View {
         HStack(spacing: 8) {
@@ -645,14 +651,17 @@ private struct NavRowLabel: View {
             if let avatar = item.avatar {
                 AvatarView(avatar: avatar)
             } else if let icon = item.icon {
-                Image(systemName: SidebarIcons.symbolName(icon)).foregroundStyle(.secondary).frame(width: 16)
+                Image(systemName: SidebarIcons.symbolName(icon))
+                    .font(theme.scaledFont(size: 12))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 16)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title).lineLimit(1)
-                if let sub = item.subtitle { Text(sub).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
+                Text(item.title).font(theme.font(.body)).lineLimit(1)
+                if let sub = item.subtitle { Text(sub).font(theme.scaledFont(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 4)
-            if let trailing = item.trailing { Text(trailing).font(.caption).foregroundStyle(.secondary) }
+            if let trailing = item.trailing { Text(trailing).font(theme.scaledFont(size: 11)).foregroundStyle(.secondary) }
             if let badge = item.badge { BadgeView(text: badge.text, tone: badge.tone) }
         }
     }

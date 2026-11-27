@@ -57,19 +57,46 @@ struct SettingsAppearancePane: View {
                 Divider()
 
                 LabeledContent("Text size") {
-                    Picker("Text size", selection: Binding(
-                        get: { current.textSize },
-                        set: { size in updatePref { $0.textSize = size } }
-                    )) {
-                        Text("Small").tag(AppearanceTextSize.small)
-                        Text("Default").tag(AppearanceTextSize.default)
-                        Text("Large").tag(AppearanceTextSize.large)
-                        Text("Larger").tag(AppearanceTextSize.larger)
+                    HStack(spacing: 8) {
+                        Picker("Text size", selection: Binding(
+                            get: { current.textSize },
+                            set: { size in updatePref { $0.textSize = size } }
+                        )) {
+                            Text("Small").tag(AppearanceTextSize.small)
+                            Text("Default").tag(AppearanceTextSize.default)
+                            Text("Large").tag(AppearanceTextSize.large)
+                            Text("Larger").tag(AppearanceTextSize.larger)
+                        }
+                        .pickerStyle(.segmented)
+                        .labelsHidden()
+                        .frame(width: 260)
+
+                        HStack(spacing: 4) {
+                            Button {
+                                updatePref { $0.textSize = $0.textSize.steppedOut() }
+                            } label: {
+                                Image(systemName: "minus")
+                                    .frame(width: 16, height: 16)
+                            }
+                            .disabled(!current.textSize.canStepOut)
+                            .help("Zoom Out (⌘-)")
+
+                            Text(current.textSize.percentLabel)
+                                .font(.caption.monospacedDigit())
+                                .frame(minWidth: 38, alignment: .center)
+
+                            Button {
+                                updatePref { $0.textSize = $0.textSize.steppedIn() }
+                            } label: {
+                                Image(systemName: "plus")
+                                    .frame(width: 16, height: 16)
+                            }
+                            .disabled(!current.textSize.canStepIn)
+                            .help("Zoom In (⌘+)")
+                        }
                     }
-                    .pickerStyle(.segmented)
-                    .frame(width: 280)
                 }
-                Text("Scales UI text across Vesper. Exported documents and slides keep their own print sizes.")
+                Text("Scales UI and editor text across Vesper (80%–175%). Use ⌘+, ⌘-, and ⌘0 anywhere. Exported documents keep their own print sizes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

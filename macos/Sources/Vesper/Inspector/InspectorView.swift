@@ -12,6 +12,7 @@ struct InspectorHeaderView: View {
 
     var body: some View {
         let model = tabs.list.active?.state.inspector
+        let theme = tabs.list.active?.state.theme ?? ThemeTokens(mode: .dark)
         let active = InspectorLogic.activeTab(in: model)
         let popoutTabs = isPoppedOut ? (model?.tabs.filter { $0.kind != .web } ?? []) : []
         HStack(spacing: 6) {
@@ -28,7 +29,7 @@ struct InspectorHeaderView: View {
             }
             if let active {
                 Text(active.label)
-                    .font(.subheadline.weight(.semibold))
+                    .font(theme.scaledFont(size: 12, weight: .semibold))
                     .lineLimit(1)
                     .foregroundStyle(.primary)
             }
@@ -133,25 +134,29 @@ struct InspectorBodyHost: View {
 
     var body: some View {
         let state = tabs.list.active?.state
+        let theme = state?.theme ?? ThemeTokens(mode: .dark)
         let model = state?.inspector
-        if let active = InspectorLogic.activeTab(in: model), active.kind == .native {
-            if let custom = state?.nativeInspectorView?(active.id) {
-                custom
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .id("\(model?.id ?? ""):\(active.id)")
+        Group {
+            if let active = InspectorLogic.activeTab(in: model), active.kind == .native {
+                if let custom = state?.nativeInspectorView?(active.id) {
+                    custom
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                        .id("\(model?.id ?? ""):\(active.id)")
+                } else {
+                    InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
+                        .id("\(model?.id ?? ""):\(active.id)")
+                }
+            } else if InspectorLogic.activeTab(in: model) == nil {
+                Text("No inspector for this tab.")
+                    .font(theme.font(.small))
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .padding(20)
             } else {
-                InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
-                    .id("\(model?.id ?? ""):\(active.id)")
+                Color.clear
             }
-        } else if InspectorLogic.activeTab(in: model) == nil {
-            Text("No inspector for this tab.")
-                .font(.callout)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .padding(20)
-        } else {
-            Color.clear
         }
+        .environment(\.vesperTheme, theme)
     }
 }
 
@@ -162,13 +167,14 @@ struct InspectorBodyView: View {
     let navigate: (String, Bool) -> Void
     let openURL: (URL) -> Void
 
+    @Environment(\.vesperTheme) private var theme
     @State private var collapsedSections: [String: Bool] = [:]
 
     var body: some View {
         let sections = tab.sections ?? []
         if sections.isEmpty {
             Text(tab.emptyText ?? "Nothing to inspect.")
-                .font(.callout)
+                .font(theme.font(.small))
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .padding(20)
@@ -206,6 +212,7 @@ private struct InspectorSectionView: View {
     let send: (NativeCommand) -> Void
     let navigate: (String, Bool) -> Void
     let openURL: (URL) -> Void
+    @Environment(\.vesperTheme) private var theme
 
     private var hasHeader: Bool {
         section.title != nil || section.aside != nil || section.badge != nil
@@ -220,7 +227,7 @@ private struct InspectorSectionView: View {
                 if section.items.isEmpty {
                     if let empty = section.emptyText {
                         Text(empty)
-                            .font(.caption)
+                            .font(theme.scaledFont(size: 11))
                             .foregroundStyle(.secondary)
                     }
                 } else {
@@ -249,7 +256,7 @@ private struct InspectorSectionView: View {
             }
             if let title = section.title {
                 Text(title.uppercased())
-                    .font(.system(size: 10.5, weight: .semibold))
+                    .font(theme.scaledFont(size: 10.5, weight: .semibold))
                     .tracking(0.4)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -260,7 +267,7 @@ private struct InspectorSectionView: View {
             Spacer(minLength: 4)
             if let aside = section.aside {
                 Text(aside)
-                    .font(.system(size: 11, design: .monospaced))
+                    .font(theme.scaledFont(size: 11, design: .monospaced))
                     .foregroundStyle(.tertiary)
                     .lineLimit(1)
             }
