@@ -27,6 +27,7 @@ final class ChatScreenModel {
     var deleteTargetId: String?
     var forkTarget: API.ChatMessage?
     var saveWikiTarget: API.ChatMessage?
+    var saveWikiBodyOverride: String?
     var composerPrefill: ChatComposerPrefill?
     @ObservationIgnored var prefillToken = 0
 
@@ -36,6 +37,7 @@ final class ChatScreenModel {
     var activeCanvasId: String?
     var designReviewing = false
     var threadMessageId: String?
+    var threadInitialDraft: String?
     var forceShowCode = false
     var startingPlayground = false
     var scrollToMessageRequest: ChatScrollMessageRequest?
@@ -49,6 +51,7 @@ final class ChatScreenModel {
         activeCanvasId = nil
         designReviewing = false
         threadMessageId = nil
+        threadInitialDraft = nil
         forceShowCode = false
         startingPlayground = false
         scrollToMessageRequest = nil
@@ -412,6 +415,7 @@ struct ChatScreen: View {
         .onChange(of: colorScheme) { _, next in model.colorScheme = next }
         .onDisappear {
             messageReader.stop()
+            ChatSelectionPopoverPresenter.shared.dismiss()
             context.inspectorView = nil
             for key in watched { context.store.stopObserving(key) }
             watched = []
@@ -493,6 +497,7 @@ struct ChatScreen: View {
                 model.forkTarget = msg
             },
             onSaveWiki: { msg in
+                model.saveWikiBodyOverride = nil
                 model.saveWikiTarget = msg
             },
             onSecondOpinion: { msg, harness, modelId in
@@ -545,6 +550,27 @@ struct ChatScreen: View {
                     speakerName: speakerName,
                     bodyMd: bodyMd
                 )
+            },
+            onSelectionAction: { msg, speaker, action, excerpt in
+                let hostName = activePersona?.name ?? session?.persona?.name
+                switch action {
+                case .quote:
+                    let text = ChatSelectionLogic.quotePrompt(selection: excerpt, speakerName: speaker, hostName: hostName)
+                    model.prefillToken += 1
+                    model.composerPrefill = ChatComposerPrefill(token: model.prefillToken, text: text)
+                case .thread:
+                    model.threadMessageId = msg.id
+                    model.threadInitialDraft = ChatSelectionLogic.threadPrefill(selection: excerpt)
+                    model.inspectorTabId = ChatInspectorLogic.threadTabId
+                    model.inspectorOpen = true
+                case .explain:
+                    let text = ChatSelectionLogic.explainPrompt(selection: excerpt)
+                    model.prefillToken += 1
+                    model.composerPrefill = ChatComposerPrefill(token: model.prefillToken, text: text)
+                case .clipToKnowledge:
+                    model.saveWikiBodyOverride = excerpt
+                    model.saveWikiTarget = msg
+                }
             }
         )
     }
@@ -569,8 +595,11 @@ struct ChatScreen: View {
                 chatId: chatId,
                 chatTitle: session?.title ?? "",
                 projectKey: session?.project,
-                bodyMd: message.bodyMd,
-                onClose: { model.saveWikiTarget = nil }
+                bodyMd: model.saveWikiBodyOverride ?? message.bodyMd,
+                onClose: {
+                    model.saveWikiTarget = nil
+                    model.saveWikiBodyOverride = nil
+                }
             )
         }
     }
@@ -1065,7 +1094,11 @@ struct ChatScreen: View {
                let currentChatId = context.match.params["id"],
                let msgId = model.threadMessageId, !msgId.isEmpty {
                 return AnyView(
-                    ChatThreadInspectorView(chatId: currentChatId, messageId: msgId)
+                    ChatThreadInspectorView(
+                        chatId: currentChatId,
+                        messageId: msgId,
+                        initialDraft: model.threadInitialDraft
+                    )
                         .id("\(currentChatId):\(msgId)")
                         .environment(context)
                         .environment(\.vesperTheme, model.theme)

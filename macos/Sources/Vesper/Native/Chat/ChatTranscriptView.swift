@@ -30,6 +30,7 @@ struct ChatTranscriptView: View {
     var onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)? = nil
     var readingMessageId: String? = nil
     var onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)? = nil
+    var onSelectionAction: (@MainActor (API.ChatMessage, String?, ChatSelectionAction, String) -> Void)? = nil
 
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
@@ -240,6 +241,7 @@ struct ChatTranscriptView: View {
                                     onRegenerateMessage: onRegenerateMessage,
                                     isReadingAloud: readingMessageId == message.id,
                                     onToggleReadAloud: onToggleReadAloud,
+                                    onSelectionAction: onSelectionAction,
                                     onScrollToSelf: {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             proxy.scrollTo(message.id, anchor: .top)
@@ -517,6 +519,7 @@ private struct ChatMessageRowView: View {
     let onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)?
     let isReadingAloud: Bool
     let onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)?
+    let onSelectionAction: (@MainActor (API.ChatMessage, String?, ChatSelectionAction, String) -> Void)?
     let onScrollToSelf: @MainActor () -> Void
 
     @State private var togglingBookmark = false
@@ -1075,7 +1078,19 @@ private struct ChatMessageRowView: View {
     private func segmentView(_ segment: ChatMessageSegment, citationNumbers: [Int]) -> some View {
         switch segment {
         case .markdown(let text):
-            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow, onLinkWithAnchor: handleMarkdownLink)
+            MarkdownView(
+                markdown: text,
+                textStyle: .chat,
+                chat: true,
+                citations: citationNumbers,
+                findRow: findRow,
+                onLinkWithAnchor: handleMarkdownLink,
+                onSelectionAction: onSelectionAction.map { handler in
+                    { @MainActor action, excerpt in
+                        handler(message, message.role == .assistant ? speakerName : nil, action, excerpt)
+                    }
+                }
+            )
         case .embedded(let kind, let source, let info, let index):
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):

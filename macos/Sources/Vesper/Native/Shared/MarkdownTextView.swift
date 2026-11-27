@@ -19,6 +19,9 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     /// Called with each link the person clicks, whether ⌘ was held (open in a new tab), and the
     /// link's screen-space anchor rect when available.
     var onLink: ((MarkdownLinkTarget, _ newTab: Bool, _ anchor: MarkdownLinkAnchor?) -> Void)?
+    /// Called when the person triggers a selection action (Quote, Thread, Explain, Clip) on highlighted text.
+    var onSelectionAction: (@MainActor (ChatSelectionAction, String) -> Void)?
+    var selectionTheme: ThemeTokens = ThemeTokens(mode: .light)
     private(set) var rendering: MarkdownRendering?
     private var findRanges: [NSRange] = []
     private var cachedHeight: (width: CGFloat, height: CGFloat)?
@@ -187,6 +190,73 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
             onLink?(target, NSApp.currentEvent?.modifierFlags.contains(.command) == true, anchor)
         }
         return true
+    }
+
+    // MARK: Text Selection Actions
+
+    private func selectedExcerpt() -> String? {
+        let range = selectedRange()
+        guard range.length > 0 else { return nil }
+        let ns = string as NSString
+        guard range.location >= 0, range.location + range.length <= ns.length else { return nil }
+        return ChatSelectionLogic.cleanSelection(ns.substring(with: range))
+    }
+
+    private func selectionAnchor(for range: NSRange) -> MarkdownLinkAnchor? {
+        var localRect = CGRect.null
+        if let layoutManager = textLayoutManager, let tr = textRange(range) {
+            layoutManager.ensureLayout(for: tr)
+            let origin = textContainerOrigin
+            layoutManager.enumerateTextSegments(in: tr, type: .standard, options: []) { _, segmentFrame, _, _ in
+                let shifted = segmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+                localRect = localRect.isNull ? shifted : localRect.union(shifted)
+                return true
+            }
+        }
+        if let window, !localRect.isNull, !localRect.isEmpty {
+            let inWindow = convert(localRect, to: nil)
+            let inScreen = window.convertToScreen(inWindow)
+            return MarkdownLinkAnchor(screenRect: inScreen, window: window)
+        }
+        let mouse = NSEvent.mouseLocation
+        return MarkdownLinkAnchor(screenRect: CGRect(x: mouse.x - 8, y: mouse.y - 8, width: 16, height: 16), window: window)
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        super.mouseUp(with: event)
+        guard let handler = onSelectionAction else { return }
+        if let excerpt = selectedExcerpt(), let anchor = selectionAnchor(for: selectedRange()) {
+            ChatSelectionPopoverPresenter.shared.show(
+                selection: excerpt,
+                anchor: anchor,
+                theme: selectionTheme,
+                onAction: handler
+            )
+        } else {
+            ChatSelectionPopoverPresenter.shared.dismiss()
+        }
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let base = super.menu(for: event) ?? NSMenu()
+        guard onSelectionAction != nil, selectedExcerpt() != nil else { return base }
+        ChatSelectionPopoverPresenter.shared.dismiss()
+        let sep = NSMenuItem.separator()
+        base.insertItem(sep, at: 0)
+        for action in ChatSelectionAction.allCases.reversed() {
+            let item = NSMenuItem(title: action.menuTitle, action: #selector(handleSelectionMenuItem(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = action.rawValue
+            base.insertItem(item, at: 0)
+        }
+        return base
+    }
+
+    @objc private func handleSelectionMenuItem(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String,
+              let action = ChatSelectionAction(rawValue: raw),
+              let excerpt = selectedExcerpt() else { return }
+        onSelectionAction?(action, excerpt)
     }
 
     // MARK: Decorations
