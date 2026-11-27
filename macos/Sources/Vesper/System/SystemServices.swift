@@ -138,6 +138,7 @@ final class SystemServices {
         nativeRail.stop()
         dock.stopPersonaRefresh()
         power.reset()
+        BrowserShareToken.reset()
         items = []
         railInbox.items = []
         liveRuns = []
@@ -147,7 +148,6 @@ final class SystemServices {
         guard let connection else {
             client = nil
             store.setClient(nil)
-            SafariExtensionLink.reset()
             power.update()
             refreshTray()
             return
@@ -160,7 +160,6 @@ final class SystemServices {
         runMonitor.start(client: client)
         nativeRail.start()
         dock.startPersonaRefresh(client: client)
-        SafariExtensionLink.refresh(client: client)
         power.applyThermal()
         refreshTray()
     }

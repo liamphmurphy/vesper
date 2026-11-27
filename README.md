@@ -74,7 +74,6 @@ Vesper's native SwiftUI chat is built for both everyday thinking and deep engine
 
 - **Native macOS workbench**: full-height Liquid Glass sidebar, unified toolbar, native window tabs (`⌘T`, `⌘`-click any sidebar item to open in a new tab), a collapsible right inspector rail (with floating pop-out/re-dock panels), native SwiftUI **Command Palette** (`⌘K`), and a grouped native **Settings** window (`⌘,`).
 - **System integration**: menu bar extra with live run and **Needs you** counts, Dock badge and quick-action menu, Notification Center alerts with inline **Approve / Decline / Reply**, global **Quick Capture** (`⌥⇧Space`), **Screenshot to Chat** (`⌥⇧S`), Show/Hide shortcut, Touch ID gate for approvals, `vesper://` deep links, Time Machine exclusion for VM disks, scheduled encrypted backups, and automatic slot throttling under thermal pressure or Low Power Mode ([all native features](docs/dev/mac-native-features.md)).
-- **Vesper for Safari**: bundled Safari Web Extension (`VesperSafari.appex`) to share a live tab read-only (visible text + optional screenshot, built-in never-share list, automatic card-number redaction) with a persona, ask about selected text, clip pages to Knowledge or Library, or run one-click actions on GitHub PRs, issues, and YouTube videos ([details](docs/dev/safari-extension.md)).
 - **Self-contained local runtime**: bundles Postgres 17, local file storage, and an **Apple Virtualization** microVM runner—no Docker Desktop, external database, or cloud sync required. Optionally add headless **macOS guest VMs** (`make mac-golden`) so coding personas can build and test Swift/Xcode projects natively via `mac`.
 
 ## Apps with a persona beside you
@@ -164,7 +163,7 @@ Building `Vesper.app` locally requires Xcode 16+ / Swift 6, Go 1.26+, Node 24+, 
 git clone https://github.com/liamphmurphy/Vesper.git
 cd Vesper
 make mac-app    # auto-rebuild stale VM images, build/sign Vesper.app, install to /Applications
-make test-mac   # run Swift tests (VesperCore & Safari bridge)
+make test-mac   # run Swift tests
 make mac-golden # optional: set up headless macOS guest VM for `mac` builds
 ```
 
@@ -180,7 +179,6 @@ Vesper is currently a single-user **native Apple Silicon macOS application**. Al
 
 - **[Running and developing](docs/guide.md)**: setup, harnesses, chat tools, Knowledge, Custom Apps, workflows, and development commands.
 - **[macOS app](macos/README.md)**: building, signing, and running the native app; [architecture and contracts](docs/dev/native-mac-app.md); [native macOS features](docs/dev/mac-native-features.md).
-- **[Vesper for Safari](docs/dev/safari-extension.md)**: live tab sharing, clipping, and privacy boundaries.
 - **[MicroVM architecture](docs/dev/microvm-architecture.md)**: Apple Virtualization isolation, sandboxing, and memory lifecycle.
 - **[Kanban board](docs/board.md)**: ticket statuses, estimates, epics, and work tools.
 - **[Example skills](examples/skills/)**: starter playbooks for your personas.

@@ -102,7 +102,7 @@ public enum BrowserURLResolver {
     }
 }
 
-// MARK: - Page Privacy, Redaction & Site Actions (Swift counterpart of SafariExtension/lib.js)
+// MARK: - Page Privacy, Redaction & Site Actions
 
 public struct BrowserNeverShareLists: Codable, Sendable, Equatable {
     public var builtin: [String]
@@ -167,7 +167,7 @@ public enum BrowserPageGuard {
         host == entry || host.hasSuffix("." + entry)
     }
 
-    /// Mirrors `SafariExtension/Resources/lib.js` and `server/internal/browserext` rules so the UI
+    /// Mirrors `server/internal/browserext` rules so the UI
     /// disables sharing before anything leaves the webview.
     public static func shareablePage(
         url urlString: String,

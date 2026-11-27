@@ -1615,7 +1615,7 @@ final class BrowserStore {
         guard let conn = app?.connection else { return nil }
         let apiClient = APIClient(baseURL: conn.baseURL, sessionToken: conn.sessionToken)
         return BrowserExtensionClient(baseURL: conn.baseURL) { forceRefresh in
-            try await SafariExtensionLink.token(using: apiClient, forceRefresh: forceRefresh)
+            try await BrowserShareToken.token(using: apiClient, forceRefresh: forceRefresh)
         }
     }
 

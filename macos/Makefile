@@ -4,17 +4,13 @@
 APP := build/Vesper.app
 DMG := build/Vesper-arm64.dmg
 
-.PHONY: build test safari-test dmg clean
+.PHONY: build test dmg clean
 
 build:
 	swift build
 
 test:
 	swift test
-
-# Vesper for Safari's JavaScript (no browser needed). The Swift bridge is covered by `test`.
-safari-test:
-	node --test SafariExtension/tests/lib.test.cjs
 
 # Builds build/Vesper.app and packs build/Vesper-arm64.dmg (+ .sha256) for releases.
 # Used by .github/workflows/mac-release.yml and scripts/mac-release-local.sh.

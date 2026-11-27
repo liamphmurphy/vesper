@@ -44,7 +44,7 @@ let package = Package(
         // The app: AppKit windows, SwiftUI views, WKWebView.
         .executableTarget(
             name: "Vesper",
-            dependencies: ["VesperCore", "VesperSafariBridge", "SwiftTerm"],
+            dependencies: ["VesperCore", "SwiftTerm"],
             path: "Sources/Vesper"
         ),
         // The Dev workspace's terminal emulator, vendored from migueldeicaza/SwiftTerm
@@ -52,14 +52,6 @@ let package = Package(
         .target(
             name: "SwiftTerm",
             path: "Vendor/SwiftTerm/Sources",
-            swiftSettings: [.swiftLanguageMode(.v5)]
-        ),
-        // Vesper for Safari's native half, shared by the app (writes the connection file) and the
-        // extension (scripts/build-app.sh compiles it into PlugIns/VesperSafari.appex with
-        // SafariExtension/Handler). Swift 5 mode: it passes [String: Any] messages through callbacks.
-        .target(
-            name: "VesperSafariBridge",
-            path: "SafariExtension/Bridge",
             swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         .testTarget(
@@ -71,12 +63,6 @@ let package = Package(
             name: "VesperTests",
             dependencies: ["Vesper", "VesperCore"],
             path: "Tests/VesperTests"
-        ),
-        .testTarget(
-            name: "VesperSafariBridgeTests",
-            dependencies: ["VesperSafariBridge"],
-            path: "SafariExtension/BridgeTests",
-            swiftSettings: [.swiftLanguageMode(.v5)]
         ),
         // Apple Silicon Vision + CoreImage video matting helper invoked by the Go server.
         .executableTarget(

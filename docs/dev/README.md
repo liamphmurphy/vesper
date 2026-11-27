@@ -13,8 +13,6 @@ needed to run it; start with the [README](../../README.md) and the
   `microvm` runner backend.
 - [test-environments.md](test-environments.md) and [playgrounds.md](playgrounds.md):
   ADRs for per-turn test environments and live playground previews.
-- [safari-extension.md](safari-extension.md): Vesper for Safari, the extension bundled
-  in Vesper.app that shares tabs with personas, asks about pages and clips them.
 - [handoff-log.md](handoff-log.md): the running handoff log agents kept while
   building phases 0–8. It's a historical record, not current instructions.
 - [verification/](verification/): evidence and requirement matrices for
