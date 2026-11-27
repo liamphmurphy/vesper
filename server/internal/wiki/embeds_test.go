@@ -155,3 +155,74 @@ func TestEmbedsResolveObsidianFilenameWithWidthAndVisibility(t *testing.T) {
 		}
 	}
 }
+
+func TestEmbedsResolveLibraryByDisplayNameAndUUIDWithLabel(t *testing.T) {
+	e := setup(t)
+	person := pageview.Person(e.ctx, e.me.ID)
+
+	// An older image whose filename matches "Harbour map" (should lose to a title match).
+	filenameMatch, err := e.q.CreateLibraryItem(person, store.CreateLibraryItemParams{
+		WorkspaceID: e.ws, UserID: e.me.ID, Kind: "image",
+		Title: "Older sketch", Filename: "Harbour map", ContentType: "image/png", SizeBytes: 64, BlobKey: "library/old.png",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The primary image matched by display name ("Harbour map") and filename ("harbour.png").
+	primary, err := e.q.CreateLibraryItem(person, store.CreateLibraryItemParams{
+		WorkspaceID: e.ws, UserID: e.me.ID, Kind: "image",
+		Title: "Harbour map", Filename: "harbour.png", ContentType: "image/png", SizeBytes: 128, BlobKey: "library/harbour.png",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	// A non-embeddable audio item with a distinct title.
+	if _, err := e.q.CreateLibraryItem(person, store.CreateLibraryItemParams{
+		WorkspaceID: e.ws, UserID: e.me.ID, Kind: "audio",
+		Title: "Voice memo", Filename: "memo.m4a", ContentType: "audio/mp4", SizeBytes: 256, BlobKey: "library/memo.m4a",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	uuidWithLabel := "![[library:" + primary.ID.String() + "/Harbour map]]"
+	byTitle := "![[library:Harbour map]]"
+	byTitleCase := "![[library:harbour map|400]]"
+	byFilename := "![[library:harbour.png]]"
+	byOldTitle := "![[library:Older sketch]]"
+	nonEmbeddable := "![[library:Voice memo]]"
+	missing := "![[library:Does not exist]]"
+
+	body := strings.Join([]string{uuidWithLabel, byTitle, byTitleCase, byFilename, byOldTitle, nonEmbeddable, missing}, "\n\n") + "\n"
+	got, err := wiki.ResolveEmbeds(person, e.q, e.ws, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	byRef := embedsByRef(t, got)
+
+	for _, ref := range []string{uuidWithLabel, byTitle, byTitleCase, byFilename} {
+		emb := byRef[ref]
+		if !emb.Available || emb.Kind != "image" || emb.Title != "Harbour map" || !strings.Contains(emb.URL, primary.ID.String()) {
+			t.Errorf("%s resolved to %+v, want primary library item %s", ref, emb, primary.ID)
+		}
+	}
+	if emb := byRef[byOldTitle]; !emb.Available || !strings.Contains(emb.URL, filenameMatch.ID.String()) {
+		t.Errorf("%s resolved to %+v, want %s", byOldTitle, emb, filenameMatch.ID)
+	}
+	if emb := byRef[nonEmbeddable]; emb.Available {
+		t.Errorf("non-embeddable audio item unexpectedly resolved: %+v", emb)
+	}
+	if emb := byRef[missing]; emb.Available {
+		t.Errorf("missing library item unexpectedly resolved: %+v", emb)
+	}
+
+	// Viewer isolation: another user or a run cannot resolve the owner's library embeds by name.
+	run, err := wiki.ResolveEmbeds(pageview.Run(e.ctx), e.q, e.ws, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, emb := range run {
+		if emb.Available {
+			t.Errorf("run resolved person's library embed: %+v", emb)
+		}
+	}
+}

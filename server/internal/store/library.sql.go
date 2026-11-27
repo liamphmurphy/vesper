@@ -636,6 +636,71 @@ func (q *Queries) DeleteLibraryItems(ctx context.Context, arg DeleteLibraryItems
 	return items, nil
 }
 
+const findEmbeddableLibraryItemByName = `-- name: FindEmbeddableLibraryItemByName :one
+SELECT id, workspace_id, user_id, kind, title, filename, content_type, size_bytes, blob_key, chat_id, message_id, persona_id, created_at, reference, reference_persona_id, source, url, note, site, video_id, link_status, summary, duration_ms, width, height, poster_key, peaks, method, detail, source_id, source_stamp FROM library_items
+WHERE workspace_id = $1 AND user_id = $2
+  AND (
+    kind IN ('image', 'video')
+    OR (kind IN ('file', 'export', 'document') AND content_type = 'application/pdf')
+  )
+  AND (
+    lower(btrim(title)) = lower($3::text)
+    OR lower(btrim(filename)) = lower($3::text)
+  )
+ORDER BY
+  CASE WHEN lower(btrim(title)) = lower($3::text) THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+LIMIT 1
+`
+
+type FindEmbeddableLibraryItemByNameParams struct {
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	Name        string
+}
+
+// Resolves ![[library:<name>]] for the viewing user: prefers an exact
+// case-insensitive title match, falling back to filename, newest first.
+func (q *Queries) FindEmbeddableLibraryItemByName(ctx context.Context, arg FindEmbeddableLibraryItemByNameParams) (LibraryItem, error) {
+	row := q.db.QueryRow(ctx, findEmbeddableLibraryItemByName, arg.WorkspaceID, arg.UserID, arg.Name)
+	var i LibraryItem
+	err := row.Scan(
+		&i.ID,
+		&i.WorkspaceID,
+		&i.UserID,
+		&i.Kind,
+		&i.Title,
+		&i.Filename,
+		&i.ContentType,
+		&i.SizeBytes,
+		&i.BlobKey,
+		&i.ChatID,
+		&i.MessageID,
+		&i.PersonaID,
+		&i.CreatedAt,
+		&i.Reference,
+		&i.ReferencePersonaID,
+		&i.Source,
+		&i.Url,
+		&i.Note,
+		&i.Site,
+		&i.VideoID,
+		&i.LinkStatus,
+		&i.Summary,
+		&i.DurationMs,
+		&i.Width,
+		&i.Height,
+		&i.PosterKey,
+		&i.Peaks,
+		&i.Method,
+		&i.Detail,
+		&i.SourceID,
+		&i.SourceStamp,
+	)
+	return i, err
+}
+
 const getLibraryDiagram = `-- name: GetLibraryDiagram :one
 SELECT id, workspace_id, user_id, kind, title, filename, content_type, size_bytes, blob_key, chat_id, message_id, persona_id, created_at, reference, reference_persona_id, source, url, note, site, video_id, link_status, summary, duration_ms, width, height, poster_key, peaks, method, detail, source_id, source_stamp FROM library_items WHERE workspace_id = $1 AND user_id = $2 AND blob_key = $3 AND kind = 'diagram'
 `
