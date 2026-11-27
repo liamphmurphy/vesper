@@ -553,7 +553,7 @@ final class BrowserFaviconCache {
 
 enum BrowserPageScripts {
     /// Extracts visible page text and selection without reading form inputs, passwords,
-    /// editable regions, scripts, or hidden elements (mirrors `SafariExtension/Resources/lib.js`).
+    /// editable regions, scripts, or hidden elements.
     static let extractPageJS = """
     (() => {
       const SKIP = new Set([
