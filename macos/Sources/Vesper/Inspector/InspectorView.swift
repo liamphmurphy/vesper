@@ -136,8 +136,12 @@ struct InspectorBodyHost: View {
         let model = state?.inspector
         if let active = InspectorLogic.activeTab(in: model), active.kind == .native {
             if let custom = state?.nativeInspectorView?(active.id) {
+                // Do not wrap `custom` in `.frame(maxWidth: .infinity, maxHeight: .infinity)`:
+                // inside `InspectorViewController`'s split pane (`sizingOptions = []`), a flexible
+                // frame over `AnyView` triggers an AppKit `Update Constraints in Window` loop when
+                // hosting `DockedChatView` (TextKit 2 `MarkdownTextView` + `ChatComposerSlot`).
+                // `nativeHost.view` is already edge-pinned to `bodyContainer` via Auto Layout.
                 custom
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
                     .id("\(model?.id ?? ""):\(active.id)")
             } else {
                 InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
