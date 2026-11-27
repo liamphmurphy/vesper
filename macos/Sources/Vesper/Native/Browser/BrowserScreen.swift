@@ -21,11 +21,12 @@ struct BrowserScreen: View {
     @State private var autofillPopoverOpen = false
     @State private var extensionsPopoverOpen = false
     @State private var downloadsPopoverOpen = false
+    @State private var knowledgePopoverOpen = false
     @State private var omniboxPeekVisible = false
     @State private var sidebarPeekVisible = false
 
     private var anyPopoverOpen: Bool {
-        sharePopoverOpen || shieldPopoverOpen || siteSecurityPopoverOpen || autofillPopoverOpen || extensionsPopoverOpen || downloadsPopoverOpen
+        sharePopoverOpen || shieldPopoverOpen || siteSecurityPopoverOpen || autofillPopoverOpen || extensionsPopoverOpen || downloadsPopoverOpen || knowledgePopoverOpen
     }
 
     @State private var askPrompt = ""
@@ -33,8 +34,13 @@ struct BrowserScreen: View {
     @State private var shareIncludeScreenshot = true
     @State private var selectedShareTarget = "companion"
     @State private var isSubmittingAction = false
+    @State private var highlightColor: BrowserHighlightColor = .yellow
+    @State private var highlightNote = ""
+    @State private var multiTabSelection: Set<UUID> = []
+    @State private var multiTabPickerExpanded = false
 
     private static let savedLinksRequest = API.listLibraryItems(kind: .link, offset: 0)
+    private static let spacesRequest = API.listChatSpaces()
 
     private var store: BrowserStore? {
         context.window()?.app.browser
@@ -196,6 +202,10 @@ struct BrowserScreen: View {
         .onChange(of: store.openExtensionsPopoverTick) { _, _ in
             extensionsPopoverOpen = true
         }
+        .onChange(of: store.openKnowledgePopoverTick) { _, _ in
+            knowledgePopoverOpen = true
+            Task { await store.refreshKnowledgeIndex(force: true) }
+        }
         .onChange(of: omniboxFocused) { _, focused in
             isEditingOmnibox = focused
             selectedSuggestionIndex = nil
@@ -211,7 +221,10 @@ struct BrowserScreen: View {
         .task {
             syncActiveTabChrome(store: store)
             context.store.load(Self.savedLinksRequest)
+            context.store.load(Self.spacesRequest)
             await store.refreshExtensionConfig()
+            await store.refreshKnowledgeIndex()
+            store.scheduleAutoFollowSync()
         }
     }
 
@@ -625,6 +638,47 @@ struct BrowserScreen: View {
                         .hoverTooltip("Reset zoom (⌘0)")
                     }
 
+                    // Knowledge Backlinks & Persistent Highlights badge
+                    let backlinks = store.backlinks(for: tab.urlString)
+                    let pageHighlights = store.highlights(for: tab.urlString)
+                    let noteCount = backlinks.count
+                    let highlightCount = pageHighlights.count
+                    let hasExactBacklink = backlinks.contains(where: { $0.matchKind == .exactURL })
+                    Button {
+                        knowledgePopoverOpen.toggle()
+                        if knowledgePopoverOpen {
+                            Task { await store.refreshKnowledgeIndex(force: true) }
+                        }
+                    } label: {
+                        HStack(spacing: 3) {
+                            Image(systemName: (hasExactBacklink || highlightCount > 0) ? "book.closed.fill" : "book.closed")
+                                .font(.system(size: 11))
+                                .foregroundStyle(
+                                    (hasExactBacklink || highlightCount > 0)
+                                        ? theme.palette.accent
+                                        : (noteCount > 0 ? theme.palette.secondaryText : theme.palette.tertiaryText)
+                                )
+                            if noteCount > 0 || highlightCount > 0 {
+                                let badgeCount = noteCount + highlightCount
+                                Text("\(badgeCount)")
+                                    .font(.system(size: 9.5, weight: .semibold).monospacedDigit())
+                                    .foregroundStyle((hasExactBacklink || highlightCount > 0) ? theme.palette.accent : theme.palette.secondaryText)
+                                    .padding(.horizontal, 4)
+                                    .padding(.vertical, 0.5)
+                                    .background(Capsule().fill(((hasExactBacklink || highlightCount > 0) ? theme.palette.accent : theme.palette.secondaryText).opacity(0.14)))
+                            }
+                        }
+                    }
+                    .buttonStyle(.plain)
+                    .hoverTooltip(
+                        noteCount > 0 || highlightCount > 0
+                            ? "Knowledge Backlinks (\(noteCount)) & Highlights (\(highlightCount))"
+                            : "Knowledge Backlinks & Web Highlights (⌘⇧H)"
+                    )
+                    .popover(isPresented: $knowledgePopoverOpen, arrowEdge: .bottom) {
+                        knowledgeBacklinksPopover(store: store, tab: tab)
+                    }
+
                     // Keychain AutoFill icon
                     Button {
                         autofillPopoverOpen.toggle()
@@ -822,10 +876,16 @@ struct BrowserScreen: View {
                 .hoverTooltip("Capture Page / Region Screenshot or PDF")
 
                 Menu {
+                    let clipDest = BrowserSpaceRoutingLogic.clipFolder(for: store.boundSpaceSummary(for: tab))
+                    Button {
+                        Task { await store.highlightSelection(in: tab, color: highlightColor) }
+                    } label: {
+                        Label("Highlight Selection to Knowledge (⌘⇧H)", systemImage: "highlighter")
+                    }
                     Button {
                         Task { await store.clipToKnowledge(tab: tab, includeSelectionOnlyIfPresent: true) }
                     } label: {
-                        Label("Clip Page / Selection to Knowledge", systemImage: "book")
+                        Label("Clip Page / Selection › \(clipDest)", systemImage: "book")
                     }
                     Button {
                         Task { await store.saveToReadingList(tab: tab) }
@@ -966,26 +1026,323 @@ struct BrowserScreen: View {
         .frame(width: 300)
     }
 
+    // MARK: Knowledge Backlinks & Persistent Highlights Popover
+
+    private func highlightSwiftUIColor(_ color: BrowserHighlightColor) -> Color {
+        switch color {
+        case .yellow: .yellow
+        case .green: .green
+        case .blue: .blue
+        case .pink: .pink
+        case .purple: .purple
+        }
+    }
+
+    private func knowledgeBacklinksPopover(store: BrowserStore, tab: BrowserTabSession) -> some View {
+        let backlinks = store.backlinks(for: tab.urlString)
+        let pageHighlights = store.highlights(for: tab.urlString)
+        let boundSpace = store.boundSpaceSummary(for: tab)
+        let clipFolder = BrowserSpaceRoutingLogic.clipFolder(for: boundSpace)
+
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 12) {
+                HStack(spacing: 6) {
+                    Image(systemName: "book.closed.fill")
+                        .font(.system(size: 12))
+                        .foregroundStyle(theme.palette.accent)
+                    Text("Knowledge & Highlights")
+                        .font(.system(size: 13, weight: .semibold))
+                    Spacer()
+                    Button {
+                        Task { await store.refreshKnowledgeIndex(force: true) }
+                    } label: {
+                        Image(systemName: "arrow.clockwise")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                    .hoverTooltip("Refresh Knowledge backlinks")
+                }
+
+                if let boundSpace {
+                    HStack(spacing: 5) {
+                        Image(systemName: "square.stack.3d.up.fill")
+                            .font(.system(size: 10))
+                            .foregroundStyle(theme.palette.accent)
+                        Text("Space: **\(boundSpace.name)** → `\(clipFolder)`")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                    }
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 6).fill(theme.palette.accent.opacity(0.08)))
+                }
+
+                // Backlinks section
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack {
+                        Text("LINKED KNOWLEDGE NOTES")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        if !backlinks.isEmpty {
+                            Text("\(backlinks.count)")
+                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Clip Page") {
+                            knowledgePopoverOpen = false
+                            Task { await store.clipToKnowledge(tab: tab, includeSelectionOnlyIfPresent: true) }
+                        }
+                        .buttonStyle(.link)
+                        .font(.system(size: 11))
+                    }
+
+                    if backlinks.isEmpty {
+                        Text("No Knowledge notes reference this page or site yet.")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(backlinks.prefix(8)) { item in
+                            Button {
+                                knowledgePopoverOpen = false
+                                context.window()?.app.openVesperTab(path: "/knowledge/\(item.id)", nextTo: context.window()?.window)
+                            } label: {
+                                HStack(spacing: 7) {
+                                    Image(systemName: item.matchKind == .exactURL ? "doc.text.fill" : "globe")
+                                        .font(.system(size: 11))
+                                        .foregroundStyle(item.matchKind == .exactURL ? theme.palette.accent : .secondary)
+                                        .frame(width: 14)
+                                    VStack(alignment: .leading, spacing: 1) {
+                                        Text(item.title)
+                                            .font(.system(size: 11.5, weight: .medium))
+                                            .foregroundStyle(theme.palette.text)
+                                            .lineLimit(1)
+                                        Text(item.path)
+                                            .font(.system(size: 10))
+                                            .foregroundStyle(.secondary)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 4)
+                                    Text(item.matchKind.badgeLabel)
+                                        .font(.system(size: 9.5, weight: .medium))
+                                        .foregroundStyle(item.matchKind == .exactURL ? theme.palette.accent : .secondary)
+                                        .padding(.horizontal, 5)
+                                        .padding(.vertical, 1.5)
+                                        .background(
+                                            Capsule().fill((item.matchKind == .exactURL ? theme.palette.accent : Color.secondary).opacity(0.12))
+                                        )
+                                }
+                                .padding(.horizontal, 6)
+                                .padding(.vertical, 4)
+                                .background(RoundedRectangle(cornerRadius: 6).fill(theme.palette.surface.opacity(0.75)))
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                        }
+                    }
+                }
+
+                Divider()
+
+                // Persistent Web Highlights section
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("PAGE HIGHLIGHTS")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                        if !pageHighlights.isEmpty {
+                            Text("\(pageHighlights.count)")
+                                .font(.system(size: 10, weight: .semibold).monospacedDigit())
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                    }
+
+                    if !tab.isPrivate {
+                        HStack(spacing: 6) {
+                            ForEach(BrowserHighlightColor.allCases) { c in
+                                Button {
+                                    highlightColor = c
+                                } label: {
+                                    Circle()
+                                        .fill(highlightSwiftUIColor(c))
+                                        .frame(width: 15, height: 15)
+                                        .overlay(
+                                            Circle()
+                                                .stroke(Color.primary, lineWidth: highlightColor == c ? 1.8 : 0)
+                                                .padding(-2)
+                                        )
+                                }
+                                .buttonStyle(.plain)
+                                .hoverTooltip(c.label)
+                            }
+                            Spacer()
+                            Button {
+                                let noteText = highlightNote
+                                highlightNote = ""
+                                Task {
+                                    await store.highlightSelection(
+                                        in: tab,
+                                        color: highlightColor,
+                                        note: noteText.isEmpty ? nil : noteText
+                                    )
+                                }
+                            } label: {
+                                Label("Highlight (⌘⇧H)", systemImage: "highlighter")
+                                    .font(.system(size: 11, weight: .medium))
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                        }
+
+                        TextField("Optional note for highlight…", text: $highlightNote)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.system(size: 11.5))
+                            .onSubmit {
+                                let noteText = highlightNote
+                                highlightNote = ""
+                                Task {
+                                    await store.highlightSelection(
+                                        in: tab,
+                                        color: highlightColor,
+                                        note: noteText.isEmpty ? nil : noteText
+                                    )
+                                }
+                            }
+                    } else {
+                        Text("Highlights aren't saved on Private tabs.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    }
+
+                    if pageHighlights.isEmpty {
+                        Text("Select text on the page and press ⌘⇧H to highlight & sync it to Knowledge.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                    } else {
+                        ForEach(pageHighlights) { h in
+                            HStack(alignment: .top, spacing: 7) {
+                                RoundedRectangle(cornerRadius: 2)
+                                    .fill(highlightSwiftUIColor(h.color))
+                                    .frame(width: 3.5)
+                                    .padding(.vertical, 2)
+
+                                Button {
+                                    tab.scrollToHighlight(id: h.id)
+                                } label: {
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text("“\(h.quote)”")
+                                            .font(.system(size: 11.5))
+                                            .foregroundStyle(theme.palette.text)
+                                            .lineLimit(3)
+                                            .multilineTextAlignment(.leading)
+                                        if let note = h.note, !note.isEmpty {
+                                            Text(note)
+                                                .font(.system(size: 10.5))
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(2)
+                                        }
+                                    }
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                    .contentShape(Rectangle())
+                                }
+                                .buttonStyle(.plain)
+                                .hoverTooltip("Scroll to highlight on page")
+
+                                HStack(spacing: 4) {
+                                    if let pageId = h.knowledgePageId {
+                                        Button {
+                                            knowledgePopoverOpen = false
+                                            context.window()?.app.openVesperTab(path: "/knowledge/\(pageId)", nextTo: context.window()?.window)
+                                        } label: {
+                                            Image(systemName: "arrow.up.right.square")
+                                                .font(.system(size: 10.5))
+                                                .foregroundStyle(.secondary)
+                                        }
+                                        .buttonStyle(.plain)
+                                        .hoverTooltip("Open synced Knowledge note")
+                                    }
+                                    Button {
+                                        store.deleteHighlight(id: h.id, in: tab)
+                                    } label: {
+                                        Image(systemName: "trash")
+                                            .font(.system(size: 10.5))
+                                            .foregroundStyle(.secondary)
+                                    }
+                                    .buttonStyle(.plain)
+                                    .hoverTooltip("Remove highlight")
+                                }
+                            }
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 5)
+                            .background(RoundedRectangle(cornerRadius: 6).fill(theme.palette.surface.opacity(0.75)))
+                        }
+                    }
+                }
+            }
+            .padding(14)
+        }
+        .frame(width: 340)
+        .frame(maxHeight: 460)
+    }
+
     // MARK: Share With Persona Pill & Popover
 
     private func sharePillButton(store: BrowserStore, tab: BrowserTabSession) -> some View {
-        let isSharing = tab.activeShare != nil
+        let isTabSharing = tab.activeShare != nil
+        let isMultiSharing = store.multiTabShare != nil
+        let isFollowing = store.isAutoFollowEnabled
+        let isActiveShare = isTabSharing || isMultiSharing || (isFollowing && store.followShare != nil)
         let check = store.pageShareCheck(for: tab)
+        let totalReads = (tab.activeShare?.reads.count ?? 0)
+            + (store.multiTabShare?.reads.count ?? 0)
+            + (store.followShare?.reads.count ?? 0)
+
+        let pillTitle: String = if isMultiSharing {
+            "Sharing \(store.multiTabShareCount)"
+        } else if isFollowing {
+            store.followPausedReason != nil ? "Follow · Paused" : "Following"
+        } else if isTabSharing {
+            "Sharing"
+        } else {
+            "Share"
+        }
+
+        let dotColor: Color = if isActiveShare {
+            .orange
+        } else if isFollowing {
+            .yellow
+        } else {
+            check.ok ? Color.secondary.opacity(0.45) : Color.red.opacity(0.45)
+        }
+
         return Button {
             sharePopoverOpen.toggle()
             if sharePopoverOpen {
+                let boundSpace = store.boundSpaceSummary(for: tab)
+                selectedShareTarget = BrowserSpaceRoutingLogic.defaultShareTarget(
+                    space: boundSpace,
+                    companionChatId: context.window()?.companionChatId,
+                    personas: store.extensionConfig.personas
+                )
+                if multiTabSelection.isEmpty {
+                    multiTabSelection = [tab.id]
+                }
                 Task { await store.refreshExtensionConfig() }
             }
         } label: {
             HStack(spacing: 5) {
                 Circle()
-                    .fill(isSharing ? Color.orange : (check.ok ? Color.secondary.opacity(0.45) : Color.red.opacity(0.45)))
+                    .fill(dotColor)
                     .frame(width: 7, height: 7)
-                Text(isSharing ? "Sharing" : "Share")
+                Text(pillTitle)
                     .font(.system(size: 11.5, weight: .medium))
-                    .foregroundStyle(isSharing ? Color.orange : theme.palette.text)
-                if let reads = tab.activeShare?.reads.count, reads > 0 {
-                    Text("\(reads)")
+                    .foregroundStyle(isActiveShare ? Color.orange : theme.palette.text)
+                if totalReads > 0 {
+                    Text("\(totalReads)")
                         .font(.system(size: 10, weight: .semibold).monospacedDigit())
                         .padding(.horizontal, 4)
                         .padding(.vertical, 1)
@@ -996,13 +1353,13 @@ struct BrowserScreen: View {
             .padding(.horizontal, 7)
             .padding(.vertical, 2.5)
             .background(
-                Capsule().fill(isSharing ? Color.orange.opacity(0.14) : theme.palette.surface)
-                    .overlay(Capsule().stroke(isSharing ? Color.orange.opacity(0.45) : theme.palette.border.opacity(0.55), lineWidth: 1))
+                Capsule().fill(isActiveShare ? Color.orange.opacity(0.14) : theme.palette.surface)
+                    .overlay(Capsule().stroke(isActiveShare ? Color.orange.opacity(0.45) : theme.palette.border.opacity(0.55), lineWidth: 1))
             )
         }
         .buttonStyle(.plain)
-        .disabled(!tab.hasLoadedPage)
-        .hoverTooltip(isSharing ? "Manage live tab share with persona" : "Share this tab or ask a persona")
+        .disabled(!tab.hasLoadedPage && !isActiveShare)
+        .hoverTooltip(isActiveShare ? "Manage live tab share or Auto-Follow with persona" : "Share tab(s), enable Auto-Follow, or ask a persona")
         .popover(isPresented: $sharePopoverOpen, arrowEdge: .bottom) {
             sharePopover(store: store, tab: tab)
         }
@@ -1012,9 +1369,87 @@ struct BrowserScreen: View {
         let check = store.pageShareCheck(for: tab)
         let actions = BrowserPageGuard.siteActions(url: tab.urlString, personas: store.extensionConfig.personas)
         let companionChatId = context.window()?.companionChatId
+        let boundSpace = store.boundSpaceSummary(for: tab)
+        let shareableTabs = store.orderedTabs.filter { !$0.isPrivate && $0.hasLoadedPage && store.pageShareCheck(for: $0).ok }
 
         return ScrollView {
             VStack(alignment: .leading, spacing: 12) {
+                // Companion Auto-Follow Active Tab toggle
+                VStack(alignment: .leading, spacing: 5) {
+                    Toggle(isOn: Binding(
+                        get: { store.isAutoFollowEnabled },
+                        set: { store.setAutoFollowCompanionTab($0) }
+                    )) {
+                        VStack(alignment: .leading, spacing: 1) {
+                            Text("Auto-Follow Active Tab")
+                                .font(.system(size: 12, weight: .semibold))
+                            Text("Keeps Companion Chat synced as you switch tabs. Skips Private & never-share sites.")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .toggleStyle(.switch)
+                    .controlSize(.small)
+
+                    if store.isAutoFollowEnabled {
+                        if let paused = store.followPausedReason {
+                            Label(paused, systemImage: "pause.circle.fill")
+                                .font(.system(size: 10.5))
+                                .foregroundStyle(.orange)
+                        } else if let follow = store.followShare {
+                            HStack(spacing: 6) {
+                                Circle().fill(Color.orange).frame(width: 6, height: 6)
+                                Text("Following in “\(follow.chatTitle.isEmpty ? "Companion" : follow.chatTitle)”")
+                                    .font(.system(size: 10.5))
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                Spacer()
+                                Button("Open") {
+                                    context.window()?.openCompanionChat(follow.chatId)
+                                    sharePopoverOpen = false
+                                }
+                                .buttonStyle(.link)
+                                .font(.system(size: 10.5))
+                            }
+                        }
+                    }
+                }
+                .padding(8)
+                .background(RoundedRectangle(cornerRadius: 8).fill(theme.palette.surface.opacity(0.75)))
+
+                // Active Multi-Tab Share status card
+                if let multi = store.multiTabShare {
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(spacing: 6) {
+                            Circle().fill(Color.orange).frame(width: 8, height: 8)
+                            Text("Sharing \(store.multiTabShareCount) tabs")
+                                .font(.system(size: 12.5, weight: .semibold))
+                            Spacer()
+                            Button("Open Companion") {
+                                context.window()?.openCompanionChat(multi.chatId)
+                                sharePopoverOpen = false
+                            }
+                            .buttonStyle(.link)
+                            .font(.system(size: 11))
+                        }
+                        Text("\(multi.title) · \(multi.reads.count) read\(multi.reads.count == 1 ? "" : "s")")
+                            .font(.system(size: 11))
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                        HStack {
+                            Spacer()
+                            Button("Stop Multi-Tab Share") {
+                                Task { await store.stopMultiTabShare(reason: "person") }
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .tint(.orange)
+                            .controlSize(.small)
+                        }
+                    }
+                    .padding(8)
+                    .background(RoundedRectangle(cornerRadius: 8).fill(Color.orange.opacity(0.08)))
+                }
+
                 if let share = tab.activeShare {
                     VStack(alignment: .leading, spacing: 6) {
                         HStack(spacing: 6) {
@@ -1085,8 +1520,17 @@ struct BrowserScreen: View {
                     }
                 } else {
                     VStack(alignment: .leading, spacing: 8) {
-                        Text("Let a persona see this tab")
-                            .font(.system(size: 13, weight: .semibold))
+                        HStack {
+                            Text("Let a persona see this tab")
+                                .font(.system(size: 13, weight: .semibold))
+                            Spacer()
+                            if let boundSpace {
+                                Label(boundSpace.name, systemImage: "square.stack.3d.up.fill")
+                                    .font(.system(size: 10, weight: .medium))
+                                    .foregroundStyle(theme.palette.accent)
+                                    .lineLimit(1)
+                            }
+                        }
 
                         Picker("Share with", selection: $selectedShareTarget) {
                             Text(companionChatId != nil ? "Current Companion Chat" : "New Companion Chat").tag("companion")
@@ -1145,6 +1589,134 @@ struct BrowserScreen: View {
                     }
                 }
 
+                // Multi-Tab / Tab Group Sharing section
+                if shareableTabs.count >= 2 {
+                    Divider()
+                    VStack(alignment: .leading, spacing: 6) {
+                        Button {
+                            withAnimation(.easeInOut(duration: 0.14)) {
+                                multiTabPickerExpanded.toggle()
+                                if multiTabPickerExpanded {
+                                    let currentGroupIDs = tab.groupId.map { gid in
+                                        Set(shareableTabs.filter { $0.groupId == gid }.map(\.id))
+                                    }
+                                    if let currentGroupIDs, currentGroupIDs.count >= 2 {
+                                        multiTabSelection = currentGroupIDs
+                                    } else {
+                                        multiTabSelection = Set(shareableTabs.prefix(4).map(\.id))
+                                    }
+                                }
+                            }
+                        } label: {
+                            HStack(spacing: 6) {
+                                Image(systemName: multiTabPickerExpanded ? "chevron.down" : "chevron.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundStyle(.secondary)
+                                Image(systemName: "square.on.square")
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(theme.palette.accent)
+                                Text("Share Multiple Tabs / Group")
+                                    .font(.system(size: 12, weight: .semibold))
+                                    .foregroundStyle(theme.palette.text)
+                                Spacer()
+                                Text("\(shareableTabs.count)")
+                                    .font(.system(size: 10).monospacedDigit())
+                                    .foregroundStyle(.secondary)
+                            }
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+
+                        if multiTabPickerExpanded {
+                            HStack(spacing: 6) {
+                                if let gid = tab.groupId,
+                                   let group = store.tabGroups.first(where: { $0.id == gid })
+                                {
+                                    Button("Group: \(group.name)") {
+                                        multiTabSelection = Set(shareableTabs.filter { $0.groupId == gid }.map(\.id))
+                                    }
+                                    .controlSize(.mini)
+                                }
+                                Button("All (\(shareableTabs.count))") {
+                                    multiTabSelection = Set(shareableTabs.map(\.id))
+                                }
+                                .controlSize(.mini)
+                                Button("None") {
+                                    multiTabSelection = []
+                                }
+                                .controlSize(.mini)
+                                Spacer()
+                            }
+
+                            VStack(alignment: .leading, spacing: 3) {
+                                ForEach(shareableTabs.prefix(12)) { candidate in
+                                    let isSelected = multiTabSelection.contains(candidate.id)
+                                    Button {
+                                        if isSelected {
+                                            multiTabSelection.remove(candidate.id)
+                                        } else {
+                                            multiTabSelection.insert(candidate.id)
+                                        }
+                                    } label: {
+                                        HStack(spacing: 6) {
+                                            Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                                                .font(.system(size: 11.5))
+                                                .foregroundStyle(isSelected ? theme.palette.accent : .secondary)
+                                            Text(candidate.displayTitle)
+                                                .font(.system(size: 11.5))
+                                                .foregroundStyle(theme.palette.text)
+                                                .lineLimit(1)
+                                            Spacer(minLength: 4)
+                                            Text(candidate.displayHost)
+                                                .font(.system(size: 10))
+                                                .foregroundStyle(.secondary)
+                                                .lineLimit(1)
+                                        }
+                                        .padding(.vertical, 2)
+                                        .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                }
+                            }
+
+                            let chosen = shareableTabs.filter { multiTabSelection.contains($0.id) }
+                            Button {
+                                isSubmittingAction = true
+                                sharePopoverOpen = false
+                                Task {
+                                    defer { isSubmittingAction = false }
+                                    let (chatId, personaId) = resolveShareTarget(
+                                        selection: selectedShareTarget,
+                                        companionChatId: companionChatId,
+                                        personas: store.extensionConfig.personas
+                                    )
+                                    let sharedGroupName: String? = {
+                                        let gids = Set(chosen.compactMap(\.groupId))
+                                        if gids.count == 1, let gid = gids.first, chosen.allSatisfy({ $0.groupId == gid }) {
+                                            return store.tabGroups.first(where: { $0.id == gid })?.name
+                                        }
+                                        return nil
+                                    }()
+                                    await store.shareMultipleTabs(
+                                        chosen,
+                                        groupName: sharedGroupName,
+                                        chatId: chatId,
+                                        personaId: personaId,
+                                        includeScreenshot: shareIncludeScreenshot,
+                                        openInCompanion: true
+                                    )
+                                }
+                            } label: {
+                                Text("Share \(chosen.count) Selected Tab\(chosen.count == 1 ? "" : "s")")
+                                    .frame(maxWidth: .infinity)
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .controlSize(.small)
+                            .disabled(chosen.isEmpty || isSubmittingAction)
+                        }
+                    }
+                }
+
                 if check.ok {
                     Divider()
                     VStack(alignment: .leading, spacing: 6) {
@@ -1195,8 +1767,8 @@ struct BrowserScreen: View {
             }
             .padding(14)
         }
-        .frame(width: 310)
-        .frame(maxHeight: 460)
+        .frame(width: 330)
+        .frame(maxHeight: 540)
     }
 
     private func resolveShareTarget(
@@ -1222,9 +1794,10 @@ struct BrowserScreen: View {
         let prompt = askPrompt
         askPrompt = ""
         sharePopoverOpen = false
-        let def = store.extensionConfig.personas.first(where: \.isDefault) ?? store.extensionConfig.personas.first
+        let spacePersona = store.boundSpace(for: tab)?.personaId
+        let def = spacePersona ?? (store.extensionConfig.personas.first(where: \.isDefault) ?? store.extensionConfig.personas.first)?.id
         Task {
-            await store.askAboutPage(tab: tab, prompt: prompt, personaId: def?.id, openInCompanion: true)
+            await store.askAboutPage(tab: tab, prompt: prompt, personaId: def, openInCompanion: true)
         }
     }
 

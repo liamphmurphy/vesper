@@ -226,6 +226,7 @@ final class BrowserScriptMessageProxy: NSObject, WKScriptMessageHandler {
 final class BrowserWKWebView: WKWebView {
     struct ContextCallbacks {
         var onAskPersona: () -> Void
+        var onHighlightToKnowledge: () -> Void = {}
         var onClipToKnowledge: () -> Void
         var onSaveLink: () -> Void
         var onCopyMarkdownQuote: () -> Void
@@ -249,6 +250,11 @@ final class BrowserWKWebView: WKWebView {
         askItem.target = self
         askItem.image = NSImage(systemSymbolName: "bubble.left.and.text.bubble.right", accessibilityDescription: nil)
         menu.addItem(askItem)
+
+        let highlightItem = NSMenuItem(title: "Highlight to Knowledge", action: #selector(handleHighlightToKnowledge), keyEquivalent: "")
+        highlightItem.target = self
+        highlightItem.image = NSImage(systemSymbolName: "highlighter", accessibilityDescription: nil)
+        menu.addItem(highlightItem)
 
         let clipItem = NSMenuItem(title: "Clip to Knowledge", action: #selector(handleClipToKnowledge), keyEquivalent: "")
         clipItem.target = self
@@ -299,6 +305,7 @@ final class BrowserWKWebView: WKWebView {
     }
 
     @objc private func handleAskPersona() { contextCallbacks?.onAskPersona() }
+    @objc private func handleHighlightToKnowledge() { contextCallbacks?.onHighlightToKnowledge() }
     @objc private func handleClipToKnowledge() { contextCallbacks?.onClipToKnowledge() }
     @objc private func handleScreenshotToNotes() { contextCallbacks?.onScreenshotToNotes() }
     @objc private func handleCaptureRegion() { contextCallbacks?.onCaptureRegionScreenshot() }

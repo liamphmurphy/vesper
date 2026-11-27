@@ -252,6 +252,9 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             }
             animateInspector(collapsed: targetCollapsed, widthClass: widthClass, applyDesiredWidth: applyDesired)
             send(.inspectorVisibility(open: !targetCollapsed))
+            if !targetCollapsed {
+                app.browser.scheduleAutoFollowSync()
+            }
         } else {
             send(.command(.toggleCompanion))
         }
@@ -576,6 +579,10 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         inspectorController?.companionStore.currentChatId
     }
 
+    var isCompanionInspectorOpen: Bool {
+        !isInspectorCollapsed || (inspectorController?.isPoppedOut == true)
+    }
+
     /// Selects `chatId` (when given) in the window's Companion Chat inspector and reveals the
     /// inspector if collapsed, so the persona sits right beside the active screen.
     func openCompanionChat(_ chatId: String?) {
@@ -596,6 +603,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if isInspectorCollapsed {
             toggleInspector(nil)
         }
+        app.browser.scheduleAutoFollowSync()
     }
 
     /// Opens an http(s) URL in Vesper's internal Browser, switching to an existing Browser tab in

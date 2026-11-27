@@ -34,15 +34,26 @@ struct BrowserSidebarView: View {
     @State private var newGroupPopoverOpen = false
     @State private var newGroupName = ""
     @State private var newGroupColor: BrowserProfileColor = .blue
+    @State private var newGroupSpaceId: String = ""
     @State private var editingGroup: BrowserTabGroup?
     @State private var editingBookmark: BrowserBookmark?
     @State private var collapsedBookmarkFolders: Set<String> = []
     @State private var draggedTabID: UUID?
 
     private static let savedLinksRequest = API.listLibraryItems(kind: .link, offset: 0)
+    private static let spacesRequest = API.listChatSpaces()
 
     private var savedLinks: [API.LibraryItem] {
         context.store.entry(Self.savedLinksRequest).data?.items ?? []
+    }
+
+    private var spaces: [API.ChatSpace] {
+        context.store.entry(Self.spacesRequest).data?.spaces ?? []
+    }
+
+    private func space(for id: String?) -> API.ChatSpace? {
+        guard let id, !id.isEmpty else { return nil }
+        return spaces.first(where: { $0.id == id })
     }
 
     private var normalizedFilter: String {
@@ -95,8 +106,8 @@ struct BrowserSidebarView: View {
             }
         }
         .sheet(item: $editingGroup) { group in
-            BrowserTabGroupEditorSheet(group: group) { name, color in
-                store.renameTabGroup(id: group.id, name: name, color: color)
+            BrowserTabGroupEditorSheet(group: group, spaces: spaces) { name, color, spaceId in
+                store.updateTabGroup(id: group.id, name: name, color: color, spaceId: spaceId)
             }
         }
         .sheet(item: $editingBookmark) { bm in
@@ -107,9 +118,12 @@ struct BrowserSidebarView: View {
         .task {
             context.store.observe(Self.savedLinksRequest)
             context.store.load(Self.savedLinksRequest)
+            context.store.observe(Self.spacesRequest)
+            context.store.load(Self.spacesRequest)
         }
         .onDisappear {
             context.store.stopObserving(Self.savedLinksRequest.key)
+            context.store.stopObserving(Self.spacesRequest.key)
         }
     }
 
@@ -158,6 +172,7 @@ struct BrowserSidebarView: View {
             headerIconButton(symbol: "folder.badge.plus", help: "New Tab Group (⌘⌃G)") {
                 newGroupName = ""
                 newGroupColor = BrowserProfileColor.allCases[store.tabGroups.count % BrowserProfileColor.allCases.count]
+                newGroupSpaceId = ""
                 newGroupPopoverOpen.toggle()
             }
             .popover(isPresented: $newGroupPopoverOpen, arrowEdge: .bottom) {
@@ -199,6 +214,21 @@ struct BrowserSidebarView: View {
                     .buttonStyle(.plain)
                 }
             }
+            if !spaces.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Link to Space (optional)")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Picker("Space", selection: $newGroupSpaceId) {
+                        Text("None").tag("")
+                        ForEach(spaces, id: \.id) { sp in
+                            Text(sp.name).tag(sp.id)
+                        }
+                    }
+                    .labelsHidden()
+                    .controlSize(.small)
+                }
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { newGroupPopoverOpen = false }
@@ -213,7 +243,11 @@ struct BrowserSidebarView: View {
     }
 
     private func commitNewGroup() {
-        _ = store.createTabGroup(name: newGroupName, color: newGroupColor)
+        _ = store.createTabGroup(
+            name: newGroupName,
+            color: newGroupColor,
+            spaceId: newGroupSpaceId.isEmpty ? nil : newGroupSpaceId
+        )
         newGroupPopoverOpen = false
     }
 
@@ -298,6 +332,20 @@ struct BrowserSidebarView: View {
                                     .font(.system(size: 11, weight: .semibold))
                                     .foregroundStyle(theme.palette.text)
                                     .lineLimit(1)
+                                if let linkedSpace = space(for: group.spaceId) {
+                                    HStack(spacing: 2.5) {
+                                        Image(systemName: "square.stack.3d.up.fill")
+                                            .font(.system(size: 8))
+                                        Text(linkedSpace.name)
+                                            .font(.system(size: 9, weight: .medium))
+                                            .lineLimit(1)
+                                    }
+                                    .foregroundStyle(theme.palette.accent)
+                                    .padding(.horizontal, 4.5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(theme.palette.accent.opacity(0.12)))
+                                    .hoverTooltip("Linked to Space “\(linkedSpace.name)” (clips & persona route here)")
+                                }
                                 Text("\(groupTabs.count)")
                                     .font(.system(size: 10, weight: .medium).monospacedDigit())
                                     .foregroundStyle(theme.palette.tertiaryText)
@@ -325,7 +373,38 @@ struct BrowserSidebarView: View {
                         Button("New Tab in Group") {
                             _ = store.newTab(isPrivate: false, select: true, groupId: group.id)
                         }
-                        Button("Rename / Recolor…") {
+                        Button("Share All Tabs in Group with Companion") {
+                            Task { await store.shareTabGroup(group, openInCompanion: true) }
+                        }
+                        if !spaces.isEmpty {
+                            Menu("Link to Space") {
+                                Button {
+                                    store.setTabGroupSpace(id: group.id, spaceId: nil)
+                                } label: {
+                                    HStack {
+                                        Text("None")
+                                        if group.spaceId == nil { Image(systemName: "checkmark") }
+                                    }
+                                }
+                                Divider()
+                                ForEach(spaces, id: \.id) { sp in
+                                    Button {
+                                        store.setTabGroupSpace(id: group.id, spaceId: sp.id)
+                                    } label: {
+                                        HStack {
+                                            Text(sp.name)
+                                            if group.spaceId == sp.id { Image(systemName: "checkmark") }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        if let linkedSpace = space(for: group.spaceId) {
+                            Button("Open Space “\(linkedSpace.name)”") {
+                                context.window()?.app.openVesperTab(path: "/spaces/\(linkedSpace.id)", nextTo: context.window()?.window)
+                            }
+                        }
+                        Button("Rename / Edit…") {
                             editingGroup = group
                         }
                         Divider()
@@ -805,17 +884,25 @@ private struct BrowserProfileManagerPopover: View {
 
 private struct BrowserTabGroupEditorSheet: View {
     let group: BrowserTabGroup
-    let onSave: (String, BrowserProfileColor) -> Void
+    let spaces: [API.ChatSpace]
+    let onSave: (String, BrowserProfileColor, String?) -> Void
 
     @Environment(\.dismiss) private var dismiss
     @State private var name: String
     @State private var color: BrowserProfileColor
+    @State private var spaceId: String
 
-    init(group: BrowserTabGroup, onSave: @escaping (String, BrowserProfileColor) -> Void) {
+    init(
+        group: BrowserTabGroup,
+        spaces: [API.ChatSpace],
+        onSave: @escaping (String, BrowserProfileColor, String?) -> Void
+    ) {
         self.group = group
+        self.spaces = spaces
         self.onSave = onSave
         _name = State(initialValue: group.name)
         _color = State(initialValue: group.color)
+        _spaceId = State(initialValue: group.spaceId ?? "")
     }
 
     var body: some View {
@@ -837,18 +924,32 @@ private struct BrowserTabGroupEditorSheet: View {
                     .buttonStyle(.plain)
                 }
             }
+            if !spaces.isEmpty {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Linked Vesper Space")
+                        .font(.system(size: 11.5, weight: .medium))
+                        .foregroundStyle(.secondary)
+                    Picker("Space", selection: $spaceId) {
+                        Text("None").tag("")
+                        ForEach(spaces, id: \.id) { sp in
+                            Text(sp.name).tag(sp.id)
+                        }
+                    }
+                    .labelsHidden()
+                }
+            }
             HStack {
                 Spacer()
                 Button("Cancel") { dismiss() }
                 Button("Save") {
-                    onSave(name, color)
+                    onSave(name, color, spaceId.isEmpty ? nil : spaceId)
                     dismiss()
                 }
                 .buttonStyle(.borderedProminent)
             }
         }
         .padding(18)
-        .frame(width: 280)
+        .frame(width: 290)
     }
 }
 

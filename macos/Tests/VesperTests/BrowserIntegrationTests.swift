@@ -566,6 +566,65 @@ struct BrowserIntegrationTests {
         #expect(grantedWithGate == true)
         #expect(denyingAuth.callCount == 2)
     }
+
+    @Test("BrowserHighlightScripts injects, disambiguates, and removes persistent <mark> highlights in real WKWebView")
+    func persistentHighlightsDOMInjectionAndRemoval() async throws {
+        let webView = BrowserWebViewFactory.makeWebView(isPrivate: true)
+        let waiter = TestNavigationWaiter()
+        webView.navigationDelegate = waiter
+
+        let html = """
+        <!doctype html>
+        <html>
+          <body>
+            <p id="p1">Intro before target phrase here.</p>
+            <p id="p2">Exact context before target phrase after exact suffix.</p>
+            <textarea id="ta">Exact context before target phrase after exact suffix.</textarea>
+          </body>
+        </html>
+        """
+        webView.loadHTMLString(html, baseURL: URL(string: "https://example.com/doc"))
+        await waiter.waitForFinish()
+
+        let h = BrowserWebHighlight(
+            url: "https://example.com/doc",
+            quote: "target phrase",
+            prefix: "Exact context before",
+            suffix: "after exact suffix",
+            color: .yellow
+        )
+        let applyJS = BrowserHighlightScripts.applyHighlightsJS(highlights: [h])
+        let firstCount = (try? await webView.evaluateJavaScript(applyJS)) as? Int
+        #expect(firstCount == 1)
+
+        // Applying again must be idempotent (no nested/duplicate marks).
+        let secondCount = (try? await webView.evaluateJavaScript(applyJS)) as? Int
+        #expect(secondCount == 1)
+
+        let inspectJS = """
+        (() => {
+          const marks = document.querySelectorAll('mark[data-vesper-highlight]');
+          return {
+            total: marks.length,
+            parentId: marks[0] ? marks[0].parentElement.id : "",
+            text: marks[0] ? marks[0].textContent : ""
+          };
+        })();
+        """
+        let inspected = try #require((try? await webView.evaluateJavaScript(inspectJS)) as? [String: Any])
+        #expect((inspected["total"] as? Int) == 1)
+        #expect((inspected["parentId"] as? String) == "p2")
+        #expect((inspected["text"] as? String) == "target phrase")
+
+        let removeJS = BrowserHighlightScripts.removeHighlightJS(id: h.id)
+        let removed = (try? await webView.evaluateJavaScript(removeJS)) as? Int
+        #expect(removed == 1)
+
+        let afterCount = (try? await webView.evaluateJavaScript("document.querySelectorAll('mark[data-vesper-highlight]').length")) as? Int
+        #expect(afterCount == 0)
+        let restoredText = (try? await webView.evaluateJavaScript("document.getElementById('p2').textContent")) as? String
+        #expect(restoredText == "Exact context before target phrase after exact suffix.")
+    }
 }
 
 @MainActor

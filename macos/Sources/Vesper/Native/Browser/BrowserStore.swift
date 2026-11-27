@@ -32,6 +32,8 @@ final class BrowserProfileRuntime: Identifiable {
     var javascriptDisabledHosts: [String] = []
     var sitePermissions: [String: [String: BrowserPermissionSetting]] = [:]
     var proxyConfig: BrowserProxyConfig = .none
+    var spaceId: String?
+    var highlights: [BrowserWebHighlight] = []
 
     let extensionHost: BrowserExtensionHost
     let autofill: BrowserAutofillManager
@@ -61,6 +63,8 @@ final class BrowserProfileRuntime: Identifiable {
         self.javascriptDisabledHosts = profile.javascriptDisabledHosts
         self.sitePermissions = profile.sitePermissions
         self.proxyConfig = profile.proxyConfig
+        self.spaceId = profile.spaceId
+        self.highlights = profile.highlights
         BrowserWebViewFactory.applyProxy(profile.proxyConfig, toProfileID: profile.dataStoreID)
         self.extensionHost = BrowserExtensionHost(
             profileID: profile.id,
@@ -94,7 +98,9 @@ final class BrowserProfileRuntime: Identifiable {
             lockdownDisabledHosts: lockdownDisabledHosts,
             javascriptDisabledHosts: javascriptDisabledHosts,
             sitePermissions: sitePermissions,
-            proxyConfig: proxyConfig
+            proxyConfig: proxyConfig,
+            spaceId: spaceId,
+            highlights: highlights
         )
     }
 }
@@ -131,10 +137,24 @@ final class BrowserStore {
     private(set) var extensionConfig: BrowserExtensionConfig = BrowserExtensionConfig()
     private(set) var isRefreshingConfig = false
 
+    /// Cached Knowledge pages for instant omnibox backlink matching.
+    private(set) var knowledgePages: [KnowledgePageRow] = []
+    private(set) var isRefreshingKnowledge = false
+    @ObservationIgnored private var lastKnowledgeRefreshAt: Date?
+
+    /// Companion "Auto-Follow Active Tab" & Multi-Tab sharing state.
+    private(set) var followShare: BrowserShare?
+    private(set) var followPausedReason: String?
+    private(set) var multiTabShare: BrowserShare?
+    private(set) var multiTabShareCount: Int = 0
+    private(set) var multiTabShareTabIDs: Set<UUID> = []
+    @ObservationIgnored private var autoFollowTask: Task<Void, Never>?
+
     /// UI triggers incremented by menu shortcuts so SwiftUI opens/focuses the matching control.
     var focusAddressBarTick: Int = 0
     var openAutofillPopoverTick: Int = 0
     var openExtensionsPopoverTick: Int = 0
+    var openKnowledgePopoverTick: Int = 0
     var regionCaptureTabId: UUID?
 
     @ObservationIgnored private weak var app: AppModel?
@@ -226,8 +246,14 @@ final class BrowserStore {
     var canReopenClosedTab: Bool { !currentRuntime.closedTabs.isEmpty }
 
     var anyActiveShare: Bool {
-        runtimes.contains { runtime in runtime.tabs.contains(where: { $0.activeShare != nil }) }
+        followShare != nil
+            || multiTabShare != nil
+            || runtimes.contains { runtime in runtime.tabs.contains(where: { $0.activeShare != nil }) }
     }
+
+    var highlights: [BrowserWebHighlight] { currentRuntime.highlights }
+
+    var isAutoFollowEnabled: Bool { layoutConfig.autoFollowCompanionTab }
 
     init(
         app: AppModel,
@@ -400,6 +426,7 @@ final class BrowserStore {
         currentRuntime.autofill.reload()
         currentRuntime.extensionHost.rebuildToolbarItems()
         scheduleSave()
+        scheduleAutoFollowSync()
         showToast("Switched to \(currentRuntime.name) profile", tone: .neutral)
     }
 
@@ -485,6 +512,10 @@ final class BrowserStore {
             guard let self, let runtime else { return }
             self.setSitePermission(host: host, kind: kind, setting: setting, in: runtime)
         }
+        session.highlightsProvider = { [weak self, weak runtime] url in
+            guard let self, let runtime else { return [] }
+            return self.highlights(for: url, in: runtime)
+        }
         session.neverShareProvider = { [weak self] in self?.extensionConfig.neverShare ?? BrowserNeverShareLists() }
         session.hostZoomProvider = { [weak self, weak runtime] host in
             guard let self, let runtime else { return nil }
@@ -508,6 +539,9 @@ final class BrowserStore {
                 )
             }
             self.scheduleSave()
+            if self.activeTab?.id == tab.id {
+                self.scheduleAutoFollowSync()
+            }
         }
         session.onStateChanged = { [weak self] in
             self?.scheduleSave()
@@ -544,6 +578,10 @@ final class BrowserStore {
             onAskPersona: { [weak self, weak session] in
                 guard let self, let session else { return }
                 Task { await self.askPersonaFromContextMenu(tab: session) }
+            },
+            onHighlightToKnowledge: { [weak self, weak session] in
+                guard let self, let session else { return }
+                Task { await self.highlightSelection(in: session) }
             },
             onClipToKnowledge: { [weak self, weak session] in
                 guard let self, let session else { return }
@@ -661,6 +699,7 @@ final class BrowserStore {
         }
         if previous?.id != next.id {
             runtime.extensionHost.notifyTabActivated(next, previous: previous)
+            scheduleAutoFollowSync()
         }
         scheduleSave()
     }
@@ -811,14 +850,21 @@ final class BrowserStore {
         scheduleSave()
     }
 
-    // MARK: Tab Groups
+    // MARK: Tab Groups & Space Binding
 
     @discardableResult
-    func createTabGroup(name: String, color: BrowserProfileColor = .blue, initialTabId: UUID? = nil) -> BrowserTabGroup {
+    func createTabGroup(
+        name: String,
+        color: BrowserProfileColor = .blue,
+        spaceId: String? = nil,
+        initialTabId: UUID? = nil
+    ) -> BrowserTabGroup {
         let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let normalizedSpace = spaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
         let group = BrowserTabGroup(
             name: trimmed.isEmpty ? "Group \(currentRuntime.tabGroups.count + 1)" : trimmed,
-            color: color
+            color: color,
+            spaceId: (normalizedSpace?.isEmpty == false) ? normalizedSpace : nil
         )
         currentRuntime.tabGroups.append(group)
         if let initialTabId, let tab = currentRuntime.tabs.first(where: { $0.id == initialTabId }), !tab.isPrivate {
@@ -835,6 +881,129 @@ final class BrowserStore {
         if !trimmed.isEmpty { currentRuntime.tabGroups[idx].name = trimmed }
         currentRuntime.tabGroups[idx].color = color
         scheduleSave()
+    }
+
+    func updateTabGroup(id: UUID, name: String, color: BrowserProfileColor, spaceId: String?) {
+        guard let idx = currentRuntime.tabGroups.firstIndex(where: { $0.id == id }) else { return }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty { currentRuntime.tabGroups[idx].name = trimmed }
+        currentRuntime.tabGroups[idx].color = color
+        let normalizedSpace = spaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentRuntime.tabGroups[idx].spaceId = (normalizedSpace?.isEmpty == false) ? normalizedSpace : nil
+        scheduleSave()
+    }
+
+    func setTabGroupSpace(id: UUID, spaceId: String?) {
+        guard let idx = currentRuntime.tabGroups.firstIndex(where: { $0.id == id }) else { return }
+        let normalizedSpace = spaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        currentRuntime.tabGroups[idx].spaceId = (normalizedSpace?.isEmpty == false) ? normalizedSpace : nil
+        scheduleSave()
+    }
+
+    func setProfileSpace(id: UUID, spaceId: String?) {
+        guard let runtime = runtimes.first(where: { $0.id == id }) else { return }
+        let normalizedSpace = spaceId?.trimmingCharacters(in: .whitespacesAndNewlines)
+        runtime.spaceId = (normalizedSpace?.isEmpty == false) ? normalizedSpace : nil
+        scheduleSave()
+    }
+
+    func boundSpaceId(for tab: BrowserTabSession) -> String? {
+        guard let runtime = runtimes.first(where: { $0.id == tab.profileID }) else { return nil }
+        return BrowserSpaceRoutingLogic.resolvedSpaceId(
+            for: tab.record,
+            tabGroups: runtime.tabGroups,
+            profileSpaceId: runtime.spaceId
+        )
+    }
+
+    func availableSpaces() -> [API.ChatSpace] {
+        app?.system.store.entry(API.listChatSpaces()).data?.spaces ?? []
+    }
+
+    func boundSpace(for tab: BrowserTabSession) -> API.ChatSpace? {
+        guard let sid = boundSpaceId(for: tab) else { return nil }
+        if let exact = app?.system.store.entry(API.getChatSpace(spaceId: sid)).data {
+            return exact
+        }
+        return availableSpaces().first(where: { $0.id == sid })
+    }
+
+    func boundSpaceSummary(for tab: BrowserTabSession) -> BrowserSpaceSummary? {
+        guard let space = boundSpace(for: tab) else { return nil }
+        var summary = BrowserSpaceSummary(space: space)
+        if summary.defaultKnowledgeFolder == nil && summary.firstKnowledgeFolder == nil,
+           let links = app?.system.store.entry(API.listChatSpaceKnowledgeLinks(spaceId: space.id)).data?.links
+        {
+            let folderLinks = links.filter { $0.kind == .folder && !$0.path.isEmpty }
+            summary.defaultKnowledgeFolder = folderLinks.first(where: \.isDefaultTarget)?.path
+            summary.firstKnowledgeFolder = folderLinks.first?.path
+        }
+        return summary
+    }
+
+    struct LinkedSpaceTabGroup: Identifiable {
+        let id: String
+        let profileId: UUID
+        let profileName: String
+        let group: BrowserTabGroup?
+        let tabs: [BrowserTabSession]
+    }
+
+    func linkedTabGroups(forSpaceId spaceId: String) -> [LinkedSpaceTabGroup] {
+        var result: [LinkedSpaceTabGroup] = []
+        for runtime in runtimes {
+            let matchingGroups = runtime.tabGroups.filter { $0.spaceId == spaceId }
+            for group in matchingGroups {
+                let groupTabs = runtime.tabs.filter { !$0.isPrivate && $0.groupId == group.id }
+                result.append(LinkedSpaceTabGroup(
+                    id: "\(runtime.id.uuidString)-\(group.id.uuidString)",
+                    profileId: runtime.id,
+                    profileName: runtime.name,
+                    group: group,
+                    tabs: groupTabs
+                ))
+            }
+            if runtime.spaceId == spaceId {
+                let ungrouped = runtime.tabs.filter { !$0.isPrivate && $0.groupId == nil }
+                result.append(LinkedSpaceTabGroup(
+                    id: "\(runtime.id.uuidString)-profile",
+                    profileId: runtime.id,
+                    profileName: runtime.name,
+                    group: nil,
+                    tabs: ungrouped
+                ))
+            }
+        }
+        return result
+    }
+
+    func openTabFromSpace(profileId: UUID, tabId: UUID) {
+        if activeProfileId != profileId {
+            switchProfile(to: profileId)
+        }
+        selectTab(tabId)
+        focusBrowserScreen()
+    }
+
+    @discardableResult
+    func createLinkedTabGroup(forSpace space: API.ChatSpace, openBrowser: Bool = true) -> BrowserTabGroup {
+        let color = BrowserProfileColor.allCases[currentRuntime.tabGroups.count % BrowserProfileColor.allCases.count]
+        let group = createTabGroup(name: space.name, color: color, spaceId: space.id)
+        if openBrowser {
+            _ = newTab(isPrivate: false, select: true, groupId: group.id)
+            focusBrowserScreen()
+        }
+        showToast("Created Browser tab group linked to \(space.name)", tone: .success)
+        return group
+    }
+
+    private func focusBrowserScreen() {
+        guard let controller = app?.keyController else { return }
+        if controller.isBrowserActive {
+            controller.window?.makeKeyAndOrderFront(nil)
+            return
+        }
+        app?.openVesperTab(path: "/browser", nextTo: controller.window)
     }
 
     func toggleTabGroupCollapsed(id: UUID) {
@@ -1470,6 +1639,18 @@ final class BrowserStore {
                     }
                 }
             }
+            if let follow = followShare {
+                followShare = activeById[follow.id]
+            }
+            if let multi = multiTabShare {
+                if let updated = activeById[multi.id] {
+                    multiTabShare = updated
+                } else {
+                    multiTabShare = nil
+                    multiTabShareCount = 0
+                    multiTabShareTabIDs = []
+                }
+            }
             updateSharePolling()
         } catch {
             vlog("browser extension config refresh failed: \(error)")
@@ -1640,10 +1821,423 @@ final class BrowserStore {
                 }
             }
         }
+        if let follow = followShare {
+            if let updated = try? await client.getShare(id: follow.id) {
+                if updated.stoppedAt != nil {
+                    followShare = nil
+                } else {
+                    followShare = updated
+                }
+            }
+        }
+        if let multi = multiTabShare {
+            if let updated = try? await client.getShare(id: multi.id) {
+                if updated.stoppedAt != nil {
+                    multiTabShare = nil
+                    multiTabShareCount = 0
+                    multiTabShareTabIDs = []
+                } else {
+                    multiTabShare = updated
+                }
+            }
+        }
         if !anyActiveShare {
             sharePollTask?.cancel()
             sharePollTask = nil
         }
+    }
+
+    // MARK: Companion Auto-Follow & Multi-Tab Sharing
+
+    func setAutoFollowCompanionTab(_ enabled: Bool) {
+        layoutConfig.autoFollowCompanionTab = enabled
+        scheduleSave()
+        if enabled {
+            scheduleAutoFollowSync()
+            showToast("Companion will follow your active tab (Private & protected sites skipped)", tone: .success)
+        } else {
+            autoFollowTask?.cancel()
+            autoFollowTask = nil
+            followPausedReason = nil
+            Task { await stopFollowShare(reason: "person") }
+        }
+    }
+
+    func scheduleAutoFollowSync() {
+        guard layoutConfig.autoFollowCompanionTab else { return }
+        autoFollowTask?.cancel()
+        autoFollowTask = Task { @MainActor [weak self] in
+            try? await Task.sleep(for: .milliseconds(350))
+            guard !Task.isCancelled else { return }
+            await self?.syncAutoFollowNow()
+        }
+    }
+
+    func syncAutoFollowNow() async {
+        guard layoutConfig.autoFollowCompanionTab else { return }
+        guard let tab = activeTab else { return }
+        let isCompanionOpen = app?.keyController?.isCompanionInspectorOpen ?? false
+
+        if !isCompanionOpen {
+            followPausedReason = "Open Companion Chat to auto-follow"
+            return
+        }
+        if tab.isPrivate {
+            followPausedReason = "Paused on Private tab"
+            return
+        }
+        let check = pageShareCheck(for: tab)
+        if !BrowserMultiTabShareLogic.isAutoFollowEligible(
+            urlString: tab.urlString,
+            isPrivate: tab.isPrivate,
+            isCompanionOpen: isCompanionOpen,
+            neverShare: extensionConfig.neverShare
+        ) {
+            followPausedReason = (check.isUserBlocked || check.host != nil)
+                ? "Paused on protected site"
+                : "Paused (no web page)"
+            return
+        }
+
+        guard let client = makeExtensionClient() else { return }
+        followPausedReason = nil
+        let targetChatId = app?.keyController?.companionChatId
+        let extracted = await tab.extractPageContent()
+        let snap = BrowserSnapshotPayload(
+            url: extracted.url,
+            title: extracted.title,
+            text: extracted.text,
+            screenshot: nil,
+            incognito: false
+        )
+
+        // Reuse the active follow share when targeting the same chat so tab switching doesn't spam chat messages.
+        if let existing = followShare,
+           existing.stoppedAt == nil,
+           (targetChatId == nil || existing.chatId == targetChatId)
+        {
+            do {
+                let updated = try await client.sendSnapshot(shareId: existing.id, snapshot: snap)
+                followShare = updated
+                updateSharePolling()
+                return
+            } catch {
+                followShare = nil
+            }
+        }
+
+        let spacePersonaId = boundSpace(for: tab)?.personaId
+        let req = BrowserShareStartRequest(
+            snapshot: snap,
+            chatId: targetChatId,
+            personaId: targetChatId == nil ? spacePersonaId : nil,
+            tabId: "follow-\(currentRuntime.id.uuidString.prefix(8))",
+            until: "stop",
+            includeScreenshot: false
+        )
+        do {
+            let share = try await client.startShare(req)
+            followShare = share
+            updateSharePolling()
+            if targetChatId == nil {
+                app?.keyController?.openCompanionChat(share.chatId)
+            }
+        } catch {
+            vlog("browser auto-follow share failed: \(error)")
+        }
+    }
+
+    func stopFollowShare(reason: String = "person") async {
+        guard let share = followShare else { return }
+        followShare = nil
+        followPausedReason = nil
+        updateSharePolling()
+        guard let client = makeExtensionClient() else { return }
+        _ = try? await client.stopShare(shareId: share.id, reason: reason)
+    }
+
+    func shareMultipleTabs(
+        _ tabs: [BrowserTabSession],
+        groupName: String? = nil,
+        chatId: String?,
+        personaId: String?,
+        includeScreenshot: Bool = true,
+        openInCompanion: Bool = true
+    ) async {
+        guard let client = makeExtensionClient() else {
+            showToast("Connect Vesper before sharing tabs", tone: .error)
+            return
+        }
+        guard !tabs.isEmpty else {
+            showToast("Pick at least one tab to share", tone: .neutral)
+            return
+        }
+
+        var inputs: [BrowserMultiTabInput] = []
+        var firstShareableTab: BrowserTabSession?
+        for tab in tabs {
+            if tab.isPrivate || !tab.hasLoadedPage {
+                inputs.append(BrowserMultiTabInput(
+                    tabId: tab.id,
+                    url: tab.urlString,
+                    title: tab.displayTitle,
+                    text: "",
+                    isPrivate: tab.isPrivate
+                ))
+                continue
+            }
+            let extracted = await tab.extractPageContent()
+            inputs.append(BrowserMultiTabInput(
+                tabId: tab.id,
+                url: extracted.url,
+                title: extracted.title,
+                text: extracted.text,
+                isPrivate: tab.isPrivate
+            ))
+            if firstShareableTab == nil && pageShareCheck(for: tab).ok {
+                firstShareableTab = tab
+            }
+        }
+
+        guard let bundle = BrowserMultiTabShareLogic.buildBundle(
+            tabs: inputs,
+            groupName: groupName,
+            neverShare: extensionConfig.neverShare
+        ) else {
+            showToast("None of the selected tabs can be shared (Private or protected sites)", tone: .error)
+            return
+        }
+
+        let screenshotTab = tabs.first(where: { $0.id == activeTab?.id && bundle.includedTabIDs.contains($0.id) })
+            ?? firstShareableTab
+        let screenshot = includeScreenshot ? await screenshotTab?.captureSnapshotJPEGBase64() : nil
+        let snap = BrowserSnapshotPayload(
+            url: bundle.primaryURL,
+            title: bundle.title,
+            text: bundle.combinedText,
+            screenshot: screenshot,
+            incognito: false
+        )
+        let req = BrowserShareStartRequest(
+            snapshot: snap,
+            chatId: chatId,
+            personaId: personaId,
+            tabId: "multi-\(UUID().uuidString.prefix(12))",
+            until: "stop",
+            includeScreenshot: includeScreenshot && screenshot != nil
+        )
+        do {
+            let share = try await client.startShare(req)
+            // Clear stale single-tab shares pointing at the same chat since the server replaced them.
+            for runtime in runtimes {
+                for tab in runtime.tabs where tab.activeShare?.chatId == share.chatId {
+                    tab.activeShare = nil
+                    tab.shareStartURL = nil
+                }
+            }
+            multiTabShare = share
+            multiTabShareCount = bundle.includedCount
+            multiTabShareTabIDs = Set(bundle.includedTabIDs)
+            updateSharePolling()
+            if openInCompanion {
+                app?.keyController?.openCompanionChat(share.chatId)
+            }
+            let skipNote = bundle.skippedCount > 0 ? " (\(bundle.skippedCount) skipped)" : ""
+            showToast("Shared \(bundle.includedCount) tab\(bundle.includedCount == 1 ? "" : "s") with \(share.chatTitle.isEmpty ? "chat" : share.chatTitle)\(skipNote)", tone: .success)
+        } catch {
+            let msg = (error as? APIError)?.userMessage ?? error.localizedDescription
+            showToast(msg, tone: .error)
+        }
+    }
+
+    func shareTabGroup(_ group: BrowserTabGroup, openInCompanion: Bool = true) async {
+        let groupTabs = currentRuntime.tabs.filter { $0.groupId == group.id && !$0.isPrivate && $0.hasLoadedPage }
+        guard !groupTabs.isEmpty else {
+            showToast("No shareable tabs in \(group.name)", tone: .neutral)
+            return
+        }
+        let companionId = app?.keyController?.companionChatId
+        let spacePersonaId: String? = group.spaceId.flatMap { sid in
+            availableSpaces().first(where: { $0.id == sid })?.personaId
+        }
+        await shareMultipleTabs(
+            groupTabs,
+            groupName: group.name,
+            chatId: companionId,
+            personaId: companionId == nil ? spacePersonaId : nil,
+            includeScreenshot: true,
+            openInCompanion: openInCompanion
+        )
+    }
+
+    func stopMultiTabShare(reason: String = "person") async {
+        guard let share = multiTabShare else { return }
+        multiTabShare = nil
+        multiTabShareCount = 0
+        multiTabShareTabIDs = []
+        updateSharePolling()
+        guard let client = makeExtensionClient() else { return }
+        _ = try? await client.stopShare(shareId: share.id, reason: reason)
+        if reason == "person" {
+            showToast("Stopped multi-tab share", tone: .neutral)
+        }
+    }
+
+    // MARK: Knowledge Backlinks & Persistent Web Highlights
+
+    func refreshKnowledgeIndex(force: Bool = false) async {
+        guard let apiClient = app?.system.store.client else { return }
+        if !force, let last = lastKnowledgeRefreshAt, Date().timeIntervalSince(last) < 20, !knowledgePages.isEmpty {
+            return
+        }
+        guard !isRefreshingKnowledge else { return }
+        isRefreshingKnowledge = true
+        defer { isRefreshingKnowledge = false }
+        do {
+            let table = try await apiClient.send(KnowledgeAPI.listPages(limit: 200))
+            knowledgePages = table.rows
+            lastKnowledgeRefreshAt = Date()
+        } catch {
+            vlog("browser knowledge index refresh failed: \(error)")
+        }
+    }
+
+    func backlinks(for urlString: String) -> [BrowserKnowledgeBacklink] {
+        BrowserKnowledgeMatcher.matchingPages(for: urlString, in: knowledgePages)
+    }
+
+    func highlights(for urlString: String, in runtime: BrowserProfileRuntime? = nil) -> [BrowserWebHighlight] {
+        let target = runtime ?? currentRuntime
+        guard let key = BrowserURLNormalizer.canonicalPageKey(for: urlString) else { return [] }
+        return target.highlights.filter { $0.url == key }
+    }
+
+    func highlightSelection(
+        in tab: BrowserTabSession? = nil,
+        color: BrowserHighlightColor = .yellow,
+        note: String? = nil
+    ) async {
+        guard let target = tab ?? activeTab, target.hasLoadedPage else {
+            showToast("Open a web page first", tone: .error)
+            return
+        }
+        if target.isPrivate {
+            showToast("Highlights aren't saved on Private tabs", tone: .neutral)
+            return
+        }
+        guard let pageKey = BrowserURLNormalizer.canonicalPageKey(for: target.urlString) else {
+            showToast("Highlights are only available on web pages", tone: .neutral)
+            return
+        }
+        let ctx = await target.extractSelectionContext()
+        guard !ctx.quote.isEmpty else {
+            showToast("Select text on the page to highlight", tone: .neutral)
+            return
+        }
+
+        let runtime = runtimes.first(where: { $0.id == target.profileID }) ?? currentRuntime
+        var highlight = BrowserWebHighlight(
+            url: pageKey,
+            originalURL: target.urlString,
+            quote: ctx.quote,
+            prefix: ctx.prefix,
+            suffix: ctx.suffix,
+            note: note,
+            color: color
+        )
+        runtime.highlights.append(highlight)
+        scheduleSave()
+        await target.applyHighlights([highlight])
+
+        // Sync the highlight to an existing Knowledge page for this URL, or create one in the Space/Clippings folder.
+        guard let apiClient = app?.system.store.client else {
+            showToast("Highlighted passage on page", tone: .success)
+            return
+        }
+
+        if knowledgePages.isEmpty {
+            await refreshKnowledgeIndex(force: true)
+        }
+        let exactMatch = backlinks(for: target.urlString).first(where: { $0.matchKind == .exactURL })
+        let existingPageId = exactMatch?.id ?? runtime.highlights.first(where: { $0.url == pageKey && $0.knowledgePageId != nil })?.knowledgePageId
+
+        do {
+            let savedPage: KnowledgePage
+            if let existingPageId {
+                let page = try await apiClient.send(KnowledgeAPI.getPage(id: existingPageId))
+                let updatedBody = BrowserHighlightFormatter.appendHighlightMarkdown(
+                    existingBody: page.bodyMd,
+                    pageTitle: target.displayTitle,
+                    pageURL: target.urlString,
+                    highlight: highlight
+                )
+                savedPage = try await apiClient.send(KnowledgeAPI.savePage(
+                    id: page.id,
+                    body: KnowledgePageInput(bodyMd: updatedBody)
+                ))
+            } else {
+                let space = boundSpaceSummary(for: target)
+                let folder = BrowserSpaceRoutingLogic.clipFolder(for: space)
+                let host = BrowserURLResolver.displayHost(for: target.urlString)
+                let noteTitle = target.displayTitle.isEmpty ? host : target.displayTitle
+                let body = BrowserHighlightFormatter.appendHighlightMarkdown(
+                    existingBody: nil,
+                    pageTitle: noteTitle,
+                    pageURL: target.urlString,
+                    highlight: highlight
+                )
+                let props = BrowserSpaceRoutingLogic.clipProperties(
+                    url: target.urlString,
+                    title: noteTitle,
+                    host: host,
+                    space: space,
+                    clippedFrom: "browser_highlight"
+                )
+                savedPage = try await apiClient.send(KnowledgeAPI.createPage(KnowledgePageInput(
+                    title: noteTitle,
+                    path: "\(folder)/\(Self.safeFileSegment(noteTitle))-\(Int(Date().timeIntervalSince1970))",
+                    bodyMd: body,
+                    properties: props
+                )))
+            }
+
+            highlight.knowledgePageId = savedPage.id
+            if let idx = runtime.highlights.firstIndex(where: { $0.id == highlight.id }) {
+                runtime.highlights[idx].knowledgePageId = savedPage.id
+            }
+            scheduleSave()
+            app?.system.store.invalidate(KnowledgeAPI.invalidation)
+            Task { await self.refreshKnowledgeIndex(force: true) }
+
+            let folderLabel = (savedPage.path ?? "").split(separator: "/").dropLast().joined(separator: "/")
+            let dest = folderLabel.isEmpty ? "Knowledge" : "Knowledge › \(folderLabel)"
+            showToast("Highlighted & synced to \(dest)", tone: .success, actionLabel: "Open") { [weak self] event in
+                if event == .action {
+                    self?.app?.openVesperTab(path: "/knowledge/\(savedPage.id)", nextTo: self?.app?.keyController?.window)
+                }
+            }
+        } catch {
+            showToast("Highlighted locally (Knowledge sync failed: \(error.localizedDescription))", tone: .neutral)
+        }
+    }
+
+    func deleteHighlight(id: UUID, in tab: BrowserTabSession? = nil) {
+        let runtime = tab.flatMap { t in runtimes.first(where: { $0.id == t.profileID }) } ?? currentRuntime
+        guard let idx = runtime.highlights.firstIndex(where: { $0.id == id }) else { return }
+        let removed = runtime.highlights.remove(at: idx)
+        scheduleSave()
+        if let tab {
+            tab.removeHighlightMark(id: id)
+        } else {
+            for t in runtime.tabs where BrowserURLNormalizer.canonicalPageKey(for: t.urlString) == removed.url {
+                t.removeHighlightMark(id: id)
+            }
+        }
+        showToast("Removed highlight", tone: .neutral)
+    }
+
+    func triggerKnowledgePopover() {
+        openKnowledgePopoverTick &+= 1
     }
 
     // MARK: Ask, Clip, Screenshot (Viewport & Region) & Quote Actions
@@ -1658,9 +2252,10 @@ final class BrowserStore {
             showToast(check.reason ?? "This page can't be shared", tone: .error)
             return
         }
+        let resolvedPersonaId = personaId ?? boundSpace(for: tab)?.personaId
         let extracted = await tab.extractPageContent()
         let req = BrowserAskRequest(
-            personaId: personaId,
+            personaId: resolvedPersonaId,
             prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "Explain this." : prompt,
             url: extracted.url,
             title: extracted.title,
@@ -1681,15 +2276,12 @@ final class BrowserStore {
     }
 
     private func askPersonaFromContextMenu(tab: BrowserTabSession) async {
-        let defaultPersona = extensionConfig.personas.first(where: \.isDefault) ?? extensionConfig.personas.first
-        await askAboutPage(tab: tab, prompt: "Explain this.", personaId: defaultPersona?.id, openInCompanion: true)
+        let spacePersona = boundSpace(for: tab)?.personaId
+        let defaultPersona = spacePersona ?? (extensionConfig.personas.first(where: \.isDefault) ?? extensionConfig.personas.first)?.id
+        await askAboutPage(tab: tab, prompt: "Explain this.", personaId: defaultPersona, openInCompanion: true)
     }
 
     func clipToKnowledge(tab: BrowserTabSession, includeSelectionOnlyIfPresent: Bool = true) async {
-        guard let client = makeExtensionClient() else {
-            showToast("Connect Vesper to clip pages", tone: .error)
-            return
-        }
         let check = pageShareCheck(for: tab)
         guard check.ok else {
             showToast(check.reason ?? "This page can't be clipped", tone: .error)
@@ -1697,6 +2289,52 @@ final class BrowserStore {
         }
         let extracted = await tab.extractPageContent()
         let selection = includeSelectionOnlyIfPresent ? extracted.selection : ""
+
+        // When the tab belongs to a Space-linked tab group or profile, route directly into that Space's Knowledge folder.
+        if let space = boundSpaceSummary(for: tab), let apiClient = app?.system.store.client {
+            let folder = BrowserSpaceRoutingLogic.clipFolder(for: space)
+            let host = BrowserURLResolver.displayHost(for: extracted.url)
+            let noteTitle = extracted.title.isEmpty ? host : extracted.title
+            let body = BrowserHighlightFormatter.noteBodyForClip(
+                title: noteTitle,
+                url: extracted.url,
+                selection: selection
+            )
+            let props = BrowserSpaceRoutingLogic.clipProperties(
+                url: extracted.url,
+                title: noteTitle,
+                host: host,
+                space: space,
+                clippedFrom: "browser"
+            )
+            do {
+                let page = try await apiClient.send(KnowledgeAPI.createPage(KnowledgePageInput(
+                    title: noteTitle,
+                    path: "\(folder)/\(Self.safeFileSegment(noteTitle))-\(Int(Date().timeIntervalSince1970))",
+                    bodyMd: body,
+                    properties: props
+                )))
+                app?.system.store.invalidate(KnowledgeAPI.invalidation)
+                Task { await self.refreshKnowledgeIndex(force: true) }
+                showToast(
+                    selection.isEmpty ? "Saved page to Knowledge › \(folder)" : "Saved selection to Knowledge › \(folder)",
+                    tone: .success,
+                    actionLabel: "Open"
+                ) { [weak self] event in
+                    if event == .action {
+                        self?.app?.openVesperTab(path: "/knowledge/\(page.id)", nextTo: self?.app?.keyController?.window)
+                    }
+                }
+            } catch {
+                showToast((error as? APIError)?.userMessage ?? error.localizedDescription, tone: .error)
+            }
+            return
+        }
+
+        guard let client = makeExtensionClient() else {
+            showToast("Connect Vesper to clip pages", tone: .error)
+            return
+        }
         do {
             let reply = try await client.clip(BrowserClipRequest(
                 as: .note,
@@ -1706,6 +2344,7 @@ final class BrowserStore {
                 incognito: tab.isPrivate
             ))
             app?.system.store.invalidate(KnowledgeAPI.invalidation)
+            Task { await self.refreshKnowledgeIndex(force: true) }
             showToast(
                 selection.isEmpty ? "Saved page to Knowledge › Clippings" : "Saved selection to Knowledge › Clippings",
                 tone: .success,
@@ -1784,21 +2423,24 @@ final class BrowserStore {
                 assetRef: uploaded.ref,
                 caption: caption
             )
-            let props: [String: JSONValue] = [
-                "type": .string("literature"),
-                "source": .string(tab.urlString),
-                "source_title": .string(tab.displayTitle),
-                "source_site": .string(host),
-                "clipped_from": .string("browser"),
-            ]
+            let space = boundSpaceSummary(for: tab)
+            let folder = BrowserSpaceRoutingLogic.clipFolder(for: space)
+            let props = BrowserSpaceRoutingLogic.clipProperties(
+                url: tab.urlString,
+                title: tab.displayTitle,
+                host: host,
+                space: space,
+                clippedFrom: "browser"
+            )
             let page = try await apiClient.send(KnowledgeAPI.createPage(KnowledgePageInput(
                 title: noteTitle,
-                path: "Clippings/\(Self.safeFileSegment(noteTitle))-\(Int(Date().timeIntervalSince1970))",
+                path: "\(folder)/\(Self.safeFileSegment(noteTitle))-\(Int(Date().timeIntervalSince1970))",
                 bodyMd: body,
                 properties: props
             )))
             app?.system.store.invalidate(KnowledgeAPI.invalidation)
-            showToast("Saved screenshot to Knowledge › Clippings", tone: .success, actionLabel: "Open") { [weak self] event in
+            Task { await self.refreshKnowledgeIndex(force: true) }
+            showToast("Saved screenshot to Knowledge › \(folder)", tone: .success, actionLabel: "Open") { [weak self] event in
                 if event == .action {
                     self?.app?.openVesperTab(path: "/knowledge/\(page.id)", nextTo: self?.app?.keyController?.window)
                 }
