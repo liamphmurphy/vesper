@@ -663,7 +663,7 @@ func (q *Queries) ListKnowledgeHeadings(ctx context.Context, arg ListKnowledgeHe
 }
 
 const listPageReviews = `-- name: ListPageReviews :many
-SELECT v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id, v.review_snapshot_key, v.review_snapshot_renderer, v.review_snapshot_sha256 FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
+SELECT v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id, v.review_snapshot_key, v.review_snapshot_renderer, v.review_snapshot_sha256, v.word_count FROM artifact_versions v JOIN artifacts a ON a.id = v.artifact_id
 WHERE a.id = $1 AND a.workspace_id = $2
 AND artifact_visible(a.audience, a.owner_user_id, $3::uuid)
 AND (v.state = 'suggested' OR (v.created_by_type = 'agent' AND v.review_state = 'pending'))
@@ -714,6 +714,7 @@ func (q *Queries) ListPageReviews(ctx context.Context, arg ListPageReviewsParams
 			&i.ReviewSnapshotKey,
 			&i.ReviewSnapshotRenderer,
 			&i.ReviewSnapshotSha256,
+			&i.WordCount,
 		); err != nil {
 			return nil, err
 		}
@@ -888,7 +889,7 @@ func (q *Queries) PutKnowledgeAsset(ctx context.Context, arg PutKnowledgeAssetPa
 }
 
 const queryPages = `-- name: QueryPages :many
-SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, a.canvas_id, v.properties,
+SELECT a.id, a.workspace_id, a.project_id, a.epic_id, a.type, a.title, a.number, a.summary, a.author_type, a.author_id, a.current_version_id, a.search_text, a.search, a.created_at, a.updated_at, a.path, a.audience, a.owner_user_id, a.persona_direct, a.persona_paused, a.chat_session_id, a.canvas_id, v.properties, v.word_count,
   coalesce((SELECT cv.kind FROM chat_canvases cv WHERE cv.id = a.canvas_id), '')::text AS canvas_kind,
   (SELECT count(*) FROM knowledge_links l WHERE l.source_kind = 'artifact' AND l.source_id = a.id AND l.target_kind = 'unresolved')::int AS unresolved,
   (SELECT count(*) FROM artifact_versions s WHERE s.artifact_id = a.id AND (s.state = 'suggested' OR (s.created_by_type = 'agent' AND s.review_state = 'pending')))::int AS pending
@@ -956,6 +957,7 @@ type QueryPagesRow struct {
 	ChatSessionID    *uuid.UUID
 	CanvasID         *uuid.UUID
 	Properties       json.RawMessage
+	WordCount        int32
 	CanvasKind       string
 	Unresolved       int32
 	Pending          int32
@@ -1012,6 +1014,7 @@ func (q *Queries) QueryPages(ctx context.Context, arg QueryPagesParams) ([]Query
 			&i.ChatSessionID,
 			&i.CanvasID,
 			&i.Properties,
+			&i.WordCount,
 			&i.CanvasKind,
 			&i.Unresolved,
 			&i.Pending,
@@ -1094,7 +1097,7 @@ const setPageChanges = `-- name: SetPageChanges :one
 UPDATE artifact_versions v SET changes = $1, review_state = $2
 FROM artifacts a WHERE v.id = $3 AND a.id = v.artifact_id
 AND a.workspace_id = $4
-AND artifact_visible(a.audience, a.owner_user_id, $5::uuid) RETURNING v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id, v.review_snapshot_key, v.review_snapshot_renderer, v.review_snapshot_sha256
+AND artifact_visible(a.audience, a.owner_user_id, $5::uuid) RETURNING v.id, v.artifact_id, v.seq, v.label, v.body_md, v.blob_key, v.filename, v.content_type, v.size_bytes, v.note, v.created_by_type, v.created_by_id, v.created_at, v.state, v.based_on_version_id, v.decided_by_id, v.decided_at, v.review_state, v.reviewed_by_user_id, v.reviewed_at, v.review_note, v.review_pins, v.properties, v.changes, v.source_canvas_version_id, v.review_snapshot_key, v.review_snapshot_renderer, v.review_snapshot_sha256, v.word_count
 `
 
 type SetPageChangesParams struct {
@@ -1143,6 +1146,7 @@ func (q *Queries) SetPageChanges(ctx context.Context, arg SetPageChangesParams) 
 		&i.ReviewSnapshotKey,
 		&i.ReviewSnapshotRenderer,
 		&i.ReviewSnapshotSha256,
+		&i.WordCount,
 	)
 	return i, err
 }

@@ -136,3 +136,43 @@ func TestScheduledLibrarianProducesSuggestionsAndNeedsYou(t *testing.T) {
 		t.Fatalf("no Needs you result: %v", inbox)
 	}
 }
+
+func TestKnowledgePageWordCount(t *testing.T) {
+	e := newChatEnv(t)
+
+	body := "# Chapter 1\n\nIt's a well-known fact—really.\n\n```go\nfunc ignored() {}\n```\n\n![[map.png]]\nSee [[Lore/Umbra|the Umbra]].\n"
+	// Prose words: Chapter(1) 1(2) It's(3) a(4) well-known(5) fact(6) really(7) See(8) the(9) Umbra(10) = 10
+	created := e.want("POST", "/knowledge/pages", map[string]any{
+		"title":   "Chapter 1",
+		"path":    "Book/Part 1/Chapter 1",
+		"body_md": body,
+	}, 200)
+	if got := int(created["word_count"].(float64)); got != 10 {
+		t.Fatalf("created word_count = %d, want 10 (resp=%v)", got, created)
+	}
+
+	list := e.want("GET", "/knowledge/pages?folder=Book", nil, 200)
+	rows := list["rows"].([]any)
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 row in Book, got %v", list)
+	}
+	row := rows[0].(map[string]any)
+	if got := int(row["word_count"].(float64)); got != 10 {
+		t.Fatalf("list row word_count = %d, want 10 (row=%v)", got, row)
+	}
+
+	id := created["id"].(string)
+	updated := e.want("PUT", "/knowledge/pages/"+id, map[string]any{
+		"body_md":         "Three short words.",
+		"base_version_id": created["version_id"],
+	}, 200)
+	if got := int(updated["word_count"].(float64)); got != 3 {
+		t.Fatalf("updated word_count = %d, want 3 (resp=%v)", got, updated)
+	}
+
+	listAfter := e.want("GET", "/knowledge/pages?folder=Book", nil, 200)
+	rowAfter := listAfter["rows"].([]any)[0].(map[string]any)
+	if got := int(rowAfter["word_count"].(float64)); got != 3 {
+		t.Fatalf("list row word_count after update = %d, want 3", got)
+	}
+}

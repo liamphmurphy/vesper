@@ -30,7 +30,7 @@ AND (v.state = 'suggested' OR (v.created_by_type = 'agent' AND v.review_state = 
 ORDER BY v.seq;
 
 -- name: QueryPages :many
-SELECT a.*, v.properties,
+SELECT a.*, v.properties, v.word_count,
   coalesce((SELECT cv.kind FROM chat_canvases cv WHERE cv.id = a.canvas_id), '')::text AS canvas_kind,
   (SELECT count(*) FROM knowledge_links l WHERE l.source_kind = 'artifact' AND l.source_id = a.id AND l.target_kind = 'unresolved')::int AS unresolved,
   (SELECT count(*) FROM artifact_versions s WHERE s.artifact_id = a.id AND (s.state = 'suggested' OR (s.created_by_type = 'agent' AND s.review_state = 'pending')))::int AS pending

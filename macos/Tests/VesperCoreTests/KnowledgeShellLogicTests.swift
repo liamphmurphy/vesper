@@ -12,6 +12,7 @@ final class KnowledgeShellLogicTests: XCTestCase {
         updatedAt: String = "",
         pending: Int = 0,
         unresolved: Int = 0,
+        wordCount: Int = 0,
         kind: KnowledgePageKind = .document,
         canvasId: String? = nil
     ) -> KnowledgePageRow {
@@ -27,6 +28,7 @@ final class KnowledgeShellLogicTests: XCTestCase {
             versionId: nil,
             pending: pending,
             unresolved: unresolved,
+            wordCount: wordCount,
             kind: kind,
             canvasId: canvasId
         )
@@ -783,5 +785,67 @@ final class KnowledgeShellLogicTests: XCTestCase {
         XCTAssertEqual(KnowledgeShellLogic.formatByteCount(500), "1 MB")
         XCTAssertEqual(KnowledgeShellLogic.formatByteCount(5_200_000), "5 MB")
         XCTAssertEqual(KnowledgeShellLogic.formatByteCount(1_500_000_000), "1.5 GB")
+    }
+
+    func testBuildTreeRollsUpRecursiveWordCounts() {
+        let rows = [
+            makeRow(id: "1", path: "Book/Part 1/Chapter 1", wordCount: 1_200),
+            makeRow(id: "2", path: "Book/Part 1/Chapter 2", wordCount: 850),
+            makeRow(id: "3", path: "Book/Part 2/Chapter 3", wordCount: 2_400),
+            makeRow(id: "4", path: "Book/Outline", wordCount: 150),
+            makeRow(id: "5", path: "Book/Deck", wordCount: 0, kind: .deck),
+            makeRow(id: "6", path: "Top Note", wordCount: 42),
+        ]
+        let attachment = KnowledgeAttachment(
+            id: "a1",
+            filename: "map.png",
+            ref: "map.png",
+            url: "/api/v1/knowledge/assets/a1",
+            contentType: "image/png",
+            sizeBytes: 1024,
+            createdAt: "2026-11-27T00:00:00Z"
+        )
+
+        let root = KnowledgeShellLogic.buildTree(from: rows, attachments: [attachment])
+        XCTAssertEqual(root.wordCount, 4_642)
+
+        let book = KnowledgeShellLogic.findFolder(at: "Book", in: root)
+        XCTAssertEqual(book?.wordCount, 4_600)
+
+        let part1 = KnowledgeShellLogic.findFolder(at: "Book/Part 1", in: root)
+        XCTAssertEqual(part1?.wordCount, 2_050)
+
+        let part2 = KnowledgeShellLogic.findFolder(at: "Book/Part 2", in: root)
+        XCTAssertEqual(part2?.wordCount, 2_400)
+
+        let attachmentsFolder = KnowledgeShellLogic.findFolder(at: KnowledgeShellLogic.attachmentsFolderName, in: root)
+        XCTAssertEqual(attachmentsFolder?.wordCount, 0)
+    }
+
+    func testFormatWordCountAndTooltip() {
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(0), "")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(-5), "")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(1), "1")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(999), "999")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(1_000), "1k")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(1_240), "1.2k")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(12_450), "12.5k")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(99_960), "100k")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(125_000), "125k")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(999_960), "1M")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCount(1_250_000), "1.3M")
+
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCountTooltip(1), "1 word")
+        XCTAssertEqual(KnowledgeShellLogic.formatWordCountTooltip(1_234), "1,234 words")
+    }
+
+    func testKnowledgePageRowDecodesWordCountWithDefaultZero() throws {
+        let withCount = Data(#"{"id":"p1","title":"Note","path":"Note","word_count":321}"#.utf8)
+        let decoded = try JSONDecoder().decode(KnowledgePageRow.self, from: withCount)
+        XCTAssertEqual(decoded.wordCount, 321)
+
+        let withoutCount = Data(#"{"id":"p2","title":"Legacy","path":"Legacy"}"#.utf8)
+        let legacy = try JSONDecoder().decode(KnowledgePageRow.self, from: withoutCount)
+        XCTAssertEqual(legacy.wordCount, 0)
     }
 }

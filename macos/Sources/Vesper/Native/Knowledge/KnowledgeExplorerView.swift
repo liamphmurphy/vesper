@@ -429,6 +429,13 @@ struct KnowledgeExplorerView: View {
                     .foregroundStyle(active ? p.text : p.secondaryText)
                     .lineLimit(1)
                 Spacer(minLength: 4)
+                if page.wordCount > 0 {
+                    Text(KnowledgeShellLogic.formatWordCount(page.wordCount))
+                        .font(.system(size: theme.pointSize(.micro)))
+                        .monospacedDigit()
+                        .foregroundStyle(p.tertiaryText)
+                        .help(KnowledgeShellLogic.formatWordCountTooltip(page.wordCount))
+                }
                 if page.pending > 0 {
                     Circle()
                         .fill(theme.swiftUIColor("pill-human-fg", fallback: .orange))
@@ -543,13 +550,22 @@ struct KnowledgeExplorerView: View {
                 Text("Drop to upload")
                     .font(.system(size: theme.pointSize(.micro), weight: .semibold))
                     .foregroundStyle(p.accent)
-            } else if !isRenaming && (isInbox || isAttachments || folder.name == "Proposed") {
-                Text("\(folder.count)")
-                    .font(.system(size: theme.pointSize(.micro), weight: .semibold))
-                    .foregroundStyle(p.accent)
-                    .padding(.horizontal, 5)
-                    .padding(.vertical, 1)
-                    .background(theme.swiftUIColor("accent-soft", fallback: p.selected), in: Capsule())
+            } else if !isRenaming {
+                if !isAttachments && folder.wordCount > 0 {
+                    Text(KnowledgeShellLogic.formatWordCount(folder.wordCount))
+                        .font(.system(size: theme.pointSize(.micro)))
+                        .monospacedDigit()
+                        .foregroundStyle(p.tertiaryText)
+                        .help(KnowledgeShellLogic.formatWordCountTooltip(folder.wordCount))
+                }
+                if isInbox || isAttachments || folder.name == "Proposed" {
+                    Text("\(folder.count)")
+                        .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                        .foregroundStyle(p.accent)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 1)
+                        .background(theme.swiftUIColor("accent-soft", fallback: p.selected), in: Capsule())
+                }
             }
         }
         .padding(.leading, CGFloat(6 + depth * 12))
@@ -655,6 +671,13 @@ struct KnowledgeExplorerView: View {
             Spacer(minLength: 4)
 
             if !isRenaming {
+                if page.wordCount > 0 {
+                    Text(KnowledgeShellLogic.formatWordCount(page.wordCount))
+                        .font(.system(size: theme.pointSize(.micro)))
+                        .monospacedDigit()
+                        .foregroundStyle(p.tertiaryText)
+                        .help(KnowledgeShellLogic.formatWordCountTooltip(page.wordCount))
+                }
                 if page.pending > 0 {
                     Circle()
                         .fill(theme.swiftUIColor("pill-human-fg", fallback: .orange))

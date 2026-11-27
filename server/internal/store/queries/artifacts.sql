@@ -26,8 +26,8 @@ UPDATE artifacts SET current_version_id = $2, search_text = $3, summary = $4 WHE
 UPDATE artifacts SET title = $2, summary = $3, epic_id = $4 WHERE id = $1 RETURNING *;
 
 -- name: CreateArtifactVersion :one
-INSERT INTO artifact_versions (artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, note, created_by_type, created_by_id, state, based_on_version_id, review_state, properties)
-VALUES ($1, (SELECT coalesce(max(seq), 0) + 1 FROM artifact_versions WHERE artifact_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, sqlc.narg(review_state), coalesce(sqlc.narg(properties)::jsonb, '{}'::jsonb))
+INSERT INTO artifact_versions (artifact_id, seq, label, body_md, blob_key, filename, content_type, size_bytes, word_count, note, created_by_type, created_by_id, state, based_on_version_id, review_state, properties)
+VALUES ($1, (SELECT coalesce(max(seq), 0) + 1 FROM artifact_versions WHERE artifact_id = $1), $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, sqlc.narg(review_state), coalesce(sqlc.narg(properties)::jsonb, '{}'::jsonb))
 RETURNING *;
 
 -- name: GetArtifactVersion :one
