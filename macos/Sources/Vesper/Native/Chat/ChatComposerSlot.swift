@@ -29,6 +29,7 @@ struct ChatComposerSlot: View {
     /// Opens Live Voice, talking with the persona out loud.
     let onStartLiveVoice: @MainActor () -> Void
     var onOpenOutline: (@MainActor () -> Void)? = nil
+    var onStartTemporaryChat: (@MainActor () -> Void)? = nil
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
     var livePlanProgress: ChatPlanProgress? = nil
@@ -60,6 +61,7 @@ struct ChatComposerSlot: View {
             onCompare: onCompare,
             onStartLiveVoice: onStartLiveVoice,
             onOpenOutline: onOpenOutline,
+            onStartTemporaryChat: onStartTemporaryChat,
             prefill: prefill,
             onPrefillApplied: onPrefillApplied,
             livePlanProgress: livePlanProgress,

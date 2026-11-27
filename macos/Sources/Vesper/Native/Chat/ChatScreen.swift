@@ -15,6 +15,7 @@ final class ChatScreenModel {
     var selectedModel: String?
     var selectedEffort: API.ChatEffort?
     var selectedRepoUrl: String?
+    var temporaryMode = false
     var pinnedIds: Set<String> {
         didSet {
             UserDefaults.standard.set(Array(pinnedIds).sorted(), forKey: Self.pinnedDefaultsKey)
@@ -250,6 +251,10 @@ struct ChatScreen: View {
                     model.inspectorTabId = ChatInspectorLogic.outlineTabId
                     model.inspectorOpen = true
                 },
+                onStartTemporaryChat: {
+                    model.temporaryMode = true
+                    context.navigate("/chat?temporary=1")
+                },
                 prefill: model.composerPrefill,
                 onPrefillApplied: { token in
                     if model.composerPrefill?.token == token {
@@ -325,6 +330,9 @@ struct ChatScreen: View {
             }
         }
         .onChange(of: context.match.query) { _, query in
+            if chatId == nil, query["temporary"] == "1" {
+                model.temporaryMode = true
+            }
             applyInspectorQuery(query, canvases: canvases)
         }
         .onChange(of: canvases) { _, updatedCanvases in
@@ -382,6 +390,9 @@ struct ChatScreen: View {
             model.colorScheme = colorScheme
             if context.match.query["view"] == "archived" {
                 model.viewMode = .archived
+            }
+            if chatId == nil, context.match.query["temporary"] == "1" {
+                model.temporaryMode = true
             }
             applyInspectorQuery(context.match.query, canvases: canvases)
             installCommandHandler()
@@ -541,6 +552,21 @@ struct ChatScreen: View {
                     .font(.system(size: theme.pointSize(.body), weight: .semibold))
                     .lineLimit(1)
 
+                if session.temporary == true {
+                    HStack(spacing: 4) {
+                        Image(systemName: "eye.slash")
+                            .imageScale(.small)
+                        Text("Temporary")
+                    }
+                    .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                    .foregroundStyle(p.secondaryText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(p.surface, in: Capsule())
+                    .overlay(Capsule().strokeBorder(p.border, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                    .help("Temporary chat: no memory reads or writes, excluded from search, auto-deleted after 24h idle.")
+                }
+
                 if participants.count > 1 {
                     HStack(spacing: 4) {
                         ForEach(participants, id: \.id) { participant in
@@ -562,6 +588,31 @@ struct ChatScreen: View {
                     }
                     .frame(maxWidth: 170)
                 }
+
+                Button {
+                    model.temporaryMode.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: model.temporaryMode ? "eye.slash.fill" : "eye.slash")
+                            .imageScale(.small)
+                        Text("Temporary")
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: theme.pointSize(.small), weight: model.temporaryMode ? .semibold : .regular))
+                    .foregroundStyle(model.temporaryMode ? p.accent : p.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(model.temporaryMode ? p.selected : p.surface, in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(
+                            model.temporaryMode ? p.accent.opacity(0.7) : p.border,
+                            style: StrokeStyle(lineWidth: 1, dash: model.temporaryMode ? [4, 2] : [])
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Temporary chat (/temp): no memory reads or writes, excluded from search, auto-deleted after 24h idle.")
+                .accessibilityLabel(model.temporaryMode ? "Disable temporary chat" : "Enable temporary chat")
             }
 
             Spacer(minLength: 8)
@@ -670,10 +721,12 @@ struct ChatScreen: View {
                             WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 36, state: .idle, active: true, preferCharacter: true)
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Start a conversation")
+                            Text(model.temporaryMode ? "Start a temporary conversation" : "Start a conversation")
                                 .font(.system(size: theme.pointSize(.heading), weight: .semibold))
                             if let persona = activePersona {
-                                Text("Chatting with \(persona.name)")
+                                Text(model.temporaryMode
+                                     ? "Off the record with \(persona.name) — no memory reads or writes, auto-pruned after 24h."
+                                     : "Chatting with \(persona.name)")
                                     .font(.system(size: theme.pointSize(.body)))
                                     .foregroundStyle(p.secondaryText)
                             }
@@ -1206,6 +1259,7 @@ struct ChatScreen: View {
                 }
                 context.store.invalidate(QueryInvalidation(resources: ["chats"]))
             } else {
+                let isTemporary = model.temporaryMode
                 let created = try await context.store.mutate(
                     API.createChat(body: API.NewChat(
                         effort: model.selectedEffort,
@@ -1214,10 +1268,12 @@ struct ChatScreen: View {
                         model: model.selectedModel,
                         personaId: activePersona?.id,
                         repoUrl: model.selectedRepoUrl,
-                        spaceId: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
+                        spaceId: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId,
+                        temporary: isTemporary ? true : nil
                     )),
                     invalidating: QueryInvalidation(resources: ["chats"])
                 )
+                model.temporaryMode = false
                 context.navigate("/chat/\(created.id)")
             }
             return nil

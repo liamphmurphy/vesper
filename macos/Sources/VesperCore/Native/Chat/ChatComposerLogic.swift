@@ -24,6 +24,7 @@ public struct ChatSlashCommand: Sendable, Equatable, Hashable, Identifiable {
         ChatSlashCommand(name: "persona", args: "persona", hint: "Start a new chat with another persona"),
         ChatSlashCommand(name: "workflow", args: "workflow", hint: "Run one of your published workflows"),
         ChatSlashCommand(name: "new", hint: "Start a new conversation"),
+        ChatSlashCommand(name: "temp", hint: "Start a temporary chat (no memory, auto-pruned after 24h)"),
         ChatSlashCommand(name: "compact", args: "focus", hint: "Compact context onto a fresh window (optional focus)", free: true, optionalArg: true),
         ChatSlashCommand(name: "repo", args: "repository", hint: "Select a repository in this conversation"),
         ChatSlashCommand(name: "memory", hint: "Open your memory"),

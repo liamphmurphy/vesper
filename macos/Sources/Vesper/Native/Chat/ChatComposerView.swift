@@ -41,6 +41,7 @@ struct ChatComposerView: View {
     /// Opens Live Voice, talking with the persona out loud.
     let onStartLiveVoice: @MainActor () -> Void
     var onOpenOutline: (@MainActor () -> Void)? = nil
+    var onStartTemporaryChat: (@MainActor () -> Void)? = nil
     /// Text to draft without sending; `onPrefillApplied` gets its token once it is in the composer.
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
@@ -1096,6 +1097,13 @@ struct ChatComposerView: View {
         case "new":
             clearComposer()
             context.navigate("/chat")
+        case "temp":
+            clearComposer()
+            if let onStartTemporaryChat {
+                onStartTemporaryChat()
+            } else {
+                context.navigate("/chat?temporary=1")
+            }
         case "stop":
             clearComposer()
             cancelTurn()

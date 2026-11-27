@@ -53,6 +53,8 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/aside what changed?"), ChatParsedCommand(name: "aside", arg: "what changed?"))
         XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/compact   focus on auth  "), ChatParsedCommand(name: "compact", arg: "focus on auth"))
         XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/new"), ChatParsedCommand(name: "new", arg: ""))
+        XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/temp"), ChatParsedCommand(name: "temp", arg: ""))
+        XCTAssertTrue(ChatSlashCommandLogic.matchingCommands(query: "tem").contains { $0.name == "temp" })
         XCTAssertNil(ChatSlashCommandLogic.parseCommand("/usr/bin/env"))
         XCTAssertNil(ChatSlashCommandLogic.parseCommand("//literal slash"))
         XCTAssertNil(ChatSlashCommandLogic.parseCommand("/aside line1\nline2"))
