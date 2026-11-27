@@ -32,13 +32,19 @@ extension ThemeTokens {
         return Color(.sRGB, red: c.red, green: c.green, blue: c.blue, opacity: c.alpha)
     }
 
-    /// A type token at the current text size.
+    /// A type token at the current interface text size.
     func font(_ style: TextStyle) -> Font {
         let weight: Font.Weight = style.metrics.weight >= 600 ? .semibold : .regular
         return .system(size: pointSize(style), weight: weight, design: style.isMonospaced ? .monospaced : .default)
     }
 
-    /// A system font scaled by the current text size.
+    /// A type token at the current content text size (independent of interface zoom).
+    func contentFont(_ style: TextStyle) -> Font {
+        let weight: Font.Weight = style.metrics.weight >= 600 ? .semibold : .regular
+        return .system(size: contentPointSize(style), weight: weight, design: style.isMonospaced ? .monospaced : .default)
+    }
+
+    /// A system font scaled by the current interface text size.
     func scaledFont(size: Double, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
         .system(size: size * typeScale, weight: weight, design: design)
     }
@@ -66,5 +72,10 @@ extension View {
     /// Font and line spacing of a type token, as the web's `--text-*` variables set them.
     func vesperText(_ style: ThemeTokens.TextStyle, _ theme: ThemeTokens) -> some View {
         font(theme.font(style)).lineSpacing(theme.lineSpacing(style))
+    }
+
+    /// Font and line spacing of a content type token, scaled independently of interface zoom.
+    func vesperContentText(_ style: ThemeTokens.TextStyle, _ theme: ThemeTokens) -> some View {
+        font(theme.contentFont(style)).lineSpacing(theme.contentLineSpacing(style))
     }
 }

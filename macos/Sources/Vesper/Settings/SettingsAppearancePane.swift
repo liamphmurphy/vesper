@@ -56,9 +56,9 @@ struct SettingsAppearancePane: View {
 
                 Divider()
 
-                LabeledContent("Text size") {
+                LabeledContent("Interface text size") {
                     HStack(spacing: 8) {
-                        Picker("Text size", selection: Binding(
+                        Picker("Interface text size", selection: Binding(
                             get: { current.textSize },
                             set: { size in updatePref { $0.textSize = size } }
                         )) {
@@ -96,7 +96,35 @@ struct SettingsAppearancePane: View {
                         }
                     }
                 }
-                Text("Scales UI and editor text across Vesper (80%–175%). Use ⌘+, ⌘-, and ⌘0 anywhere. Exported documents keep their own print sizes.")
+                Text("Scales menus, sidebars, inspector, and chrome across Vesper (80%–175%). Use ⌘+, ⌘-, and ⌘0 anywhere.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+
+                Divider()
+
+                LabeledContent("Content text size") {
+                    HStack(spacing: 10) {
+                        Slider(
+                            value: Binding(
+                                get: { current.contentTextScale },
+                                set: { scale in updatePref { $0.contentTextScale = AppearancePreference.clampContentTextScale(scale) } }
+                            ),
+                            in: AppearancePreference.contentTextScaleRange,
+                            step: 0.05
+                        )
+                        .frame(width: 240)
+
+                        Text(current.contentTextPercentLabel)
+                            .font(.caption.monospacedDigit())
+                            .frame(minWidth: 38, alignment: .trailing)
+
+                        Button("Reset") {
+                            updatePref { $0.contentTextScale = 1.0 }
+                        }
+                        .disabled(abs(current.contentTextScale - 1.0) < 0.005)
+                    }
+                }
+                Text("Scales page and reading content (Knowledge docs, Docs, Markdown pages, and Chat messages) independently of interface zoom. Exported documents keep their own print sizes.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -146,9 +174,11 @@ struct SettingsAppearancePane: View {
                     Button("Reset palette") {
                         updatePref { p in
                             let keepSize = p.textSize
+                            let keepContentScale = p.contentTextScale
                             let keepMode = p.mode
                             p = .macOSDefault
                             p.textSize = keepSize
+                            p.contentTextScale = keepContentScale
                             p.mode = keepMode
                         }
                         statusMessage = "Palette reset to macOS default."

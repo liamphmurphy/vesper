@@ -174,8 +174,8 @@ private struct Builder {
     init(theme: ThemeTokens, options: MarkdownRenderOptions) {
         self.theme = theme
         self.options = options
-        base = NSFont.systemFont(ofSize: theme.pointSize(options.textStyle), weight: options.textStyle.metrics.weight >= 600 ? .semibold : .regular)
-        mono = NSFont.monospacedSystemFont(ofSize: theme.pointSize(.mono), weight: .regular)
+        base = NSFont.systemFont(ofSize: theme.contentPointSize(options.textStyle), weight: options.textStyle.metrics.weight >= 600 ? .semibold : .regular)
+        mono = NSFont.monospacedSystemFont(ofSize: theme.contentPointSize(.mono), weight: .regular)
     }
 
     var root: Context { Context(color: color(options.textColor, .labelColor)) }
@@ -264,7 +264,7 @@ private struct Builder {
             append(inlines: inlines, context: context, font: base, spaceBefore: spaceBefore)
             return
         }
-        let font = NSFont.systemFont(ofSize: theme.pointSize(look.style), weight: .semibold)
+        let font = NSFont.systemFont(ofSize: theme.contentPointSize(look.style), weight: .semibold)
         append(inlines: inlines, context: context, font: font, spaceBefore: spaceBefore + look.margin, textStyle: look.style)
         if options.anchors {
             anchorParagraphs[anchorer.next(plainText(inlines))] = paragraphs.count - 1
@@ -332,11 +332,11 @@ private struct Builder {
         let long = lines.count > Self.foldedLines
         let expanded = options.expandedCodeBlocks.contains(index)
         let shown = long && !expanded ? Array(lines.prefix(Self.foldedLines)) : lines
-        let small = NSFont.systemFont(ofSize: theme.pointSize(.small))
+        let small = NSFont.systemFont(ofSize: theme.contentPointSize(.small))
         let tertiary = color("text-tertiary", .tertiaryLabelColor)
 
         // Header: `px-3 py-1 text-12 text-fg-tertiary`, `border-b border-border-row`.
-        let header = NSMutableAttributedString(string: MarkdownSource.fenceLabel(info), attributes: [.font: NSFont.monospacedSystemFont(ofSize: theme.pointSize(.small), weight: .regular), .foregroundColor: tertiary])
+        let header = NSMutableAttributedString(string: MarkdownSource.fenceLabel(info), attributes: [.font: NSFont.monospacedSystemFont(ofSize: theme.contentPointSize(.small), weight: .regular), .foregroundColor: tertiary])
         header.append(NSAttributedString(string: "\t" + (options.copiedCodeBlock == index ? "Copied" : "Copy"), attributes: [.font: small, .foregroundColor: tertiary, .link: MarkdownLinkTarget.action("copy", index)]))
         let headerStyle = paragraphStyle(context, spaceBefore: spaceBefore + 4, textStyle: .small)
         headerStyle.firstLineHeadIndent = context.indent + 12
@@ -501,7 +501,7 @@ private struct Builder {
             return s
         case .code(let code):
             // `.prose-code code`: 12px mono on `--selected`, in `--text-2`.
-            attributes[.font] = NSFont.monospacedSystemFont(ofSize: theme.pointSize(.mono), weight: .regular)
+            attributes[.font] = NSFont.monospacedSystemFont(ofSize: theme.contentPointSize(.mono), weight: .regular)
             attributes[.backgroundColor] = self.color("selected", NSColor.controlAccentColor.withAlphaComponent(0.14))
             attributes[.foregroundColor] = self.color("text-2", .labelColor)
             return NSAttributedString(string: code, attributes: attributes)
@@ -554,7 +554,7 @@ private struct Builder {
         if url.hasPrefix(MarkdownSource.citeScheme), let n = Int(url.dropFirst(MarkdownSource.citeScheme.count)) {
             // cite-marker.tsx: an 11px mono semibold number on `accent-soft`, raised a little.
             var attributes: [NSAttributedString.Key: Any] = [
-                .font: NSFont.monospacedSystemFont(ofSize: theme.pointSize(.micro) + 1, weight: .semibold),
+                .font: NSFont.monospacedSystemFont(ofSize: theme.contentPointSize(.micro) + 1, weight: .semibold),
                 .foregroundColor: accent,
                 .backgroundColor: self.color("accent-soft", NSColor.controlAccentColor.withAlphaComponent(0.15)),
                 .baselineOffset: 2,
@@ -622,7 +622,7 @@ private struct Builder {
         style.firstLineHeadIndent = context.indent
         style.headIndent = context.indent
         style.paragraphSpacingBefore = spaceBefore
-        if let textStyle { style.lineSpacing = theme.lineSpacing(textStyle) }
+        if let textStyle { style.lineSpacing = theme.contentLineSpacing(textStyle) }
         return style
     }
 

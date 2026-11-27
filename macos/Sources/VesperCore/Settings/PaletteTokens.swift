@@ -58,21 +58,47 @@ public struct CustomPaletteOverrides: Codable, Sendable, Equatable {
 
 /// Persisted appearance settings: mirrors `la-theme` + `la-appearance` in `web/components/shell/theme.tsx`.
 public struct AppearancePreference: Codable, Sendable, Equatable {
+    public static let contentTextScaleRange: ClosedRange<Double> = 0.80...1.75
+
     public var mode: AppearanceMode
     public var palette: String
     public var textSize: AppearanceTextSize
+    /// Independent scale factor for page/document content (Knowledge, Docs, Markdown, Chat), 0.80–1.75.
+    public var contentTextScale: Double
     public var custom: CustomPaletteOverrides
 
     public init(
         mode: AppearanceMode = .system,
         palette: String = "macos",
         textSize: AppearanceTextSize = .default,
+        contentTextScale: Double = 1.0,
         custom: CustomPaletteOverrides = CustomPaletteOverrides()
     ) {
         self.mode = mode
         self.palette = palette
         self.textSize = textSize
+        self.contentTextScale = Self.clampContentTextScale(contentTextScale)
         self.custom = custom
+    }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        mode = try c.decodeIfPresent(AppearanceMode.self, forKey: .mode) ?? .system
+        palette = try c.decodeIfPresent(String.self, forKey: .palette) ?? "macos"
+        textSize = try c.decodeIfPresent(AppearanceTextSize.self, forKey: .textSize) ?? .default
+        contentTextScale = Self.clampContentTextScale(try c.decodeIfPresent(Double.self, forKey: .contentTextScale) ?? 1.0)
+        custom = try c.decodeIfPresent(CustomPaletteOverrides.self, forKey: .custom) ?? CustomPaletteOverrides()
+    }
+
+    public static func clampContentTextScale(_ value: Double) -> Double {
+        guard value.isFinite else { return 1.0 }
+        let clamped = min(max(value, contentTextScaleRange.lowerBound), contentTextScaleRange.upperBound)
+        return (clamped * 100).rounded() / 100
+    }
+
+    /// Percentage label for `contentTextScale` (e.g. "100%", "125%").
+    public var contentTextPercentLabel: String {
+        "\(Int((Self.clampContentTextScale(contentTextScale) * 100).rounded()))%"
     }
 
     public static let macOSDefault = AppearancePreference()
@@ -153,6 +179,9 @@ public struct AppearancePreference: Codable, Sendable, Equatable {
         if let m = src["mode"] as? String, let parsed = AppearanceMode(rawValue: m) { out.mode = parsed }
         if let p = src["palette"] as? String, p == "custom" || PaletteTokens.palette(id: p) != nil { out.palette = p }
         if let ts = src["textSize"] as? String, let parsed = AppearanceTextSize(rawValue: ts) { out.textSize = parsed }
+        if let cs = (src["contentTextScale"] as? NSNumber)?.doubleValue {
+            out.contentTextScale = clampContentTextScale(cs)
+        }
         if src["custom"] != nil {
             out.custom = normalizeCustom(src["custom"], fallback: base.custom)
         }
@@ -852,7 +881,12 @@ public enum PaletteTokens {
     ) -> ThemeTokens {
         let mode = preference.effectiveColorMode(system: systemColorMode)
         let raw = resolvedRawTokens(for: preference, mode: mode, systemAccent: systemAccent)
-        return ThemeTokens(mode: mode, colors: colorTokens(raw), textSize: preference.textSize.rawValue)
+        return ThemeTokens(
+            mode: mode,
+            colors: colorTokens(raw),
+            textSize: preference.textSize.rawValue,
+            contentTextScale: preference.contentTextScale
+        )
     }
 
     public static func contrastWarnings(for tokens: [String: String]) -> [ContrastWarning] {

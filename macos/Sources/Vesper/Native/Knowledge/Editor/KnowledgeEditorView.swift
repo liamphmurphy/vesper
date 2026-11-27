@@ -641,7 +641,7 @@ struct KnowledgeEditorView: View {
                 }
             }
             Text(page.title.isEmpty ? "Untitled" : page.title)
-                .vesperText(.display, theme)
+                .vesperContentText(.display, theme)
                 .foregroundStyle(p.text)
         }
         .task(id: page.id) {
