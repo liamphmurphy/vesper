@@ -127,15 +127,26 @@ struct WorkflowEditorScreen: View {
             if loadedWorkflowId != updated.id {
                 syncDraftIfNeeded(updated)
             }
+            context.onCommand = { handleCommand($0, workflow: updated) }
             publishChrome(workflow: updated, graph: activeGraph(for: updated))
         }
         .onChange(of: selectedNodeId) { _, _ in
             publishChrome(workflow: workflow, graph: graph)
         }
+        .onChange(of: saving) { _, _ in
+            publishChrome(workflow: workflow, graph: graph)
+        }
+        .onChange(of: publishing) { _, _ in
+            publishChrome(workflow: workflow, graph: graph)
+        }
+        .onChange(of: actionError) { _, _ in
+            publishChrome(workflow: workflow, graph: graph)
+        }
     }
 
     private func canvasActionBar(workflow: API.Workflow, graph: API.WorkflowGraph, preview: Bool) -> some View {
-        HStack(spacing: 6) {
+        let canPublish = WorkflowsLogic.canPublish(workflow: workflow, publishing: publishing, preview: preview)
+        return HStack(spacing: 6) {
             if !preview, let edgeId = selectedEdgeId {
                 Button("Delete edge") {
                     deleteEdge(id: edgeId, workflow: workflow)
@@ -147,6 +158,13 @@ struct WorkflowEditorScreen: View {
                     Task { await autoLayout(workflow: workflow, graph: graph) }
                 }
                 .buttonStyle(.vesper(.outline))
+
+                Button(WorkflowsLogic.publishButtonLabel(publishing: publishing)) {
+                    Task { await publishWorkflow(workflow) }
+                }
+                .buttonStyle(.vesper(.primary))
+                .disabled(!canPublish)
+                .help(WorkflowsLogic.publishHelpText(workflow: workflow, publishing: publishing, preview: preview))
             }
         }
     }
@@ -496,10 +514,10 @@ struct WorkflowEditorScreen: View {
             toolbarItems: [
                 ShellToolbarItem(
                     id: "workflow.publish",
-                    label: publishing ? "Publishing…" : "Publish",
+                    label: WorkflowsLogic.publishButtonLabel(publishing: publishing),
                     icon: "upload",
                     kind: .button,
-                    disabled: !workflow.issues.isEmpty || publishing || preview || !workflow.unpublishedChanges,
+                    disabled: !WorkflowsLogic.canPublish(workflow: workflow, publishing: publishing, preview: preview),
                     accent: true,
                     showsLabel: true
                 ),
