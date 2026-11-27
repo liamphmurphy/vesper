@@ -1,5 +1,63 @@
+import AppKit
 import SwiftUI
 import VesperCore
+
+// MARK: - Visualization PNG Export & Library Save
+
+@MainActor
+enum ChatVizExporter {
+    static func renderPNG<V: View>(of view: V, width: CGFloat = 680) -> Data? {
+        let renderer = ImageRenderer(content: view.frame(width: width))
+        renderer.scale = 2.0
+        guard let nsImage = renderer.nsImage,
+              let tiff = nsImage.tiffRepresentation,
+              let rep = NSBitmapImageRep(data: tiff) else {
+            return nil
+        }
+        return rep.representation(using: .png, properties: [:])
+    }
+
+    static func copyPNG<V: View>(of view: V, context: NativeScreenContext, width: CGFloat = 680) {
+        guard let data = renderPNG(of: view, width: width) else {
+            context.showToast(ToastItemModel(id: "viz.png.err", title: "Couldn’t render PNG", tone: .error))
+            return
+        }
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setData(data, forType: .png)
+        context.showToast(ToastItemModel(id: "viz.png.copy", title: "Copied chart PNG", tone: .success))
+    }
+
+    static func savePNGToLibrary<V: View>(
+        of view: V,
+        title: String,
+        context: NativeScreenContext,
+        width: CGFloat = 680
+    ) async -> Bool {
+        guard let data = renderPNG(of: view, width: width), let client = context.store.client else {
+            context.showToast(ToastItemModel(id: "viz.lib.err", title: "Couldn’t save chart to Library", tone: .error))
+            return false
+        }
+        let slug = title
+            .lowercased()
+            .replacingOccurrences(of: #"[^a-z0-9]+"#, with: "-", options: .regularExpression)
+            .trimmingCharacters(in: CharacterSet(charactersIn: "-"))
+        let filename = "\(slug.isEmpty ? "chart" : slug).png"
+        do {
+            _ = try await client.uploadLibraryItem(fileName: filename, mime: "image/png", data: data)
+            context.store.invalidate(QueryInvalidation(resources: ["library"]))
+            context.showToast(ToastItemModel(id: "viz.lib.ok", title: "Saved chart to Library", tone: .success))
+            return true
+        } catch {
+            context.showToast(ToastItemModel(
+                id: "viz.lib.err",
+                title: (error as? APIError)?.userMessage ?? "Couldn’t save chart to Library",
+                tone: .error
+            ))
+            return false
+        }
+    }
+}
 
 // MARK: - Shared Theme Visualization Palette
 

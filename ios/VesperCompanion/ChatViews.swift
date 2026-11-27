@@ -728,6 +728,8 @@ private struct MessageRowView: View {
             ChatGraphCardView(spec: spec)
         case .plot(let spec):
             ChatPlotCardView(spec: spec)
+        case .map(let spec):
+            ChatMapCardView(spec: spec)
         case .dataTable(let spec):
             ChatDataTableCardView(spec: spec)
         case .codeGroup(let spec):
