@@ -301,7 +301,7 @@ macos/Tests/VesperCoreTests/        XCTest, incl. bridge fixture decoding
 macos/scripts/build-app.sh          assemble + sign Vesper.app
 macos/Resources/                    Info.plist template, icons, tray images
 macos/scripts/gen-icon.mjs, gen-tray-icons.mjs   regenerate Resources/AppIcon.icns and tray/ from web/public/logo.svg
-macos/Makefile                      build, test, safari-test, dmg, clean
+macos/Makefile                      build, test, dmg, clean
 macos/staged/                       staged resources (git-ignored; scripts/stage-mac-resources.sh)
 ```
 
