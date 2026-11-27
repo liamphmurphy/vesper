@@ -616,4 +616,28 @@ public enum WorkflowsLogic {
 
         return sections
     }
+
+    // MARK: - Publish State
+
+    public static func canPublish(workflow: API.Workflow, publishing: Bool, preview: Bool) -> Bool {
+        workflow.issues.isEmpty && !publishing && !preview && workflow.unpublishedChanges
+    }
+
+    public static func publishButtonLabel(publishing: Bool) -> String {
+        publishing ? "Publishing…" : "Publish"
+    }
+
+    public static func publishHelpText(workflow: API.Workflow, publishing: Bool, preview: Bool) -> String {
+        if publishing { return "Publishing workflow…" }
+        if preview { return "Apply or discard the suggested changes before publishing." }
+        if let firstIssue = workflow.issues.first {
+            return "Fix before publishing: \(firstIssue.message)"
+        }
+        if !workflow.unpublishedChanges {
+            return "Published version v\(workflow.publishedVersion) is up to date."
+        }
+        return workflow.publishedVersion == 0
+            ? "Publish this draft so you can run it from chat."
+            : "Publish your draft changes as v\(workflow.publishedVersion + 1)."
+    }
 }

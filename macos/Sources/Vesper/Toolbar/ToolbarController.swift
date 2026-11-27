@@ -331,8 +331,22 @@ final class ToolbarController: NSObject, NSToolbarDelegate {
             item.view = b
         case .button:
             item = NSToolbarItem(itemIdentifier: id)
-            item.target = self
-            item.action = #selector(pageButtonTapped(_:))
+            if titled {
+                let b = NSButton(title: model.label, target: self, action: #selector(pageButtonTapped(_:)))
+                b.bezelStyle = .toolbar
+                if picture != nil || model.icon != nil {
+                    b.image = image
+                    b.imagePosition = .imageLeading
+                }
+                b.identifier = NSUserInterfaceItemIdentifier(model.id)
+                b.setAccessibilityLabel(model.label)
+                b.isEnabled = model.disabled != true
+                if model.accent == true { b.contentTintColor = .controlAccentColor }
+                item.view = b
+            } else {
+                item.target = self
+                item.action = #selector(pageButtonTapped(_:))
+            }
         }
         item.label = model.label
         item.paletteLabel = model.label

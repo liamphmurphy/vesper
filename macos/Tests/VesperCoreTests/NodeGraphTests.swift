@@ -333,4 +333,45 @@ final class NodeGraphTests: XCTestCase {
             .selectNode("check")
         )
     }
+
+    func testWorkflowsLogicPublishState() {
+        let emptyGraph = API.WorkflowGraph(edges: [], nodes: [])
+        func makeWorkflow(publishedVersion: Int, unpublishedChanges: Bool, issues: [API.WorkflowIssue] = []) -> API.Workflow {
+            API.Workflow(
+                description: "",
+                draft: emptyGraph,
+                id: "wf-1",
+                issues: issues,
+                name: "Draft flow",
+                proposals: [],
+                publishedVersion: publishedVersion,
+                unpublishedChanges: unpublishedChanges,
+                updatedAt: ""
+            )
+        }
+
+        let validDraft = makeWorkflow(publishedVersion: 0, unpublishedChanges: true)
+        XCTAssertTrue(WorkflowsLogic.canPublish(workflow: validDraft, publishing: false, preview: false))
+        XCTAssertFalse(WorkflowsLogic.canPublish(workflow: validDraft, publishing: true, preview: false))
+        XCTAssertFalse(WorkflowsLogic.canPublish(workflow: validDraft, publishing: false, preview: true))
+        XCTAssertEqual(WorkflowsLogic.publishButtonLabel(publishing: false), "Publish")
+        XCTAssertEqual(WorkflowsLogic.publishButtonLabel(publishing: true), "Publishing…")
+        XCTAssertTrue(WorkflowsLogic.publishHelpText(workflow: validDraft, publishing: false, preview: false).contains("Publish this draft"))
+
+        let draftWithIssue = makeWorkflow(
+            publishedVersion: 0,
+            unpublishedChanges: true,
+            issues: [API.WorkflowIssue(message: "Add at least one step", node: nil)]
+        )
+        XCTAssertFalse(WorkflowsLogic.canPublish(workflow: draftWithIssue, publishing: false, preview: false))
+        XCTAssertTrue(WorkflowsLogic.publishHelpText(workflow: draftWithIssue, publishing: false, preview: false).contains("Add at least one step"))
+
+        let cleanPublished = makeWorkflow(publishedVersion: 2, unpublishedChanges: false)
+        XCTAssertFalse(WorkflowsLogic.canPublish(workflow: cleanPublished, publishing: false, preview: false))
+        XCTAssertTrue(WorkflowsLogic.publishHelpText(workflow: cleanPublished, publishing: false, preview: false).contains("v2"))
+
+        let editedPublished = makeWorkflow(publishedVersion: 2, unpublishedChanges: true)
+        XCTAssertTrue(WorkflowsLogic.canPublish(workflow: editedPublished, publishing: false, preview: false))
+        XCTAssertTrue(WorkflowsLogic.publishHelpText(workflow: editedPublished, publishing: false, preview: false).contains("v3"))
+    }
 }
