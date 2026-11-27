@@ -256,8 +256,8 @@ final class WebContentController: NSViewController, WKNavigationDelegate, WKUIDe
             context.openCustomAppWindow = { [weak self] slug in self?.app.aux.openCustomAppWindow(slug: slug) }
             context.closeCustomAppWindow = { [weak self] slug in self?.app.aux.closeCustomAppWindow(slug: slug) }
             state.native = context.chrome
-            state.nativeSidebar = context.sidebarView
-            state.nativeInspectorView = context.inspectorView
+            state.nativeSidebar = context.hostedSidebarView
+            state.nativeInspectorView = context.hostedInspectorView
             let host = NativeScreenHostController(context: context, state: state)
             nativeHost = host
             addChild(host)

@@ -45,9 +45,13 @@ final class SendPickerController: NSObject, NSWindowDelegate {
 
     func windowWillClose(_ notification: Notification) {
         model?.runCleanup()
-        panel?.contentViewController = nil
-        panel = nil
+        guard let panel else { return }
+        self.panel = nil
         model = nil
+        // AppKit is still inside `close()` on the panel here, and Cancel reaches it from the panel's
+        // own SwiftUI action; freeing the panel or its hosting controller now is a use-after-free.
+        // Let them go on the next main-queue turn.
+        DispatchQueue.main.async { panel.contentViewController = nil }
     }
 }
 

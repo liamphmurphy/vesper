@@ -35,10 +35,14 @@ final class QuickCaptureController {
     }
 
     func close() {
-        panel?.orderOut(nil)
-        panel?.contentViewController = nil
-        panel = nil
+        guard let panel else { return }
+        panel.orderOut(nil)
+        self.panel = nil
         model = nil
+        // Cancel, Done and Esc call this from inside the panel's own SwiftUI action or key event;
+        // freeing its hosting controller or the panel there is a use-after-free. Let them go on the
+        // next main-queue turn.
+        DispatchQueue.main.async { panel.contentViewController = nil }
     }
 }
 

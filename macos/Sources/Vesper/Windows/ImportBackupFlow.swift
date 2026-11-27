@@ -73,10 +73,13 @@ final class ImportBackupFlow {
         guard let window else { return }
         if let parent, parent.sheets.contains(window) { parent.endSheet(window) }
         window.orderOut(nil)
-        window.contentViewController = nil
         self.window = nil
         parent = nil
         model = nil
+        // Close, Done and Cancel call this from inside the sheet's own SwiftUI action; freeing its
+        // hosting controller or the sheet there is a use-after-free. Let them go on the next
+        // main-queue turn.
+        DispatchQueue.main.async { window.contentViewController = nil }
     }
 
     static func alert(_ title: String, _ detail: String) {

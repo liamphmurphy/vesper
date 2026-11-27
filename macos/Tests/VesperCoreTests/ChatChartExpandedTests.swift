@@ -62,6 +62,40 @@ final class ChatChartExpandedTests: XCTestCase {
         XCTAssertEqual(spark.sparklineDelta, "-75%")
     }
 
+    // Each of these trapped converting a Double that was NaN, infinite or past Int's range to Int.
+
+    func testHistogramClampsAnAbsurdBinCount() throws {
+        let hist = try ChatChartSpec.parse("""
+        {"type":"histogram","values":[1,2,3,4],"bins":1e19}
+        """).get()
+        XCTAssertEqual(hist.histogramBins.count, 30)
+        let negative = try ChatChartSpec.parse("""
+        {"type":"histogram","values":[1,2,3,4],"bins":-1e19}
+        """).get()
+        XCTAssertEqual(negative.histogramBins.count, 2)
+    }
+
+    func testHistogramBinsSurviveARangeThatOverflows() throws {
+        let hist = try ChatChartSpec.parse("""
+        {"type":"histogram","values":[-1.7e308,0,1.7e308],"bins":4}
+        """).get()
+        XCTAssertEqual(hist.histogramBins.count, 4)
+        XCTAssertEqual(hist.histogramBins.map(\.count).reduce(0, +), 3, "every value lands in a bin")
+    }
+
+    func testHistogramBinsSurviveARangeThatUnderflows() {
+        let bins = ChatChartSpec.computeHistogramBins(values: [0, 5e-324], binCount: 2, minVal: 0, maxVal: 5e-324)
+        XCTAssertEqual(bins.map(\.count), [1, 1])
+    }
+
+    func testNiceTicksFallBackToEndpointsWhenTheStepDegenerates() {
+        // max + pad overflows to infinity, so the step is infinite and hi / step is NaN.
+        XCTAssertEqual(ChatChartSpec.niceTicks(min: 1.7e308, max: 1.7e308).count, 2)
+        // The span underflows to a zero step, so lo / step is NaN.
+        XCTAssertEqual(ChatChartSpec.niceTicks(min: 0, max: 5e-324), [0, 5e-324])
+        XCTAssertEqual(ChatChartSpec.niceTicks(min: 0, max: 10), [0, 2.5, 5, 7.5, 10], "ordinary ranges still work")
+    }
+
     func testInvalidSpecsReturnDescriptiveErrors() {
         XCTAssertThrowsError(try ChatChartSpec.parse("""
         {"type":"radar","categories":["A","B"],"series":[{"name":"S","values":[1,2]}]}
