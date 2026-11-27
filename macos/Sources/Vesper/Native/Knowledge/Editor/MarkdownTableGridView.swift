@@ -159,7 +159,7 @@ struct MarkdownTableGridView: View {
                         text: cellBinding(row: 0, column: col)
                     )
                     .textFieldStyle(.plain)
-                    .font(.system(size: theme.pointSize(.small), weight: .semibold))
+                    .font(.system(size: theme.contentPointSize(.small), weight: .semibold))
                     .foregroundStyle(p.text)
                     .multilineTextAlignment(textAlignment(for: col))
                     .focused($focusedCell, equals: coord)
@@ -217,7 +217,7 @@ struct MarkdownTableGridView: View {
                     text: cellBinding(row: rowNum, column: col)
                 )
                 .textFieldStyle(.plain)
-                .font(.system(size: theme.pointSize(.small)))
+                .font(.system(size: theme.contentPointSize(.small)))
                 .foregroundStyle(p.text)
                 .multilineTextAlignment(textAlignment(for: col))
                 .focused($focusedCell, equals: coord)
@@ -276,7 +276,7 @@ struct MarkdownTableGridView: View {
         let p = theme.palette
         return VStack(alignment: .leading, spacing: 8) {
             TextEditor(text: $rawDraft)
-                .font(.system(size: max(11, theme.pointSize(.small)), design: .monospaced))
+                .font(.system(size: max(11, theme.contentPointSize(.small)), design: .monospaced))
                 .foregroundStyle(p.text)
                 .scrollContentBackground(.hidden)
                 .frame(minHeight: 110, maxHeight: 260)

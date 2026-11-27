@@ -391,7 +391,7 @@ struct MathBlockView: View {
     static func request(tex: String, display: Bool, theme: ThemeTokens, textStyle: ThemeTokens.TextStyle, textColor: String) -> MathRenderRequest {
         let fallback = theme.mode == .dark ? VizPalette.dark.ink : VizPalette.light.ink
         let color = theme.colors[textColor].flatMap { RGBA(hex: $0) != nil ? $0 : nil } ?? fallback
-        return MathRenderRequest(tex: tex, display: display, color: color, fontSize: theme.pointSize(textStyle))
+        return MathRenderRequest(tex: tex, display: display, color: color, fontSize: theme.contentPointSize(textStyle))
     }
 }
 

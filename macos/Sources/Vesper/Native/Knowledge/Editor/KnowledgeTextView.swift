@@ -200,7 +200,7 @@ struct KnowledgeTextView: NSViewRepresentable {
         private struct StyleSnapshot {
             var text: String
             var mode: ColorMode
-            var typeScale: Double
+            var contentScale: Double
             var tokens: [KnowledgeSyntaxToken]
             var revealedTokenIndices: Set<Int>
             var embedStates: [EmbedVisualState]
@@ -213,7 +213,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             var selection: NSRange
             var isFocused: Bool
             var mode: ColorMode
-            var typeScale: Double
+            var contentScale: Double
             var findMatches: [NSRange]
             var activeFind: NSRange?
             var embeds: [KnowledgeEmbed]
@@ -375,7 +375,7 @@ struct KnowledgeTextView: NSViewRepresentable {
                 selection: selection,
                 isFocused: focused,
                 mode: parent.theme.mode,
-                typeScale: parent.theme.typeScale,
+                contentScale: parent.theme.contentScale,
                 findMatches: parent.findMatches,
                 activeFind: parent.activeFindMatchRange,
                 embeds: parent.embeds,
@@ -388,7 +388,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             lastRenderedKey = key
 
             let palette = parent.theme.palette
-            let baseSize = parent.theme.pointSize(.body)
+            let baseSize = parent.theme.contentPointSize(.body)
             let baseFont = NSFont.systemFont(ofSize: baseSize, weight: .regular)
             let monoFont = NSFont.monospacedSystemFont(ofSize: max(11, baseSize - 1), weight: .regular)
             let textColor = NSColor(palette.text)
@@ -402,7 +402,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             let findActiveBg = NSColor(palette.accent.opacity(0.35))
 
             let paragraphStyle = NSMutableParagraphStyle()
-            paragraphStyle.lineSpacing = parent.theme.lineSpacing(.body)
+            paragraphStyle.lineSpacing = parent.theme.contentLineSpacing(.body)
 
             let baseAttrs: [NSAttributedString.Key: Any] = [
                 .font: baseFont,
@@ -509,7 +509,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             let nextSnapshot = StyleSnapshot(
                 text: markdown,
                 mode: parent.theme.mode,
-                typeScale: parent.theme.typeScale,
+                contentScale: parent.theme.contentScale,
                 tokens: tokens,
                 revealedTokenIndices: preview.revealedTokenIndices,
                 embedStates: embedStates,
@@ -772,7 +772,7 @@ struct KnowledgeTextView: NSViewRepresentable {
             fullLength: Int
         ) -> DirtyPlan {
             let fullRange = NSRange(location: 0, length: fullLength)
-            guard let previous, previous.mode == current.mode, previous.typeScale == current.typeScale else {
+            guard let previous, previous.mode == current.mode, previous.contentScale == current.contentScale else {
                 return DirtyPlan(ranges: [fullRange], isFullDocument: true, mayChangeLayoutHeight: true)
             }
 
