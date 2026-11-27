@@ -80,6 +80,7 @@ struct ChatScreen: View {
     @State private var companionOpen = false
     /// Live Voice: the persona takes over the chat while the person talks with it out loud.
     @State private var liveVoiceOpen = false
+    @State private var messageReader = ChatMessageReader()
     @State private var lastDockFetch = Date()
 
     private static let personasRequest = API.listPersonas()
@@ -183,6 +184,13 @@ struct ChatScreen: View {
                 pinnedCount: messages.filter { $0.bookmarked == true }.count
             )
             Divider()
+
+            if messageReader.isActive {
+                ChatReadAloudMiniBarView(reader: messageReader) { msgId in
+                    model.scrollToken += 1
+                    model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: msgId)
+                }
+            }
 
             Group {
                 if let chatId {
@@ -301,6 +309,7 @@ struct ChatScreen: View {
         }
         .onChange(of: chatId) { oldId, _ in
             companionOpen = false
+            messageReader.stop()
             // Live Voice in a new chat carries on into the chat its first message created.
             if oldId != nil { liveVoiceOpen = false }
         }
@@ -402,6 +411,7 @@ struct ChatScreen: View {
         .onChange(of: theme) { _, next in model.theme = next }
         .onChange(of: colorScheme) { _, next in model.colorScheme = next }
         .onDisappear {
+            messageReader.stop()
             context.inspectorView = nil
             for key in watched { context.store.stopObserving(key) }
             watched = []
@@ -523,6 +533,17 @@ struct ChatScreen: View {
                     body: userBody,
                     harness: harness,
                     modelId: modelId
+                )
+            },
+            readingMessageId: messageReader.activeMessageId,
+            onToggleReadAloud: { msg, personaId, speakerName, bodyMd in
+                companion.stopVoice()
+                messageReader.toggle(
+                    chatId: chatId,
+                    messageId: msg.id,
+                    personaId: personaId,
+                    speakerName: speakerName,
+                    bodyMd: bodyMd
                 )
             }
         )

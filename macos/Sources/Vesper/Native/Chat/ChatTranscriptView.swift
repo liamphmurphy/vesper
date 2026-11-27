@@ -28,6 +28,8 @@ struct ChatTranscriptView: View {
     var onSelectReplyVariant: (@MainActor (String, Int) -> Void)? = nil
     var onEditLastUserMessage: (@MainActor (String) async -> String?)? = nil
     var onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)? = nil
+    var readingMessageId: String? = nil
+    var onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)? = nil
 
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
@@ -236,6 +238,8 @@ struct ChatTranscriptView: View {
                                     onSelectReplyVariant: onSelectReplyVariant,
                                     onEditLastUserMessage: onEditLastUserMessage,
                                     onRegenerateMessage: onRegenerateMessage,
+                                    isReadingAloud: readingMessageId == message.id,
+                                    onToggleReadAloud: onToggleReadAloud,
                                     onScrollToSelf: {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             proxy.scrollTo(message.id, anchor: .top)
@@ -511,6 +515,8 @@ private struct ChatMessageRowView: View {
     let onSelectReplyVariant: (@MainActor (String, Int) -> Void)?
     let onEditLastUserMessage: (@MainActor (String) async -> String?)?
     let onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)?
+    let isReadingAloud: Bool
+    let onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)?
     let onScrollToSelf: @MainActor () -> Void
 
     @State private var togglingBookmark = false
@@ -903,6 +909,18 @@ private struct ChatMessageRowView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Start thread on this message")
+            }
+
+            if let onToggleReadAloud {
+                Button {
+                    onToggleReadAloud(message, personaId, speakerName, displayedBodyMd)
+                } label: {
+                    Image(systemName: isReadingAloud ? "stop.circle.fill" : "speaker.wave.2")
+                        .imageScale(.small)
+                        .foregroundStyle(isReadingAloud ? p.accent : p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help(isReadingAloud ? "Stop reading aloud" : "Read message aloud")
             }
 
             Button {
