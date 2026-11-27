@@ -17,14 +17,33 @@ final class NativeScreenContext {
     /// The screen's handler for its toolbar, title-menu and inspector commands.
     @ObservationIgnored var onCommand: ((NativeCommand) -> Void)?
     @ObservationIgnored var onChromeChange: ((NativeChrome) -> Void)?
+    /// Receives `hostedSidebarView` whenever the screen changes its sidebar.
     @ObservationIgnored var onSidebarViewChange: ((AnyView?) -> Void)?
     @ObservationIgnored var sidebarView: AnyView? {
-        didSet { onSidebarViewChange?(sidebarView) }
+        didSet { onSidebarViewChange?(hostedSidebarView) }
     }
+    /// Receives `hostedInspectorView` whenever the screen changes its inspector bodies.
     @ObservationIgnored var onInspectorViewChange: ((((String) -> AnyView?)?) -> Void)?
     /// Optional custom SwiftUI body per `.native` inspector tab id; returning nil falls back to declarative sections.
     @ObservationIgnored var inspectorView: ((String) -> AnyView?)? {
-        didSet { onInspectorViewChange?(inspectorView) }
+        didSet { onInspectorViewChange?(hostedInspectorView) }
+    }
+
+    /// `sidebarView` as the window's sidebar shows it. The window draws it outside this screen's view
+    /// tree, so it doesn't inherit the screen host's `.environment(context)`, and a view in it that
+    /// reads `NativeScreenContext` would trap.
+    var hostedSidebarView: AnyView? {
+        sidebarView.map { AnyView($0.environment(self)) }
+    }
+
+    /// `inspectorView` as the window's inspector shows it, with this context in each body's
+    /// environment for the same reason as `hostedSidebarView`. The Doc, Slides and Design editors'
+    /// docked chat reads it as soon as it renders.
+    var hostedInspectorView: ((String) -> AnyView?)? {
+        guard let inspectorView else { return nil }
+        return { [self] tabId in
+            inspectorView(tabId).map { AnyView($0.environment(self)) }
+        }
     }
     /// The window around the tab, for toasts, shortcuts, Quick Look and its undo manager.
     @ObservationIgnored var window: () -> MainWindowController? = { nil }
