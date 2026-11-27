@@ -39,6 +39,7 @@ final class ChatScreenModel {
     var forceShowCode = false
     var startingPlayground = false
     var scrollToMessageRequest: ChatScrollMessageRequest?
+    var replyVariants = ChatReplyVariantStore()
     @ObservationIgnored var scrollToken = 0
     var theme: ThemeTokens = ThemeTokens(mode: .light)
     var colorScheme: ColorScheme = .light
@@ -497,6 +498,32 @@ struct ChatScreen: View {
                         invalidating: QueryInvalidation(resources: ["chats"])
                     )
                 }
+            },
+            replyVariants: model.replyVariants,
+            onSelectReplyVariant: { userMessageId, index in
+                model.replyVariants.select(chatId: chatId, userMessageId: userMessageId, index: index)
+            },
+            onEditLastUserMessage: { newBody in
+                await editLastMessage(chatId: chatId, body: newBody)
+            },
+            onRegenerateMessage: { replyMsg, userMsgId, userBody, harness, modelId in
+                model.replyVariants.archiveBeforeRegenerate(
+                    chatId: chatId,
+                    userMessageId: userMsgId,
+                    reply: ChatReplyVariant(
+                        id: replyMsg.id,
+                        bodyMd: replyMsg.bodyMd,
+                        model: replyMsg.model,
+                        harness: replyMsg.harness?.rawValue,
+                        createdAt: replyMsg.createdAt
+                    )
+                )
+                return await editLastMessage(
+                    chatId: chatId,
+                    body: userBody,
+                    harness: harness,
+                    modelId: modelId
+                )
             }
         )
     }
@@ -1361,6 +1388,39 @@ struct ChatScreen: View {
             API.cancelChatTurn(id: chatId),
             invalidating: QueryInvalidation(resources: ["chats"])
         )
+    }
+
+    private func editLastMessage(
+        chatId: String,
+        body: String,
+        harness: API.Harness? = nil,
+        modelId: String? = nil,
+        effort: API.ChatEffort? = nil
+    ) async -> String? {
+        companion.finishReveal()
+        do {
+            let resp = try await context.store.mutate(
+                API.editLastChatMessage(
+                    id: chatId,
+                    body: API.ChatMessageEdit(
+                        body: body,
+                        effort: effort,
+                        harness: harness,
+                        model: modelId
+                    )
+                )
+            )
+            context.store.setData(resp.chat, for: API.getChat(id: chatId))
+            let listReq = API.listChatMessages(id: chatId, limit: 200)
+            if var existing = context.store.entry(listReq).data {
+                existing.messages = existing.messages.filter { $0.seq < resp.message.seq } + [resp.message]
+                context.store.setData(existing, for: listReq)
+            }
+            context.store.invalidate(QueryInvalidation(resources: ["chats"]))
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
     }
 
     private func archiveChat(id: String, archived: Bool) {

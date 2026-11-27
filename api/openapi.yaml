@@ -10189,6 +10189,9 @@ components:
       required: [body]
       properties:
         body: { type: string }
+        harness: { $ref: "#/components/schemas/Harness" }
+        model: { type: string, description: "Optional model override when redoing or regenerating the last turn" }
+        effort: { $ref: "#/components/schemas/ChatEffort" }
     ChatAsideStart:
       type: object
       required: [body]

@@ -4728,25 +4728,45 @@ extension API {
 
     public struct ChatMessageEdit: Codable, Sendable, Equatable {
         public var body: Swift.String
+        /// Reasoning effort; absent means the harness's own default
+        public var effort: ChatEffort?
+        public var harness: Harness?
+        /// Optional model override when redoing or regenerating the last turn
+        public var model: Swift.String?
 
         public init(
-            body: Swift.String
+            body: Swift.String,
+            effort: ChatEffort? = nil,
+            harness: Harness? = nil,
+            model: Swift.String? = nil
         ) {
             self.body = body
+            self.effort = effort
+            self.harness = harness
+            self.model = model
         }
 
         enum CodingKeys: Swift.String, CodingKey {
             case body
+            case effort
+            case harness
+            case model
         }
 
         public init(from decoder: any Decoder) throws {
             let c = try decoder.container(keyedBy: CodingKeys.self)
             self.body = try c.decode(Swift.String.self, forKey: .body)
+            self.effort = try c.decodeIfPresent(ChatEffort.self, forKey: .effort)
+            self.harness = try c.decodeIfPresent(Harness.self, forKey: .harness)
+            self.model = try c.decodeIfPresent(Swift.String.self, forKey: .model)
         }
 
         public func encode(to encoder: any Encoder) throws {
             var c = encoder.container(keyedBy: CodingKeys.self)
             try c.encode(body, forKey: .body)
+            try c.encodeIfPresent(effort, forKey: .effort)
+            try c.encodeIfPresent(harness, forKey: .harness)
+            try c.encodeIfPresent(model, forKey: .model)
         }
     }
 
