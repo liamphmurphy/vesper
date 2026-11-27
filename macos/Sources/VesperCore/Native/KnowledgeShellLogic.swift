@@ -36,6 +36,7 @@ public struct KnowledgeTreeFolder: Sendable, Equatable, Hashable, Identifiable {
     public var pages: [KnowledgePageRow]
     public var attachments: [KnowledgeAttachment]
     public var count: Int
+    public var wordCount: Int
 
     public init(
         name: String,
@@ -43,7 +44,8 @@ public struct KnowledgeTreeFolder: Sendable, Equatable, Hashable, Identifiable {
         folders: [KnowledgeTreeFolder] = [],
         pages: [KnowledgePageRow] = [],
         attachments: [KnowledgeAttachment] = [],
-        count: Int = 0
+        count: Int = 0,
+        wordCount: Int = 0
     ) {
         self.name = name
         self.path = path
@@ -51,6 +53,7 @@ public struct KnowledgeTreeFolder: Sendable, Equatable, Hashable, Identifiable {
         self.pages = pages
         self.attachments = attachments
         self.count = count
+        self.wordCount = wordCount
     }
 }
 
@@ -547,6 +550,7 @@ public enum KnowledgeShellLogic: Sendable {
         var pages: [KnowledgePageRow] = []
         var attachments: [KnowledgeAttachment] = []
         var count = 0
+        var wordCount = 0
 
         init(name: String, path: String) {
             self.name = name
@@ -590,9 +594,45 @@ public enum KnowledgeShellLogic: Sendable {
                 folders: sortedSubfolders,
                 pages: sortedPages,
                 attachments: sortedAttachments,
-                count: count
+                count: count,
+                wordCount: wordCount
             )
         }
+    }
+
+    /// Formats a word count compactly for the Knowledge explorer sidebar (e.g. `42`, `1.2k`, `125k`, `1.2M`).
+    /// Returns an empty string for `<= 0` so empty pages, decks, designs, and attachments stay uncluttered.
+    public static func formatWordCount(_ count: Int) -> String {
+        guard count > 0 else { return "" }
+        if count < 1_000 {
+            return "\(count)"
+        }
+        if count < 1_000_000 {
+            let k = Double(count) / 1_000.0
+            let roundedTenths = (k * 10).rounded() / 10
+            if roundedTenths >= 1_000 {
+                return "1M"
+            }
+            if roundedTenths >= 100 {
+                return "\(Int(k.rounded()))k"
+            }
+            if roundedTenths == roundedTenths.rounded() {
+                return "\(Int(roundedTenths))k"
+            }
+            return String(format: "%.1fk", roundedTenths)
+        }
+        let m = Double(count) / 1_000_000.0
+        let roundedTenths = (m * 10).rounded() / 10
+        if roundedTenths == roundedTenths.rounded() {
+            return "\(Int(roundedTenths))M"
+        }
+        return String(format: "%.1fM", roundedTenths)
+    }
+
+    /// Exact human-readable tooltip for a word count (e.g. `1 word`, `1,234 words`).
+    public static func formatWordCountTooltip(_ count: Int) -> String {
+        let formatted = count.formatted(.number.grouping(.automatic))
+        return count == 1 ? "\(formatted) word" : "\(formatted) words"
     }
 
     /// Builds an Obsidian-style tree from flat page rows (folders first, Inbox prioritized at root, daily notes newest-first),
@@ -608,6 +648,7 @@ public enum KnowledgeShellLogic: Sendable {
             let segs = row.path.split(separator: "/").map(String.init).filter { !$0.isEmpty }
             var current = root
             current.count += 1
+            current.wordCount += row.wordCount
             if segs.count > 1 {
                 for seg in segs.dropLast() {
                     let nextPath = current.path.isEmpty ? seg : "\(current.path)/\(seg)"
@@ -619,6 +660,7 @@ public enum KnowledgeShellLogic: Sendable {
                         current.folders[seg] = child
                     }
                     child.count += 1
+                    child.wordCount += row.wordCount
                     current = child
                 }
             }

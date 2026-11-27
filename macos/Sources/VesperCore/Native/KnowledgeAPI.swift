@@ -43,6 +43,7 @@ public struct KnowledgePageRow: Codable, Sendable, Equatable, Hashable, Identifi
     public var versionId: String?
     public var pending: Int
     public var unresolved: Int
+    public var wordCount: Int
     public var kind: KnowledgePageKind
     public var canvasId: String?
 
@@ -51,6 +52,7 @@ public struct KnowledgePageRow: Codable, Sendable, Equatable, Hashable, Identifi
         case updatedAt = "updated_at"
         case versionId = "version_id"
         case pending, unresolved, kind
+        case wordCount = "word_count"
         case canvasId = "canvas_id"
     }
 
@@ -65,6 +67,7 @@ public struct KnowledgePageRow: Codable, Sendable, Equatable, Hashable, Identifi
         versionId: String? = nil,
         pending: Int = 0,
         unresolved: Int = 0,
+        wordCount: Int = 0,
         kind: KnowledgePageKind = .document,
         canvasId: String? = nil
     ) {
@@ -78,6 +81,7 @@ public struct KnowledgePageRow: Codable, Sendable, Equatable, Hashable, Identifi
         self.versionId = versionId
         self.pending = pending
         self.unresolved = unresolved
+        self.wordCount = wordCount
         self.kind = kind
         self.canvasId = canvasId
     }
@@ -94,6 +98,7 @@ public struct KnowledgePageRow: Codable, Sendable, Equatable, Hashable, Identifi
         versionId = try c.decodeIfPresent(String.self, forKey: .versionId)
         pending = try c.decodeIfPresent(Int.self, forKey: .pending) ?? 0
         unresolved = try c.decodeIfPresent(Int.self, forKey: .unresolved) ?? 0
+        wordCount = try c.decodeIfPresent(Int.self, forKey: .wordCount) ?? 0
         kind = try c.decodeIfPresent(KnowledgePageKind.self, forKey: .kind) ?? .document
         canvasId = try c.decodeIfPresent(String.self, forKey: .canvasId)
     }
@@ -427,6 +432,7 @@ public struct KnowledgePage: Codable, Sendable, Equatable, Identifiable {
     public var kind: KnowledgePageKind
     public var canvasId: String?
     public var bodyMd: String?
+    public var wordCount: Int
     public var versionId: String
     public var seq: Int
     public var properties: [String: JSONValue]
@@ -442,6 +448,7 @@ public struct KnowledgePage: Codable, Sendable, Equatable, Identifiable {
         case id, title, path, audience, kind
         case canvasId = "canvas_id"
         case bodyMd = "body_md"
+        case wordCount = "word_count"
         case versionId = "version_id"
         case seq, properties, direct, paused
         case chatId = "chat_id"
@@ -456,6 +463,7 @@ public struct KnowledgePage: Codable, Sendable, Equatable, Identifiable {
         kind: KnowledgePageKind = .document,
         canvasId: String? = nil,
         bodyMd: String? = nil,
+        wordCount: Int = 0,
         versionId: String = "",
         seq: Int = 1,
         properties: [String: JSONValue] = [:],
@@ -474,6 +482,7 @@ public struct KnowledgePage: Codable, Sendable, Equatable, Identifiable {
         self.kind = kind
         self.canvasId = canvasId
         self.bodyMd = bodyMd
+        self.wordCount = wordCount
         self.versionId = versionId
         self.seq = seq
         self.properties = properties
@@ -495,6 +504,7 @@ public struct KnowledgePage: Codable, Sendable, Equatable, Identifiable {
         kind = try c.decodeIfPresent(KnowledgePageKind.self, forKey: .kind) ?? .document
         canvasId = try c.decodeIfPresent(String.self, forKey: .canvasId)
         bodyMd = try c.decodeIfPresent(String.self, forKey: .bodyMd)
+        wordCount = try c.decodeIfPresent(Int.self, forKey: .wordCount) ?? 0
         versionId = try c.decodeIfPresent(String.self, forKey: .versionId) ?? ""
         seq = try c.decodeIfPresent(Int.self, forKey: .seq) ?? 0
         properties = try c.decodeIfPresent([String: JSONValue].self, forKey: .properties) ?? [:]
