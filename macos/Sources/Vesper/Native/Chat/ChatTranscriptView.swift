@@ -465,7 +465,6 @@ private struct ChatMessageRowView: View {
     let onScrollToSelf: @MainActor () -> Void
 
     @State private var togglingBookmark = false
-    @State private var activeCitationNumber: Int?
     @State private var isReplyCollapsed = false
 
     private var isFoldableReply: Bool {
@@ -477,10 +476,18 @@ private struct ChatMessageRowView: View {
         return API.listLinkPreviews(messageId: message.id)
     }
 
-    private func handleMarkdownLink(_ target: MarkdownLinkTarget) -> Bool {
-        if case .citation(let n) = target, parsed.sources.contains(where: { $0.number == n }) {
+    private func handleMarkdownLink(_ target: MarkdownLinkTarget, anchor: MarkdownLinkAnchor?) -> Bool {
+        if case .citation(let n) = target,
+           let source = parsed.sources.first(where: { $0.number == n }) {
             if let req = previewRequest { context.store.load(req) }
-            activeCitationNumber = n
+            ChatCitationBubblePresenter.shared.toggle(
+                messageId: message.id,
+                source: source,
+                previewRequest: previewRequest,
+                anchor: anchor,
+                context: context,
+                theme: theme
+            )
             return true
         }
         return false
@@ -637,22 +644,6 @@ private struct ChatMessageRowView: View {
                     Spacer(minLength: 8)
                     assistantActionBar
                 }
-                .popover(
-                    isPresented: Binding(
-                        get: { activeCitationNumber != nil },
-                        set: { if !$0 { activeCitationNumber = nil } }
-                    ),
-                    arrowEdge: .top
-                ) {
-                    if let n = activeCitationNumber,
-                       let source = parsed.sources.first(where: { $0.number == n }) {
-                        let previews = previewRequest.flatMap { context.store.entry($0).data?.previews } ?? []
-                        let preview = previews.first(where: { $0.url == source.url })
-                        ChatCitationPopoverCardView(source: source, preview: preview) {
-                            activeCitationNumber = nil
-                        }
-                    }
-                }
 
                 VStack(alignment: .leading, spacing: 10) {
                     if let turnWindow, let runId = message.runId, !runId.isEmpty {
@@ -669,7 +660,7 @@ private struct ChatMessageRowView: View {
                     // shows the rest. Once revealed it renders its cards and fences as usual.
                     let companion = ChatCompanions.companion(for: chatId)
                     if companion.revealingId == message.id {
-                        MarkdownView(markdown: companion.shown, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow)
+                        MarkdownView(markdown: companion.shown, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow, onLinkWithAnchor: handleMarkdownLink)
                             .contentShape(Rectangle())
                             .onTapGesture { companion.finishReveal() }
                     } else if isReplyCollapsed && isFoldableReply {
@@ -863,7 +854,7 @@ private struct ChatMessageRowView: View {
     private func segmentView(_ segment: ChatMessageSegment, citationNumbers: [Int]) -> some View {
         switch segment {
         case .markdown(let text):
-            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow, onLink: handleMarkdownLink)
+            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow, onLinkWithAnchor: handleMarkdownLink)
         case .embedded(let kind, let source, let info, let index):
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
@@ -895,9 +886,9 @@ private struct ChatMessageRowView: View {
         case .http(let spec):
             ChatHTTPCardView(spec: spec)
         case .tabs(let spec):
-            ChatTabsCardView(spec: spec, citations: citationNumbers)
+            ChatTabsCardView(spec: spec, citations: citationNumbers, onLinkWithAnchor: handleMarkdownLink)
         case .details(let spec):
-            ChatDetailsCardView(spec: spec, citations: citationNumbers)
+            ChatDetailsCardView(spec: spec, citations: citationNumbers, onLinkWithAnchor: handleMarkdownLink)
         case .choices(let card):
             ChatChoicesCardView(
                 card: card,
@@ -920,7 +911,7 @@ private struct ChatMessageRowView: View {
         case .researchPlan(let plan):
             ChatResearchPlanCardView(chatId: chatId, messageId: message.id, plan: plan)
         case .callout(let callout):
-            ChatCalloutView(callout: callout, citations: citationNumbers)
+            ChatCalloutView(callout: callout, citations: citationNumbers, onLinkWithAnchor: handleMarkdownLink)
         case .checklist(let checklist):
             ChatChecklistCardView(
                 chatId: chatId,

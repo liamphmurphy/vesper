@@ -25,6 +25,7 @@ struct MarkdownView: View {
     var citations: [Int] = []
     var findRow: Int?
     var onLink: ((MarkdownLinkTarget) -> Bool)?
+    var onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
 
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -61,7 +62,7 @@ struct MarkdownView: View {
                 match: NSColor(palette.selected),
                 current: NSColor(palette.accent.opacity(0.35))
             ),
-            onLink: { target, newTab in open(target, newTab: newTab, codeBlocks: codeBlocks) }
+            onLink: { target, newTab, anchor in open(target, newTab: newTab, anchor: anchor, codeBlocks: codeBlocks) }
         )
         .task(id: refs) {
             if !refs.isEmpty { context.store.load(resolve) }
@@ -122,7 +123,8 @@ struct MarkdownView: View {
         return out
     }
 
-    private func open(_ target: MarkdownLinkTarget, newTab: Bool, codeBlocks: [MarkdownCodeBlock]) {
+    private func open(_ target: MarkdownLinkTarget, newTab: Bool, anchor: MarkdownLinkAnchor?, codeBlocks: [MarkdownCodeBlock]) {
+        if onLinkWithAnchor?(target, anchor) == true { return }
         if onLink?(target) == true { return }
         switch target {
         case .path(let path):
@@ -208,7 +210,7 @@ private struct MarkdownText: NSViewRepresentable {
     let theme: ThemeTokens
     let options: MarkdownRenderOptions
     let find: Find
-    let onLink: (MarkdownLinkTarget, Bool) -> Void
+    let onLink: (MarkdownLinkTarget, Bool, MarkdownLinkAnchor?) -> Void
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
