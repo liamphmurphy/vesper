@@ -184,6 +184,7 @@ struct ChatScreen: View {
                 personas: personas,
                 activePersona: activePersona,
                 harnessModels: harnessModels,
+                messages: messages,
                 pinnedCount: messages.filter { $0.bookmarked == true }.count
             )
             Divider()
@@ -609,6 +610,7 @@ struct ChatScreen: View {
         personas: [API.Persona],
         activePersona: API.Persona?,
         harnessModels: [API.ChatHarnessModels],
+        messages: [API.ChatMessage],
         pinnedCount: Int
     ) -> some View {
         let p = theme.palette
@@ -697,6 +699,7 @@ struct ChatScreen: View {
             if let session {
                 ChatContextMeterView(
                     session: session,
+                    messages: messages,
                     pinnedCount: pinnedCount,
                     onCompact: { focus in await compactChat(focus: focus) }
                 )

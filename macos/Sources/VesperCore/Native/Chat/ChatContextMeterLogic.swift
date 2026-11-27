@@ -27,6 +27,39 @@ public struct ChatContextMeterState: Sendable, Equatable {
     public let label: String
 }
 
+public enum ChatContextBreakdownCategory: String, CaseIterable, Sendable, Equatable, Identifiable {
+    case systemPersona
+    case memory
+    case spaceKnowledge
+    case attachmentsTools
+    case conversation
+
+    public var id: String { rawValue }
+
+    public var label: String {
+        switch self {
+        case .systemPersona: "System & Persona"
+        case .memory: "Memory"
+        case .spaceKnowledge: "Space & Knowledge"
+        case .attachmentsTools: "Files & Tools"
+        case .conversation: "Conversation"
+        }
+    }
+}
+
+public struct ChatContextBreakdownSlice: Sendable, Equatable, Identifiable {
+    public var id: String { category.rawValue }
+    public let category: ChatContextBreakdownCategory
+    public let tokens: Int
+    public let share: Double
+
+    public init(category: ChatContextBreakdownCategory, tokens: Int, share: Double) {
+        self.category = category
+        self.tokens = tokens
+        self.share = share
+    }
+}
+
 public enum ChatContextMeterLogic {
     public static let defaultAutoRolloverTokens = 160_000
 
@@ -73,6 +106,78 @@ public enum ChatContextMeterLogic {
             tone: tone,
             label: "\(formatTokens(tokens)) / \(formatTokens(limit))"
         )
+    }
+
+    /// Estimates how `contextTokens` is split across System/Persona, Memory, Space/Knowledge,
+    /// Attachments/Tools, and Conversation history so the user can see what is filling the window.
+    public static func breakdown(
+        contextTokens: Int?,
+        messages: [API.ChatMessage],
+        hasSpace: Bool,
+        hasPersona: Bool,
+        isTemporary: Bool
+    ) -> [ChatContextBreakdownSlice] {
+        let total = max(0, contextTokens ?? 0)
+        guard total > 0 else { return [] }
+
+        var conversationChars = 0
+        var knowledgeRefCount = 0
+        var attachmentBytes = 0
+        for msg in messages {
+            let stripped = ChatTranscriptLogic.stripContext(msg.bodyMd)
+            conversationChars += stripped.typedBody.count
+            knowledgeRefCount += (msg.contextRefs?.count ?? 0) + stripped.knowledgeContextLines.count + stripped.customAppContextLines.count
+            for att in msg.attachments ?? [] {
+                attachmentBytes += max(0, att.sizeBytes)
+            }
+        }
+
+        // Baseline estimates (tokens ≈ chars / 4), normalized cleanly to sum to `total`.
+        let rawSystem = hasPersona ? 2_400 : 1_600
+        let rawMemory = isTemporary ? 0 : (hasPersona ? 1_800 : 1_200)
+        let rawSpace = (hasSpace ? 1_200 : 0) + knowledgeRefCount * 450
+        let rawConversation = max(0, conversationChars / 4)
+        let rawAttachments = attachmentBytes > 0 ? max(400, min(24_000, attachmentBytes / 8)) : 0
+
+        let knownSum = rawSystem + rawMemory + rawSpace + rawConversation + rawAttachments
+        var buckets: [(ChatContextBreakdownCategory, Int)] = []
+        if knownSum <= total {
+            let toolOverhead = total - knownSum
+            buckets = [
+                (.systemPersona, rawSystem),
+                (.memory, rawMemory),
+                (.spaceKnowledge, rawSpace),
+                (.attachmentsTools, rawAttachments + toolOverhead),
+                (.conversation, rawConversation),
+            ]
+        } else {
+            let scale = Double(total) / Double(max(1, knownSum))
+            var assigned = 0
+            let rawPairs: [(ChatContextBreakdownCategory, Int)] = [
+                (.systemPersona, rawSystem),
+                (.memory, rawMemory),
+                (.spaceKnowledge, rawSpace),
+                (.attachmentsTools, rawAttachments),
+                (.conversation, rawConversation),
+            ]
+            for (idx, pair) in rawPairs.enumerated() {
+                if pair.1 == 0 { continue }
+                let val: Int
+                if idx == rawPairs.count - 1 {
+                    val = max(0, total - assigned)
+                } else {
+                    val = max(1, Int((Double(pair.1) * scale).rounded()))
+                }
+                assigned += val
+                buckets.append((pair.0, val))
+            }
+        }
+
+        let nonZero = buckets.filter { $0.1 > 0 }
+        let denom = Double(max(1, nonZero.reduce(0) { $0 + $1.1 }))
+        return nonZero.map { cat, tok in
+            ChatContextBreakdownSlice(category: cat, tokens: tok, share: Double(tok) / denom)
+        }
     }
 }
 

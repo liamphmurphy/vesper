@@ -792,7 +792,8 @@ private struct ChatMessageRowView: View {
                             outcome: .done,
                             since: turnWindow.since,
                             until: message.createdAt,
-                            end: APIDate.epoch(message.createdAt)
+                            end: APIDate.epoch(message.createdAt),
+                            personaId: personaId
                         )
                     }
 
@@ -1177,6 +1178,7 @@ private struct ChatTurnStepsCardView: View {
     let since: String?
     let until: String?
     let end: TimeInterval?
+    var personaId: String? = nil
 
     var body: some View {
         let events = context.store.entry(API.listRunEvents(id: runId)).data?.events ?? []
@@ -1188,7 +1190,7 @@ private struct ChatTurnStepsCardView: View {
             end: end
         )
         let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
-        if showThinking || !turn.steps.isEmpty {
+        if showThinking || !turn.steps.isEmpty || !turn.memoryDiffs.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 if showThinking {
                     ChatFinishedThinkingDisclosureView(
@@ -1198,6 +1200,9 @@ private struct ChatTurnStepsCardView: View {
                 }
                 if !turn.steps.isEmpty {
                     ChatFinishedTurnCardView(turn: turn, outcome: outcome)
+                }
+                if !turn.memoryDiffs.isEmpty {
+                    ChatMemoryDiffPillsView(diffs: turn.memoryDiffs, personaId: personaId)
                 }
             }
         }
