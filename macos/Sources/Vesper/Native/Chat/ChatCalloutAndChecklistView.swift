@@ -8,12 +8,18 @@ struct ChatCalloutView: View {
 
     let callout: ChatCalloutBlock
     var citations: [Int] = []
+    var onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
 
     @State private var isCollapsed: Bool
 
-    init(callout: ChatCalloutBlock, citations: [Int] = []) {
+    init(
+        callout: ChatCalloutBlock,
+        citations: [Int] = [],
+        onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
+    ) {
         self.callout = callout
         self.citations = citations
+        self.onLinkWithAnchor = onLinkWithAnchor
         self._isCollapsed = State(initialValue: callout.collapsible && callout.defaultCollapsed)
     }
 
@@ -37,7 +43,7 @@ struct ChatCalloutView: View {
         VStack(alignment: .leading, spacing: 0) {
             headerRow(accent: accent)
             if !isCollapsed && !callout.body.isEmpty {
-                MarkdownView(markdown: callout.body, textStyle: .chat, chat: true, citations: citations)
+                MarkdownView(markdown: callout.body, textStyle: .chat, chat: true, citations: citations, onLinkWithAnchor: onLinkWithAnchor)
                     .padding(.horizontal, 12)
                     .padding(.bottom, 10)
                     .padding(.top, 2)

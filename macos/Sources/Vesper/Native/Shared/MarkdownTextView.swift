@@ -1,6 +1,14 @@
 import AppKit
 import VesperCore
 
+/// Screen-space anchor of a clicked link inside `MarkdownTextView`, used to attach floating
+/// popovers or bubbles directly to the clicked inline badge (e.g. a `[1]` citation pill).
+@MainActor
+struct MarkdownLinkAnchor {
+    let screenRect: CGRect
+    weak var window: NSWindow?
+}
+
 /// Rendered markdown in a TextKit 2 text view: selectable, with Look Up, the context menu's
 /// Copy and Services, link clicks, and the boxes, rules and quote bars `MarkdownDecoration`
 /// describes drawn behind the text. Not editable and not scrollable: it is as tall as its text,
@@ -8,8 +16,9 @@ import VesperCore
 @MainActor
 final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManagerDelegate {
     private let contentStorage = NSTextContentStorage()
-    /// Called with each link the person clicks, and whether ⌘ was held (open in a new tab).
-    var onLink: ((MarkdownLinkTarget, _ newTab: Bool) -> Void)?
+    /// Called with each link the person clicks, whether ⌘ was held (open in a new tab), and the
+    /// link's screen-space anchor rect when available.
+    var onLink: ((MarkdownLinkTarget, _ newTab: Bool, _ anchor: MarkdownLinkAnchor?) -> Void)?
     private(set) var rendering: MarkdownRendering?
     private var findRanges: [NSRange] = []
     private var cachedHeight: (width: CGFloat, height: CGFloat)?
@@ -129,6 +138,42 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
 
     // MARK: Links
 
+    /// Computes the screen-space bounding rect of the link run at `charIndex` via TextKit 2.
+    func linkAnchor(at charIndex: Int) -> MarkdownLinkAnchor? {
+        let totalLength = (string as NSString).length
+        guard totalLength > 0 else { return nil }
+        let clamped = min(max(charIndex, 0), totalLength - 1)
+        var effective = NSRange(location: clamped, length: 1)
+        if let storage = textStorage, storage.length == totalLength {
+            var range = NSRange(location: 0, length: 0)
+            if storage.attribute(.link, at: clamped, effectiveRange: &range) != nil, range.length > 0 {
+                effective = range
+            }
+        }
+
+        var localRect = CGRect.null
+        if let layoutManager = textLayoutManager, let tr = textRange(effective) {
+            layoutManager.ensureLayout(for: tr)
+            let origin = textContainerOrigin
+            layoutManager.enumerateTextSegments(in: tr, type: .standard, options: []) { _, segmentFrame, _, _ in
+                let shifted = segmentFrame.offsetBy(dx: origin.x, dy: origin.y)
+                localRect = localRect.isNull ? shifted : localRect.union(shifted)
+                return true
+            }
+        }
+
+        if let window, !localRect.isNull, !localRect.isEmpty {
+            let inWindow = convert(localRect, to: nil)
+            let inScreen = window.convertToScreen(inWindow)
+            return MarkdownLinkAnchor(screenRect: inScreen, window: window)
+        }
+        let mouse = NSEvent.mouseLocation
+        return MarkdownLinkAnchor(
+            screenRect: CGRect(x: mouse.x - 8, y: mouse.y - 8, width: 16, height: 16),
+            window: window
+        )
+    }
+
     func textView(_ textView: NSTextView, clickedOnLink link: Any, at charIndex: Int) -> Bool {
         let url = (link as? URL) ?? (link as? String).flatMap(URL.init(string:))
         guard let url, let target = MarkdownLinkTarget(url: url) else { return true }
@@ -137,7 +182,9 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
         case .anchor(let id): rendering?.anchors[id].map(reveal(location:))
         case .footnote(let n): rendering?.footnotes[n].map(reveal(location:))
         case .footnoteReference(let n): rendering?.footnoteReferences[n].map(reveal(location:))
-        default: onLink?(target, NSApp.currentEvent?.modifierFlags.contains(.command) == true)
+        default:
+            let anchor = linkAnchor(at: charIndex)
+            onLink?(target, NSApp.currentEvent?.modifierFlags.contains(.command) == true, anchor)
         }
         return true
     }

@@ -673,6 +673,7 @@ struct ChatTabsCardView: View {
 
     let spec: ChatTabsSpec
     var citations: [Int] = []
+    var onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
 
     @State private var selected = 0
 
@@ -704,7 +705,7 @@ struct ChatTabsCardView: View {
                 .padding(.vertical, 6)
             }
             Rectangle().fill(p.rowBorder).frame(height: 1)
-            MarkdownView(markdown: active.body, textStyle: .chat, chat: true, citations: citations)
+            MarkdownView(markdown: active.body, textStyle: .chat, chat: true, citations: citations, onLinkWithAnchor: onLinkWithAnchor)
                 .padding(12)
         }
         .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
@@ -717,12 +718,18 @@ struct ChatDetailsCardView: View {
 
     let spec: ChatDetailsSpec
     var citations: [Int] = []
+    var onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
 
     @State private var isOpen: Bool
 
-    init(spec: ChatDetailsSpec, citations: [Int] = []) {
+    init(
+        spec: ChatDetailsSpec,
+        citations: [Int] = [],
+        onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
+    ) {
         self.spec = spec
         self.citations = citations
+        self.onLinkWithAnchor = onLinkWithAnchor
         self._isOpen = State(initialValue: spec.defaultOpen)
     }
 
@@ -750,7 +757,7 @@ struct ChatDetailsCardView: View {
 
             if isOpen {
                 Rectangle().fill(p.rowBorder).frame(height: 1)
-                MarkdownView(markdown: spec.body, textStyle: .chat, chat: true, citations: citations)
+                MarkdownView(markdown: spec.body, textStyle: .chat, chat: true, citations: citations, onLinkWithAnchor: onLinkWithAnchor)
                     .padding(12)
             }
         }
