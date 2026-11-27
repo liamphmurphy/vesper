@@ -162,7 +162,11 @@ public enum PrintDocumentBuilder {
             }
         } else if target.hasPrefix("library:") {
             let rest = String(target.dropFirst("library:".count))
-            target = rest.isEmpty ? "Library item" : rest
+            if let slash = rest.firstIndex(of: "/") {
+                target = String(rest[rest.index(after: slash)...])
+            } else {
+                target = rest.isEmpty ? "Library item" : rest
+            }
         } else if target.hasPrefix("design:") {
             let rest = String(target.dropFirst("design:".count))
             target = rest.isEmpty ? "Design" : rest

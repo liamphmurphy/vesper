@@ -376,6 +376,9 @@ struct KeepsakesScreen: View {
             Divider()
             if item.kind != .document { Button("Rename\u{2026}") { actions.rename(item) } }
             Button("Download\u{2026}") { actions.download(item) }
+            if LibraryLogic.isKnowledgeEmbeddable(item) {
+                Button("Copy Embed") { actions.copyEmbed(item) }
+            }
             Button("Copy Link") { actions.copyLink(item) }
             Divider()
             Button("Remove from Library", role: .destructive) { removeItems([item]) }
@@ -612,6 +615,13 @@ struct LibraryItemActions {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(url.absoluteString, forType: .string)
         context.showToast(ToastItemModel(id: "library.link.\(item.id)", title: "Link copied", tone: .success))
+    }
+
+    /// Knowledge markdown embed (`![[library:<id>/<title>]]`) for pasting straight into a page.
+    func copyEmbed(_ item: API.LibraryItem) {
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.setString(LibraryLogic.embedMarkdown(for: item), forType: .string)
+        context.showToast(ToastItemModel(id: "library.embed.\(item.id)", title: "Embed copied", tone: .success))
     }
 
     /// A workflow's document opens in its default app (the web opened it in a new tab).
