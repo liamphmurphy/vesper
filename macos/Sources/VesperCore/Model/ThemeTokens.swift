@@ -26,17 +26,30 @@ public struct ThemeTokens: Sendable, Equatable {
     public var mode: ColorMode
     /// CSS variable names without "--" ("text", "accent", "state-done"…) to "#RRGGBB(AA)".
     public var colors: [String: String]
-    /// Settings → Text size: `AppearanceTextSize` raw value (e.g. "small", "default", "large", "larger", "xlarge"…).
+    /// Settings → Interface text size: `AppearanceTextSize` raw value (e.g. "small", "default", "large", "larger", "xlarge"…).
     public var textSize: String?
+    /// Settings → Content text size: independent scale factor for page/document prose (0.80–1.75).
+    public var contentTextScale: Double
 
-    public init(mode: ColorMode, colors: [String: String] = [:], textSize: String? = nil) {
+    public init(
+        mode: ColorMode,
+        colors: [String: String] = [:],
+        textSize: String? = nil,
+        contentTextScale: Double = 1.0
+    ) {
         self.mode = mode
         self.colors = colors
         self.textSize = textSize
+        self.contentTextScale = AppearancePreference.clampContentTextScale(contentTextScale)
     }
 
     public var typeScale: Double {
         AppearanceTextSize(rawValue: textSize ?? "default")?.scale ?? 1
+    }
+
+    /// Independent scale factor for page/document content (Knowledge, Docs, Markdown, Chat).
+    public var contentScale: Double {
+        AppearancePreference.clampContentTextScale(contentTextScale)
     }
 
     /// A named colour, nil when the page hasn't sent it (or sent something that isn't a hex colour).
@@ -66,12 +79,21 @@ public struct ThemeTokens: Sendable, Equatable {
         public var isMonospaced: Bool { self == .mono }
     }
 
-    /// The point size of a style at the current text size (a CSS px is a point on macOS).
+    /// The point size of a style at the current interface text size (a CSS px is a point on macOS).
     public func pointSize(_ style: TextStyle) -> Double { style.metrics.size * typeScale }
 
-    /// Extra space between lines, in points, for a style's CSS line-height.
+    /// Extra space between lines, in points, for a style's CSS line-height at the interface text size.
     public func lineSpacing(_ style: TextStyle) -> Double {
         let size = pointSize(style)
+        return max(0, size * style.metrics.lineHeight - size * 1.2)
+    }
+
+    /// The point size of a style at the current content text size (independent of interface zoom).
+    public func contentPointSize(_ style: TextStyle) -> Double { style.metrics.size * contentScale }
+
+    /// Extra space between lines, in points, for a style's CSS line-height at the content text size.
+    public func contentLineSpacing(_ style: TextStyle) -> Double {
+        let size = contentPointSize(style)
         return max(0, size * style.metrics.lineHeight - size * 1.2)
     }
 }
