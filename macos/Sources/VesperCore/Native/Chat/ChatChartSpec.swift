@@ -324,7 +324,8 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         }
         let requestedBins: Int
         if let b = obj["bins"].flatMap(finiteDouble) {
-            requestedBins = max(2, min(30, Int(b.rounded())))
+            // Clamp before converting: "bins" is whatever the agent wrote, and `Int(_:)` traps past Int's range.
+            requestedBins = Int(max(2, min(30, b.rounded())))
         } else {
             requestedBins = max(3, min(16, Int(ceil(sqrt(Double(rawVals.count))))))
         }
@@ -351,9 +352,11 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         let width = (maxVal - minVal) / Double(count)
         var counts = Array(repeating: 0, count: count)
         for v in values {
-            var idx = Int(floor((v - minVal) / width))
-            if idx >= count { idx = count - 1 }
-            if idx < 0 { idx = 0 }
+            // Clamp as a Double: a range too wide (`maxVal - minVal` overflows) or too narrow (`width`
+            // underflows to 0) makes the position infinite or NaN, and `Int(_:)` traps on either.
+            // NaN is 0/0 at the minimum or inf/inf toward the maximum.
+            let position = ((v - minVal) / width).rounded(.down)
+            let idx = position.isNaN ? (v > minVal ? count - 1 : 0) : Int(min(max(position, 0), Double(count - 1)))
             counts[idx] += 1
         }
         return (0..<count).map { i in
@@ -493,9 +496,10 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         let mag = pow(10.0, floor(log10(rough)))
         let candidates = [1.0, 2.0, 2.5, 5.0, 10.0].map { $0 * mag }
         let step = candidates.first(where: { $0 >= rough }) ?? (10.0 * mag)
-        let first = Int(floor(lo / step))
-        let last = Int(ceil(hi / step))
-        guard last >= first else { return [lo, hi] }
+        // A span that overflows, or underflows to a zero step, makes these NaN or infinite, where
+        // `Int(_:)` traps; such a range just gets its endpoints.
+        guard let first = Int(exactly: floor(lo / step)), let last = Int(exactly: ceil(hi / step)),
+              last >= first else { return [lo, hi] }
         return (first...last).map { i in
             roundToPrecision(Double(i) * step, significantDigits: 12)
         }

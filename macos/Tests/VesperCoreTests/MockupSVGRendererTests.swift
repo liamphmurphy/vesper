@@ -89,6 +89,88 @@ final class MockupSVGRendererTests: XCTestCase {
         XCTAssertEqual(pixel(layer, 60, 40).3, 0, "nothing else is drawn")
     }
 
+    // Agent-written sizes and lengths can be extreme. Each of these trapped converting a Double that
+    // was NaN, infinite or past Int's range to Int; they now draw what they can instead.
+
+    func testRepeatingGradientWithANearZeroRadiusDoesNotTrap() throws {
+        let d = try document("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <defs><radialGradient id="g" gradientUnits="userSpaceOnUse" cx="50" cy="50" r="1e-300" spreadMethod="repeat">
+            <stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/>
+          </radialGradient></defs>
+          <rect x="0" y="0" width="100" height="100" fill="url(#g)"/>
+          <rect x="0" y="0" width="10" height="10" fill="#00ff00"/>
+        </svg>
+        """)
+        let img = try XCTUnwrap(MockupSVGRenderer.makeImage(d, scale: 1))
+        XCTAssertEqual(pixel(img, 5, 5).1, 255, "the rest of the document still draws")
+    }
+
+    func testReflectedGradientWithAVanishingTransformDoesNotTrap() throws {
+        let d = try document("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <defs><linearGradient id="g" gradientUnits="userSpaceOnUse" x1="0" y1="0" x2="1" y2="0" spreadMethod="reflect" gradientTransform="scale(1e-30)">
+            <stop offset="0" stop-color="#ff0000"/><stop offset="1" stop-color="#0000ff"/>
+          </linearGradient></defs>
+          <rect x="0" y="0" width="100" height="100" fill="url(#g)"/>
+        </svg>
+        """)
+        XCTAssertNotNil(MockupSVGRenderer.makeImage(d, scale: 1))
+    }
+
+    func testGradientCyclesFarFromTheOriginGiveNoGradient() {
+        let stops: [(Double, CGColor)] = [(0, CGColor(gray: 0, alpha: 1)), (1, CGColor(gray: 1, alpha: 1))]
+        XCTAssertNil(MockupSVGGradients.makeGradient(stops, spread: "reflect", from: 1e300, to: 1e300))
+        XCTAssertNil(MockupSVGGradients.makeGradient(stops, spread: "repeat", from: 0, to: .infinity))
+        XCTAssertNil(MockupSVGGradients.makeGradient(stops, spread: "repeat", from: 0, to: .nan))
+        XCTAssertNotNil(MockupSVGGradients.makeGradient(stops, spread: "reflect", from: -3, to: 4), "ordinary ranges still work")
+    }
+
+    func testHugeMaskRegionDoesNotTrap() throws {
+        let d = try document("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="1e30" height="1e30">
+            <rect x="0" y="0" width="100" height="100" fill="#ffffff"/>
+          </mask></defs>
+          <rect x="0" y="0" width="100" height="100" fill="#ff0000" mask="url(#m)"/>
+        </svg>
+        """)
+        XCTAssertNotNil(MockupSVGRenderer.makeImage(d, scale: 1))
+    }
+
+    func testHugeMaskRegionWhoseAreaOverflowsIntDoesNotTrap() throws {
+        let d = try document("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <defs><mask id="m" maskUnits="userSpaceOnUse" x="0" y="0" width="5e9" height="5e9">
+            <rect x="0" y="0" width="100" height="100" fill="#ffffff"/>
+          </mask></defs>
+          <rect x="0" y="0" width="100" height="100" fill="#ff0000" mask="url(#m)"/>
+        </svg>
+        """)
+        XCTAssertNotNil(MockupSVGRenderer.makeImage(d, scale: 1))
+    }
+
+    func testHugePatternTileDoesNotTrap() throws {
+        let d = try document("""
+        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100">
+          <defs><pattern id="p" patternUnits="userSpaceOnUse" x="0" y="0" width="1e30" height="1e30">
+            <rect x="0" y="0" width="10" height="10" fill="#ff0000"/>
+          </pattern></defs>
+          <rect x="0" y="0" width="100" height="100" fill="url(#p)"/>
+        </svg>
+        """)
+        XCTAssertNotNil(MockupSVGRenderer.makeImage(d, scale: 1))
+    }
+
+    func testHugeDocumentSizeGivesNoImage() throws {
+        let d = try document("""
+        <svg xmlns="http://www.w3.org/2000/svg" width="1e30" height="1e30" viewBox="0 0 10 10">
+          <rect x="0" y="0" width="10" height="10" fill="#ff0000"/>
+        </svg>
+        """)
+        XCTAssertNil(MockupSVGRenderer.makeImage(d, scale: 1))
+    }
+
     func testPNGRoundTrip() throws {
         let d = try document()
         let png = try XCTUnwrap(MockupSVGRenderer.pngData(d, scale: 2, background: CGColor(gray: 1, alpha: 1)))

@@ -61,8 +61,10 @@ public enum MockupSVGRenderer {
     }
 
     public static func makeImage(_ doc: MockupSVGDocument, scale: CGFloat, options: MockupSVGRenderOptions = .init()) -> CGImage? {
-        let w = Int((doc.intrinsicSize.width * scale).rounded()), h = Int((doc.intrinsicSize.height * scale).rounded())
-        guard w > 0, h > 0, let ctx = bitmapContext(width: w, height: h) else { return nil }
+        // A document's width and height are whatever its source says; `Int(_:)` would trap on one past
+        // Int's range, so convert with `Int(exactly:)`.
+        guard let w = Int(exactly: (doc.intrinsicSize.width * scale).rounded()), let h = Int(exactly: (doc.intrinsicSize.height * scale).rounded()),
+              w > 0, h > 0, let ctx = bitmapContext(width: w, height: h) else { return nil }
         ctx.translateBy(x: 0, y: CGFloat(h))
         ctx.scaleBy(x: 1, y: -1)
         draw(doc, in: ctx, rect: CGRect(x: 0, y: 0, width: CGFloat(w), height: CGFloat(h)), options: options)
@@ -353,8 +355,11 @@ struct MockupSVGDrawer {
         guard region.width > 0, region.height > 0 else { return false }
         let device = ctx.userSpaceToDeviceSpaceTransform
         let scale = max(1, min(4, (abs(device.a * device.d - device.b * device.c)).squareRoot()))
-        let w = Int((region.width * scale).rounded(.up)), h = Int((region.height * scale).rounded(.up))
-        guard w > 0, h > 0, w * h <= 64_000_000, let mctx = MockupSVGRenderer.bitmapContext(width: w, height: h) else { return false }
+        // Bound the size while it's still a Double: on a huge region `Int(_:)` or `w * h` would trap.
+        let pw = (region.width * scale).rounded(.up), ph = (region.height * scale).rounded(.up)
+        guard pw > 0, ph > 0, pw * ph <= 64_000_000 else { return false }
+        let w = Int(pw), h = Int(ph)
+        guard let mctx = MockupSVGRenderer.bitmapContext(width: w, height: h) else { return false }
         mctx.translateBy(x: 0, y: CGFloat(h))
         mctx.scaleBy(x: scale, y: -scale)
         mctx.translateBy(x: -region.minX, y: -region.minY)
@@ -569,11 +574,13 @@ enum MockupSVGGradients {
     static func makeGradient(_ stops: [(Double, CGColor)], spread: String, from lo: Double, to hi: Double) -> CGGradient? {
         var colors: [CGColor] = []
         var locations: [CGFloat] = []
-        let span = hi - lo
-        let cycles = max(1, Int((span).rounded()))
-        guard cycles <= 512 else { return nil }
+        // A near-zero radius or vector, or an unbounded clip, makes these NaN, infinite or past Int's
+        // range, where `Int(_:)` traps; `Int(exactly:)` turns them into no gradient instead.
+        guard let spanCycles = Int(exactly: (hi - lo).rounded()), spanCycles <= 512,
+              let firstCycle = Int(exactly: lo.rounded(.towardZero)) else { return nil }
+        let cycles = max(1, spanCycles)
         for k in 0..<cycles {
-            let cycle = Int(lo) + k
+            let cycle = firstCycle + k
             let mirrored = spread == "reflect" && abs(cycle) % 2 == 1
             let ordered = mirrored ? stops.reversed().map { (1 - $0.0, $0.1) } : stops
             for (off, color) in ordered {
@@ -608,8 +615,11 @@ enum MockupSVGPatterns {
 
         let device = ctx.userSpaceToDeviceSpaceTransform
         let scale = max(2, min(8, (abs(device.a * device.d - device.b * device.c)).squareRoot()))
-        let w = max(1, Int((tile.width * scale).rounded())), h = max(1, Int((tile.height * scale).rounded()))
-        guard w * h <= 16_000_000, let tctx = MockupSVGRenderer.bitmapContext(width: w, height: h) else { return }
+        // Bound the size while it's still a Double: on a huge tile `Int(_:)` or `w * h` would trap.
+        let pw = max(1, (tile.width * scale).rounded()), ph = max(1, (tile.height * scale).rounded())
+        guard pw * ph <= 16_000_000 else { return }
+        let w = Int(pw), h = Int(ph)
+        guard let tctx = MockupSVGRenderer.bitmapContext(width: w, height: h) else { return }
         tctx.translateBy(x: 0, y: CGFloat(h))
         tctx.scaleBy(x: CGFloat(w) / tile.width, y: -CGFloat(h) / tile.height)
         if let vbRaw = p.attribute("viewBox"), let pvb = MockupSVGValues.viewBox(vbRaw), pvb.width > 0, pvb.height > 0 {
