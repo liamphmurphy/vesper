@@ -269,6 +269,96 @@ public enum LibraryLogic {
         (contentType ?? "").split(separator: ";").first.map { $0.trimmingCharacters(in: .whitespaces).lowercased() } == "application/pdf"
     }
 
+    /// Whether a Library item can be embedded inline in a Knowledge page via `![[library:...]]`.
+    public static func isKnowledgeEmbeddable(_ item: API.LibraryItem) -> Bool {
+        switch item.kind {
+        case .image, .video:
+            return true
+        case .file, .export, .document:
+            return isPDF(item.contentType)
+        default:
+            return false
+        }
+    }
+
+    /// Strips wikilink-breaking characters from a Library item's display name for `library:<id>/<label>`.
+    public static func sanitizedEmbedLabel(_ raw: String) -> String {
+        let forbidden = CharacterSet(charactersIn: "[]#|^`/\r\n")
+        let replaced = raw.unicodeScalars.map { forbidden.contains($0) ? " " : String($0) }.joined()
+        return replaced.split(whereSeparator: \.isWhitespace).joined(separator: " ")
+    }
+
+    /// The target inside `![[...]]` for a Library item, e.g. `library:<uuid>/Harbour map`.
+    public static func embedRef(id: String, title: String? = nil, filename: String? = nil) -> String {
+        let candidate = (title?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false ? title : filename) ?? ""
+        let clean = sanitizedEmbedLabel(candidate)
+        return clean.isEmpty ? "library:\(id)" : "library:\(id)/\(clean)"
+    }
+
+    public static func embedRef(for item: API.LibraryItem) -> String {
+        embedRef(id: item.id, title: item.title, filename: item.filename)
+    }
+
+    /// Full Knowledge markdown embed for a Library item, e.g. `![[library:<uuid>/Harbour map]]`.
+    public static func embedMarkdown(id: String, title: String? = nil, filename: String? = nil) -> String {
+        "![[\(embedRef(id: id, title: title, filename: filename))]]"
+    }
+
+    public static func embedMarkdown(for item: API.LibraryItem) -> String {
+        "![[\(embedRef(for: item))]]"
+    }
+
+    /// Builds a client-side `KnowledgeEmbed` so the editor can render a newly inserted Library embed immediately.
+    public static func knowledgeEmbed(for item: API.LibraryItem, ref: String? = nil) -> KnowledgeEmbed {
+        let rawRef = ref ?? embedMarkdown(for: item)
+        let embedKind: String
+        switch item.kind {
+        case .image: embedKind = "image"
+        case .video: embedKind = "video"
+        default: embedKind = "file"
+        }
+        return KnowledgeEmbed(
+            ref: rawRef,
+            kind: embedKind,
+            title: item.title.isEmpty ? item.filename : item.title,
+            url: contentPath(item.id),
+            contentType: item.contentType,
+            available: true
+        )
+    }
+
+    /// Extracts a Library item UUID from a copied Vesper Library URL, such as
+    /// `http://localhost:8000/api/v1/library/<uuid>/content` or `/library?tab=images&item=<uuid>`.
+    public static func libraryItemID(fromURL raw: String) -> String? {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty,
+              trimmed.rangeOfCharacter(from: .whitespacesAndNewlines) == nil,
+              let components = URLComponents(string: trimmed) else {
+            return nil
+        }
+        if let scheme = components.scheme?.lowercased(),
+           scheme != "http" && scheme != "https" && scheme != "vesper" {
+            return nil
+        }
+        let segments = components.path.split(separator: "/").map(String.init)
+        // `/api/v1/library/<uuid>` or `/api/v1/library/<uuid>/content`
+        if segments.count >= 4,
+           segments[0] == "api",
+           segments[1] == "v1",
+           segments[2] == "library",
+           (segments.count == 4 || (segments.count == 5 && segments[4] == "content")),
+           UUID(uuidString: segments[3]) != nil {
+            return segments[3]
+        }
+        // `/library?item=<uuid>` (optionally with `tab=...`)
+        if segments == ["library"],
+           let item = components.queryItems?.first(where: { $0.name == "item" })?.value,
+           UUID(uuidString: item) != nil {
+            return item
+        }
+        return nil
+    }
+
     /// The item's content and its download, as API paths.
     public static func contentPath(_ id: String, download: Bool = false) -> String {
         "/api/v1/library/\(id)/content" + (download ? "?download=true" : "")

@@ -189,6 +189,31 @@ public enum KnowledgeMarkdownFormatting {
         return EditResult(text: next, selection: NSRange(location: caretAfter, length: 0))
     }
 
+    /// When a Vesper Library URL is pasted at a collapsed caret outside code/frontmatter,
+    /// rewrites it into a `![[library:...]]` embed.
+    public static func pasteLibraryEmbed(
+        text: String,
+        selection: NSRange,
+        pastedString: String,
+        title: String? = nil
+    ) -> EditResult? {
+        guard selection.length == 0,
+              let id = LibraryLogic.libraryItemID(fromURL: pastedString) else {
+            return nil
+        }
+        let ns = text as NSString
+        guard selection.location >= 0, selection.location <= ns.length else {
+            return nil
+        }
+        if KnowledgeMarkdownSyntax.isInsideCodeOrFrontmatter(utf16Offset: selection.location, in: text) {
+            return nil
+        }
+        let replacement = LibraryLogic.embedMarkdown(id: id, title: title)
+        let next = ns.replacingCharacters(in: selection, with: replacement)
+        let caretAfter = selection.location + (replacement as NSString).length
+        return EditResult(text: next, selection: NSRange(location: caretAfter, length: 0))
+    }
+
     /// Generates a deterministic, filesystem-safe screenshot filename (e.g. `Screenshot-2026-11-26-062500.png`).
     public static func screenshotFilename(
         date: Date = Date(),

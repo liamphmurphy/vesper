@@ -43,6 +43,11 @@ struct LibraryItemSheet: View {
                     .foregroundStyle(theme.palette.accent)
             }
             if item.kind == .image { LibraryReferenceActions(item: item, actions: actions) }
+            if LibraryLogic.isKnowledgeEmbeddable(item) {
+                Button { actions.copyEmbed(item) } label: { Label("Copy Embed", systemImage: "doc.on.clipboard") }
+                    .buttonStyle(.vesper())
+                    .fixedSize()
+            }
             Button {
                 let ql = QuickLookItem(url: LibraryLogic.contentPath(item.id), title: item.title, filename: item.filename, contentType: item.contentType)
                 context.showQuickLook([ql], index: 0)

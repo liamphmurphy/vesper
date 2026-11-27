@@ -52,6 +52,7 @@ struct KnowledgeTextView: NSViewRepresentable {
     var onFileDragActiveChange: (Bool) -> Void = { _ in }
     var onPasteFiles: ([URL], NSRange) -> Void = { _, _ in }
     var onPasteImageData: (Data, String, NSRange) -> Void = { _, _, _ in }
+    var onPasteLibraryItemID: (String, NSRange) -> Void = { _, _ in }
     var onDropKnowledgeItem: (KnowledgeDragItem, Int, Bool) -> Void = { _, _, _ in }
     var onKnowledgeDragActiveChange: (KnowledgeDragItem?) -> Void = { _ in }
     var onResizeImage: (KnowledgeInlineEmbedPlacement, Int?) -> Void = { _, _ in }
@@ -132,6 +133,9 @@ struct KnowledgeTextView: NSViewRepresentable {
         }
         view.onPasteImageData = { [weak coordinator] data, filename, range in
             coordinator?.parent.onPasteImageData(data, filename, range)
+        }
+        view.onPasteLibraryItemID = { [weak coordinator] id, range in
+            coordinator?.parent.onPasteLibraryItemID(id, range)
         }
         view.onDropKnowledgeItem = { [weak coordinator] item, offset, optionHeld in
             coordinator?.parent.onDropKnowledgeItem(item, offset, optionHeld)
@@ -1074,6 +1078,7 @@ final class LivePreviewNSTextView: NSTextView {
     var onFileDragActiveChange: ((Bool) -> Void)?
     var onPasteFiles: (([URL], NSRange) -> Void)?
     var onPasteImageData: ((Data, String, NSRange) -> Void)?
+    var onPasteLibraryItemID: ((String, NSRange) -> Void)?
     var onDropKnowledgeItem: ((KnowledgeDragItem, Int, Bool) -> Void)?
     var onKnowledgeDragActiveChange: ((KnowledgeDragItem?) -> Void)?
     var onResizeImage: ((KnowledgeInlineEmbedPlacement, Int?) -> Void)?
@@ -1194,7 +1199,16 @@ final class LivePreviewNSTextView: NSTextView {
             return
         }
 
-        // 3. Pasting a URL over selected text turns it into `[phrase](url)`.
+        // 3. Pasting a Vesper Library URL at a collapsed caret embeds it directly as `![[library:...]]`.
+        if range.length == 0,
+           let pastedText = pb.string(forType: .string),
+           KnowledgeMarkdownFormatting.pasteLibraryEmbed(text: string, selection: range, pastedString: pastedText) != nil,
+           let libraryID = LibraryLogic.libraryItemID(fromURL: pastedText) {
+            onPasteLibraryItemID?(libraryID, range)
+            return
+        }
+
+        // 4. Pasting a URL over selected text turns it into `[phrase](url)`.
         if range.length > 0,
            let pastedText = pb.string(forType: .string),
            let res = KnowledgeMarkdownFormatting.pasteURLOverSelection(

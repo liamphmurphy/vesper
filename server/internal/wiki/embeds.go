@@ -55,13 +55,26 @@ func ResolvePageEmbeds(ctx context.Context, q *store.Queries, ws, pageID uuid.UU
 			continue
 		}
 		if raw, ok := strings.CutPrefix(ref.Target, "library:"); ok {
-			if viewer := pageview.From(ctx).UserID; viewer != nil {
-				if id, err := uuid.Parse(raw); err == nil {
-					item, err := q.GetLibraryItem(ctx, store.GetLibraryItemParams{ID: id, WorkspaceID: ws, UserID: *viewer})
+			raw = strings.TrimSpace(raw)
+			if raw != "" {
+				if viewer := pageview.From(ctx).UserID; viewer != nil {
+					var (
+						item store.LibraryItem
+						err  error
+					)
+					if id, parseErr := uuid.Parse(strings.SplitN(raw, "/", 2)[0]); parseErr == nil {
+						item, err = q.GetLibraryItem(ctx, store.GetLibraryItemParams{ID: id, WorkspaceID: ws, UserID: *viewer})
+					} else {
+						item, err = q.FindEmbeddableLibraryItemByName(ctx, store.FindEmbeddableLibraryItemByNameParams{
+							WorkspaceID: ws,
+							UserID:      *viewer,
+							Name:        raw,
+						})
+					}
 					if err == nil && (item.Kind == "image" || item.Kind == "video") {
-						e = Embed{Ref: ref.Raw, Kind: item.Kind, Title: item.Title, URL: "/api/v1/library/" + id.String() + "/content", ContentType: item.ContentType, Available: true}
+						e = Embed{Ref: ref.Raw, Kind: item.Kind, Title: item.Title, URL: "/api/v1/library/" + item.ID.String() + "/content", ContentType: item.ContentType, Available: true}
 					} else if err == nil && (item.Kind == "file" || item.Kind == "export" || item.Kind == "document") && item.ContentType == "application/pdf" {
-						e = Embed{Ref: ref.Raw, Kind: "file", Title: item.Title, URL: "/api/v1/library/" + id.String() + "/content", ContentType: item.ContentType, Available: true}
+						e = Embed{Ref: ref.Raw, Kind: "file", Title: item.Title, URL: "/api/v1/library/" + item.ID.String() + "/content", ContentType: item.ContentType, Available: true}
 					} else if err != nil && !errors.Is(err, pgx.ErrNoRows) {
 						return nil, err
 					}

@@ -271,6 +271,7 @@ struct KnowledgeEditorView: View {
             context.store.load(networkRequest)
             context.store.load(mentionCandidatesRequest)
             context.store.load(KnowledgeShellController.attachmentsRequest)
+            context.store.load(Self.libraryImagesRequest)
             await loadCompletionCandidates()
         }
         .onChange(of: page.embeds) { _, nextEmbeds in
@@ -718,6 +719,9 @@ struct KnowledgeEditorView: View {
             onPasteImageData: { data, filename, range in
                 handlePastedImageData(data, filename: filename, segmentIndex: index, replacementRange: range)
             },
+            onPasteLibraryItemID: { id, range in
+                handlePastedLibraryItemID(id, segmentIndex: index, replacementRange: range)
+            },
             onDropKnowledgeItem: { item, offset, optionHeld in
                 handleDroppedKnowledgeItem(item, segmentIndex: index, utf16Offset: offset, optionHeld: optionHeld)
             },
@@ -951,7 +955,7 @@ struct KnowledgeEditorView: View {
         case .page, .tag:
             candidates = remoteCandidates
         case .embed:
-            candidates = liveAttachmentCandidates()
+            candidates = liveEmbedCandidates()
         case .heading, .blockID:
             candidates = currentDocumentCandidates()
         }
@@ -995,6 +999,13 @@ struct KnowledgeEditorView: View {
         applyCompletionInsertion(insertion)
     }
 
+    private static let libraryImagesRequest = API.listLibraryItems(kind: .image, offset: 0)
+
+    private func cachedLibraryEmbedItems() -> [API.LibraryItem] {
+        let items = context.store.entry(Self.libraryImagesRequest).data?.items ?? []
+        return items.filter { LibraryLogic.isKnowledgeEmbeddable($0) }
+    }
+
     private func preloadInlineEmbed(forRef insertRef: String) {
         let storeAttachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
         if let att = storeAttachments.first(where: { $0.ref == insertRef }) {
@@ -1003,12 +1014,20 @@ struct KnowledgeEditorView: View {
                 resolvedEmbeds.append(embed)
                 embedLayoutVersion &+= 1
             }
+            return
+        }
+        if let item = cachedLibraryEmbedItems().first(where: { LibraryLogic.embedRef(for: $0) == insertRef }) {
+            let embed = LibraryLogic.knowledgeEmbed(for: item)
+            if !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+                resolvedEmbeds.append(embed)
+                embedLayoutVersion &+= 1
+            }
         }
     }
 
-    private func liveAttachmentCandidates() -> [KnowledgeCompletionCandidate] {
+    private func liveEmbedCandidates() -> [KnowledgeCompletionCandidate] {
         let storeAttachments = context.store.entry(KnowledgeShellController.attachmentsRequest).data?.attachments ?? []
-        return storeAttachments.map { att in
+        let attachmentCandidates = storeAttachments.map { att in
             let typeText = KnowledgeAttachmentActions.typeLabel(for: att.contentType, filename: att.filename)
             let sizeText = KnowledgeAttachmentActions.formattedSize(att.sizeBytes)
             let detailParts = [typeText, sizeText.isEmpty ? nil : sizeText, att.usageSummary, att.path].compactMap { $0 }
@@ -1020,6 +1039,19 @@ struct KnowledgeEditorView: View {
                 symbolName: KnowledgeAttachmentActions.sfSymbol(for: att.contentType, filename: att.filename)
             )
         }
+        let libraryCandidates = cachedLibraryEmbedItems().map { item in
+            let typeText = KnowledgeAttachmentActions.typeLabel(for: item.contentType, filename: item.filename)
+            let sizeText = LibraryLogic.formatBytes(item.sizeBytes)
+            let detailParts = ["Library", typeText, sizeText, item.filename == item.title ? nil : item.filename].compactMap { $0 }
+            return KnowledgeCompletionCandidate(
+                kind: .embed,
+                title: item.title.isEmpty ? item.filename : item.title,
+                insertRef: LibraryLogic.embedRef(for: item),
+                detail: detailParts.joined(separator: " \u{00B7} "),
+                symbolName: KnowledgeAttachmentActions.sfSymbol(for: item.contentType, filename: item.filename)
+            )
+        }
+        return attachmentCandidates + libraryCandidates
     }
 
     private func applyCompletionInsertion(_ insertion: KnowledgeCompletionInsertion) {
@@ -1088,6 +1120,9 @@ struct KnowledgeEditorView: View {
 
         if context.store.entry(KnowledgeShellController.attachmentsRequest).data == nil {
             _ = await context.store.refetch(KnowledgeShellController.attachmentsRequest)
+        }
+        if context.store.entry(Self.libraryImagesRequest).data == nil {
+            _ = await context.store.refetch(Self.libraryImagesRequest)
         }
         remoteCandidates = candidates
     }
@@ -1256,6 +1291,31 @@ struct KnowledgeEditorView: View {
                 insertDroppedEmbedBlock(markdown, preferredSegmentIndex: segmentIndex, preferredUTF16Offset: utf16Offset, replacementRange: nil)
                 noteDocumentEdited()
             }
+        }
+    }
+
+    private func handlePastedLibraryItemID(_ id: String, segmentIndex: Int, replacementRange: NSRange) {
+        let cached = cachedLibraryEmbedItems().first(where: { $0.id.caseInsensitiveCompare(id) == .orderedSame })
+        let block: String
+        if let cached {
+            block = LibraryLogic.embedMarkdown(for: cached)
+            let embed = LibraryLogic.knowledgeEmbed(for: cached, ref: block)
+            if !resolvedEmbeds.contains(where: { $0.ref == embed.ref }) {
+                resolvedEmbeds.append(embed)
+            }
+        } else {
+            block = LibraryLogic.embedMarkdown(id: id)
+        }
+        insertDroppedEmbedBlock(
+            block,
+            preferredSegmentIndex: segmentIndex,
+            preferredUTF16Offset: replacementRange.location,
+            replacementRange: replacementRange
+        )
+        embedLayoutVersion &+= 1
+        noteDocumentEdited()
+        Task { @MainActor in
+            await saveNow()
         }
     }
 

@@ -41,6 +41,25 @@ LIMIT sqlc.arg(row_limit) OFFSET sqlc.arg(row_offset);
 -- name: GetLibraryItem :one
 SELECT * FROM library_items WHERE id = $1 AND workspace_id = $2 AND user_id = $3;
 
+-- name: FindEmbeddableLibraryItemByName :one
+-- Resolves ![[library:<name>]] for the viewing user: prefers an exact
+-- case-insensitive title match, falling back to filename, newest first.
+SELECT * FROM library_items
+WHERE workspace_id = sqlc.arg(workspace_id) AND user_id = sqlc.arg(user_id)
+  AND (
+    kind IN ('image', 'video')
+    OR (kind IN ('file', 'export', 'document') AND content_type = 'application/pdf')
+  )
+  AND (
+    lower(btrim(title)) = lower(sqlc.arg(name)::text)
+    OR lower(btrim(filename)) = lower(sqlc.arg(name)::text)
+  )
+ORDER BY
+  CASE WHEN lower(btrim(title)) = lower(sqlc.arg(name)::text) THEN 0 ELSE 1 END,
+  created_at DESC,
+  id DESC
+LIMIT 1;
+
 -- name: GetLibraryItemDetail :one
 -- One item of the caller's with its joined chat, persona and export source fields.
 SELECT l.*, c.title AS chat_title, p.name AS persona_name, pr.key AS project_key, rp.name AS reference_persona_name,

@@ -323,6 +323,25 @@ public enum KnowledgeCompletionLogic: Sendable {
         let detail = candidate.detail.lowercased()
         let leaf = ref.components(separatedBy: "/").last ?? ref
 
+        // Typing `![[library:` or `![[library:Harbour` filters to Library embeds and matches against
+        // their display name / filename even when `insertRef` is `library:<uuid>/<name>`.
+        if candidate.kind == .embed, query.hasPrefix("library:") {
+            guard ref.hasPrefix("library:") else { return nil }
+            let subQuery = String(query.dropFirst("library:".count)).trimmingCharacters(in: .whitespaces)
+            if subQuery.isEmpty { return 700 }
+            return scoreFields(title: title, ref: ref, leaf: leaf, detail: detail, query: subQuery)
+        }
+
+        return scoreFields(title: title, ref: ref, leaf: leaf, detail: detail, query: query)
+    }
+
+    private static func scoreFields(
+        title: String,
+        ref: String,
+        leaf: String,
+        detail: String,
+        query: String
+    ) -> Int? {
         if title == query || ref == query || leaf == query { return 1000 }
         if title.hasPrefix(query) || leaf.hasPrefix(query) { return 800 }
         if ref.hasPrefix(query) { return 700 }

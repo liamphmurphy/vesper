@@ -14,6 +14,11 @@ struct PrintDocumentBuilderTests {
         #expect(PrintDocumentBuilder.stripDuplicateLeadingHeading("## Project Plan\n\nBody", title: "Project Plan") == "## Project Plan\n\nBody")
     }
 
+    @Test func embedFallbackLabelStripsLibraryUUIDPrefix() {
+        #expect(PrintDocumentBuilder.embedFallbackLabel("![[library:11111111-2222-4333-8444-555555555555/Harbour map]]") == "Harbour map")
+        #expect(PrintDocumentBuilder.embedFallbackLabel("![[library:Harbour map]]") == "Harbour map")
+    }
+
     @Test func stripObsidianBlockIdsSkipsCodeBlocksAndInlineCode() {
         let md = """
         Regular paragraph ^abc-123

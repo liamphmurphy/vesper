@@ -229,6 +229,36 @@ final class LibraryLogicTests: XCTestCase {
         XCTAssertEqual(APIDate.shortAgo("2026-11-04T12:00:00Z", now: now, calendar: calendar, locale: locale), "Wed")
         XCTAssertEqual(APIDate.shortAgo("2026-10-30T12:00:00Z", now: now, calendar: calendar, locale: locale), "Oct 30")
     }
+
+    func testKnowledgeEmbedRefsAndURLParsing() {
+        let id = "11111111-2222-4333-8444-555555555555"
+        let img = API.LibraryItem(
+            contentType: "image/png", createdAt: "2026-11-07T12:00:00Z", detail: nil,
+            filename: "harbour.png", id: id, kind: .image, linkStatus: nil,
+            reference: nil, referencePersonaId: nil, referencePersonaName: nil,
+            sizeBytes: 128, source: .generated, title: "Harbour [Map] / v2", videoId: nil
+        )
+        XCTAssertTrue(LibraryLogic.isKnowledgeEmbeddable(img))
+        XCTAssertFalse(LibraryLogic.isKnowledgeEmbeddable(item(kind: .audio)))
+        XCTAssertFalse(LibraryLogic.isKnowledgeEmbeddable(item(kind: .link)))
+        XCTAssertEqual(LibraryLogic.embedRef(for: img), "library:\(id)/Harbour Map v2")
+        XCTAssertEqual(LibraryLogic.embedMarkdown(for: img), "![[library:\(id)/Harbour Map v2]]")
+        XCTAssertEqual(LibraryLogic.embedMarkdown(id: id), "![[library:\(id)]]")
+
+        let embed = LibraryLogic.knowledgeEmbed(for: img)
+        XCTAssertEqual(embed.kind, "image")
+        XCTAssertEqual(embed.url, "/api/v1/library/\(id)/content")
+        XCTAssertEqual(embed.ref, "![[library:\(id)/Harbour Map v2]]")
+
+        // URL parsing from Copy Link and app links
+        XCTAssertEqual(LibraryLogic.libraryItemID(fromURL: "http://localhost:8000/api/v1/library/\(id)/content"), id)
+        XCTAssertEqual(LibraryLogic.libraryItemID(fromURL: "https://vesper.local/api/v1/library/\(id)/content?download=true"), id)
+        XCTAssertEqual(LibraryLogic.libraryItemID(fromURL: "/api/v1/library/\(id)"), id)
+        XCTAssertEqual(LibraryLogic.libraryItemID(fromURL: "http://localhost:8000/library?tab=images&item=\(id)"), id)
+        XCTAssertNil(LibraryLogic.libraryItemID(fromURL: "http://localhost:8000/api/v1/library/not-a-uuid/content"))
+        XCTAssertNil(LibraryLogic.libraryItemID(fromURL: "https://example.com/image.png"))
+        XCTAssertNil(LibraryLogic.libraryItemID(fromURL: "just some text"))
+    }
 }
 
 final class LibrarySelectionTests: XCTestCase {
