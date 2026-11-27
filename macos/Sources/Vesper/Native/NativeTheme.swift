@@ -38,6 +38,11 @@ extension ThemeTokens {
         return .system(size: pointSize(style), weight: weight, design: style.isMonospaced ? .monospaced : .default)
     }
 
+    /// A system font scaled by the current text size.
+    func scaledFont(size: Double, weight: Font.Weight = .regular, design: Font.Design = .default) -> Font {
+        .system(size: size * typeScale, weight: weight, design: design)
+    }
+
     /// The colours native screens use most, with system fallbacks.
     var palette: NativePalette { NativePalette(theme: self) }
 }
