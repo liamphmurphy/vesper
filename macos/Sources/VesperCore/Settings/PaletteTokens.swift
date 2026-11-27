@@ -5,7 +5,43 @@ public enum AppearanceMode: String, Codable, Sendable, CaseIterable, Equatable {
 }
 
 public enum AppearanceTextSize: String, Codable, Sendable, CaseIterable, Equatable {
-    case small, `default`, large, larger
+    case xsmall, small, `default`, large, larger, xlarge, xxlarge, xxxlarge
+
+    /// Type scale factor applied across native views (`ThemeTokens.typeScale`).
+    public var scale: Double {
+        switch self {
+        case .xsmall: 0.80
+        case .small: 0.92
+        case .default: 1.0
+        case .large: 1.12
+        case .larger: 1.25
+        case .xlarge: 1.40
+        case .xxlarge: 1.55
+        case .xxxlarge: 1.75
+        }
+    }
+
+    /// Percentage label for settings and tooltips (e.g. "100%", "125%").
+    public var percentLabel: String {
+        "\(Int((scale * 100).rounded()))%"
+    }
+
+    public var canStepIn: Bool { self != Self.allCases.last }
+    public var canStepOut: Bool { self != Self.allCases.first }
+
+    /// Next larger step, clamped at the maximum.
+    public func steppedIn() -> AppearanceTextSize {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self), idx + 1 < all.count else { return self }
+        return all[idx + 1]
+    }
+
+    /// Next smaller step, clamped at the minimum.
+    public func steppedOut() -> AppearanceTextSize {
+        let all = Self.allCases
+        guard let idx = all.firstIndex(of: self), idx > 0 else { return self }
+        return all[idx - 1]
+    }
 }
 
 public struct CustomPaletteOverrides: Codable, Sendable, Equatable {

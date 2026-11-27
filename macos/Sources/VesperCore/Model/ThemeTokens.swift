@@ -26,7 +26,7 @@ public struct ThemeTokens: Sendable, Equatable {
     public var mode: ColorMode
     /// CSS variable names without "--" ("text", "accent", "state-done"…) to "#RRGGBB(AA)".
     public var colors: [String: String]
-    /// Settings → Text size: "small", "default", "large" or "larger".
+    /// Settings → Text size: `AppearanceTextSize` raw value (e.g. "small", "default", "large", "larger", "xlarge"…).
     public var textSize: String?
 
     public init(mode: ColorMode, colors: [String: String] = [:], textSize: String? = nil) {
@@ -35,10 +35,9 @@ public struct ThemeTokens: Sendable, Equatable {
         self.textSize = textSize
     }
 
-    /// globals.css `:root[data-text-size=…] { --type-scale }`.
-    static let typeScales: [String: Double] = ["small": 0.92, "default": 1, "large": 1.12, "larger": 1.25]
-
-    public var typeScale: Double { Self.typeScales[textSize ?? "default"] ?? 1 }
+    public var typeScale: Double {
+        AppearanceTextSize(rawValue: textSize ?? "default")?.scale ?? 1
+    }
 
     /// A named colour, nil when the page hasn't sent it (or sent something that isn't a hex colour).
     public func color(_ name: String) -> RGBA? {
