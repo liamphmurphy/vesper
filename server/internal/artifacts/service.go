@@ -273,9 +273,13 @@ func writeVersion(ctx context.Context, q *store.Queries, a store.Artifact, r res
 			return store.ArtifactVersion{}, err
 		}
 	}
+	wordCount := 0
+	if r.body != nil && a.Type != "mockup" {
+		wordCount = CountWords(*r.body)
+	}
 	v, err := q.CreateArtifactVersion(ctx, store.CreateArtifactVersionParams{
 		ArtifactID: a.ID, Label: label, Properties: r.properties, BodyMd: r.body, BlobKey: r.blobKey, Filename: r.filename,
-		ContentType: r.contentType, SizeBytes: r.size, Note: note, CreatedByType: by.Type, CreatedByID: by.ID,
+		ContentType: r.contentType, SizeBytes: r.size, WordCount: int32(wordCount), Note: note, CreatedByType: by.Type, CreatedByID: by.ID,
 		State: state, BasedOnVersionID: basedOn, ReviewState: review,
 	})
 	if err != nil {

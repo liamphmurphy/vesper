@@ -178,6 +178,7 @@ type ArtifactVersion struct {
 	ReviewSnapshotKey      *string
 	ReviewSnapshotRenderer *string
 	ReviewSnapshotSha256   *string
+	WordCount              int32
 }
 
 type BackupEncryption struct {
