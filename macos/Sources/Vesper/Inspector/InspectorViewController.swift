@@ -30,6 +30,8 @@ final class InspectorViewController: NSViewController {
     private var nativeHost: NSHostingController<InspectorBodyHost>?
     private var companionHost: NSHostingController<CompanionChatHost>?
     private var nativePanelHost: NSHostingController<NativeInspectorPanelHost>?
+    private var activeHostConstraints: [ObjectIdentifier: [NSLayoutConstraint]] = [:]
+    private weak var activeHostView: NSView?
     private var companionScreenContext: NativeScreenContext?
     private let onPanelEvent: (String, String, String?) -> Void
     private var popout: InspectorPopoutController?
@@ -61,6 +63,7 @@ final class InspectorViewController: NSViewController {
 
     override func loadView() {
         let backdrop = NSVisualEffectView()
+        backdrop.wantsLayer = true
         backdrop.material = .sidebar
         backdrop.blendingMode = .behindWindow
         backdrop.state = .followsWindowActiveState
@@ -114,12 +117,16 @@ final class InspectorViewController: NSViewController {
         nativePanel.view.translatesAutoresizingMaskIntoConstraints = false
         nativePanelHost = nativePanel
 
+        bodyContainer.wantsLayer = true
         bodyContainer.translatesAutoresizingMaskIntoConstraints = false
         bodyContainer.addSubview(header)
         bodyContainer.addSubview(separator)
-        bodyContainer.addSubview(native.view)
-        bodyContainer.addSubview(companion.view)
-        bodyContainer.addSubview(nativePanel.view)
+        for hostView in [native.view, companion.view, nativePanel.view] {
+            hostView.translatesAutoresizingMaskIntoConstraints = true
+            hostView.autoresizingMask = []
+            hostView.isHidden = true
+            bodyContainer.addSubview(hostView)
+        }
 
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: bodyContainer.topAnchor),
@@ -130,21 +137,6 @@ final class InspectorViewController: NSViewController {
             separator.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
             separator.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
             separator.heightAnchor.constraint(equalToConstant: 1),
-
-            native.view.topAnchor.constraint(equalTo: separator.bottomAnchor),
-            native.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            native.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            native.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
-
-            companion.view.topAnchor.constraint(equalTo: separator.bottomAnchor),
-            companion.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            companion.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            companion.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
-
-            nativePanel.view.topAnchor.constraint(equalTo: separator.bottomAnchor),
-            nativePanel.view.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
-            nativePanel.view.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
-            nativePanel.view.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
         ])
 
         attachBodyContainer(to: backdrop)
@@ -193,10 +185,48 @@ final class InspectorViewController: NSViewController {
         let active = InspectorLogic.activeTab(in: model)
         let isCompanion = active?.kind == .companion
         let isPanel = active?.kind == .panel
-        nativeHost?.view.isHidden = isCompanion || isPanel
-        companionHost?.view.isHidden = !isCompanion
-        nativePanelHost?.view.isHidden = !isPanel
+        let targetView: NSView? = if isCompanion {
+            companionHost?.view
+        } else if isPanel {
+            nativePanelHost?.view
+        } else {
+            nativeHost?.view
+        }
+        activateHostView(targetView)
         popout?.window?.title = active?.label ?? "Inspector"
+    }
+
+    /// Pins only the active inspector host to live Auto Layout while freezing the two inactive
+    /// hosts' frames so resizing or expanding the inspector never lays out hidden SwiftUI trees.
+    private func activateHostView(_ target: NSView?) {
+        guard target !== activeHostView else { return }
+        if let old = activeHostView {
+            let key = ObjectIdentifier(old)
+            if let constraints = activeHostConstraints.removeValue(forKey: key) {
+                NSLayoutConstraint.deactivate(constraints)
+            }
+            let frozenFrame = old.frame
+            old.translatesAutoresizingMaskIntoConstraints = true
+            old.autoresizingMask = []
+            old.frame = frozenFrame
+            old.isHidden = true
+        }
+        activeHostView = target
+        guard let target else { return }
+        target.translatesAutoresizingMaskIntoConstraints = false
+        let key = ObjectIdentifier(target)
+        if activeHostConstraints[key] == nil {
+            let constraints = [
+                target.topAnchor.constraint(equalTo: separator.bottomAnchor),
+                target.leadingAnchor.constraint(equalTo: bodyContainer.leadingAnchor),
+                target.trailingAnchor.constraint(equalTo: bodyContainer.trailingAnchor),
+                target.bottomAnchor.constraint(equalTo: bodyContainer.bottomAnchor),
+            ]
+            NSLayoutConstraint.activate(constraints)
+            activeHostConstraints[key] = constraints
+        }
+        target.isHidden = false
+        bodyContainer.needsLayout = true
     }
 
     private func makeHeaderView() -> InspectorHeaderView {

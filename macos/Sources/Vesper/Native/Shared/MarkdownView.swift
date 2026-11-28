@@ -226,9 +226,15 @@ private struct MarkdownText: NSViewRepresentable {
         view.onLink = onLink
         view.onSelectionAction = onSelectionAction
         view.selectionTheme = theme
-        context.coordinator.latest = (document, theme, options)
+        let coordinator = context.coordinator
+        view.onDeferredReflowSettle = { [weak coordinator, weak view] in
+            guard let coordinator, let view else { return }
+            let settledWidth = view.bounds.width > 0 ? view.bounds.width : (coordinator.width ?? 600)
+            coordinator.render(view, width: settledWidth)
+        }
+        coordinator.latest = (document, theme, options)
         // Before the first sizeThatFits the width is a guess; sizing renders again at the real one.
-        context.coordinator.render(view, width: context.coordinator.width ?? 600)
+        coordinator.render(view, width: coordinator.width ?? 600)
         view.highlight(query: find.query, caseSensitive: find.caseSensitive, isCurrent: find.isCurrent, match: find.match, current: find.current)
     }
 
@@ -288,12 +294,26 @@ final class MarkdownRenderCoordinator {
             links: options.links, images: imageKeys, math: Set(options.math.keys)
         )
         if key != rendered {
+            if let existing = rendered, view.isDeferringSplitReflow {
+                var keyWithOldWidth = key
+                keyWithOldWidth.width = existing.width
+                if keyWithOldWidth == existing {
+                    // Only the width changed on a width-sensitive block (table/image/display math)
+                    // mid-split-slide: defer rebuilding until the split animation settles.
+                    view.noteDeferredWidthChange()
+                    return
+                }
+            }
             rendered = key
             fullRenderCount &+= 1
             view.show(
                 MarkdownRenderer.render(latest.document, theme: latest.theme, options: options),
                 renderedWidth: width
             )
+        } else if view.isDeferringSplitReflow {
+            if !(view.rendering?.rightTabStops.isEmpty ?? true) {
+                view.noteDeferredWidthChange()
+            }
         } else {
             view.updateRightTabStops(forWidth: width)
         }

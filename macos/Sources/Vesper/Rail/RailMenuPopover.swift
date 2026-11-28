@@ -6,7 +6,11 @@ import VesperCore
 /// rail with the system animation, like the Needs-you popover, instead of a plain menu.
 @MainActor
 final class RailMenuPopover: NSObject, NSPopoverDelegate {
+    private static let popoverWidth: CGFloat = 280
+    private static let maxPopoverHeight: CGFloat = 468
+
     private let popover = NSPopover()
+    private var hostController: NSHostingController<RailMenuView>?
     private(set) var itemId: String?
 
     override init() {
@@ -21,15 +25,30 @@ final class RailMenuPopover: NSObject, NSPopoverDelegate {
     func close() { popover.performClose(nil) }
 
     /// Shows `item`'s menu beside `button`; `choose` gets the picked entry's id.
+    /// Reuses one `NSHostingController` and pre-computes `popover.contentSize` upfront so frame 0
+    /// of the flyout animation does not stall on hosting-controller creation or double layout.
     func show(_ item: RailItem, relativeTo button: NSView, choose: @escaping (String) -> Void) {
         itemId = item.id
         let view = RailMenuView(title: item.label, items: item.menu ?? []) { [weak self] id in
             self?.popover.performClose(nil)
             choose(id)
         }
-        let host = NSHostingController(rootView: view)
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
+        let host: NSHostingController<RailMenuView>
+        if let existing = hostController {
+            existing.rootView = view
+            host = existing
+        } else {
+            let created = NSHostingController(rootView: view)
+            created.sizingOptions = []
+            hostController = created
+            popover.contentViewController = created
+            host = created
+        }
+        let fitted = host.sizeThatFits(in: CGSize(width: Self.popoverWidth, height: Self.maxPopoverHeight))
+        popover.contentSize = NSSize(
+            width: Self.popoverWidth,
+            height: min(Self.maxPopoverHeight, max(64, ceil(fitted.height)))
+        )
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minX)
     }
 

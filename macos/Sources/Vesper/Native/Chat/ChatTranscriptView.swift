@@ -6,7 +6,7 @@ struct ChatScrollMessageRequest: Equatable {
     let messageId: String
 }
 
-/// Tail-windowed native chat transcript (`ScrollView` + `VStack`, zero per-message web views).
+/// Tail-windowed native chat transcript (`ScrollView` + `LazyVStack`, zero per-message web views).
 /// Renders parsed `ChatMessageSegment`s, persona avatars, cards, media, proposals, and the live Work/Thinking card.
 struct ChatTranscriptView: View {
     @Environment(NativeScreenContext.self) private var context
@@ -161,7 +161,7 @@ struct ChatTranscriptView: View {
             case .ready:
                 ScrollViewReader { proxy in
                     ScrollView {
-                        VStack(alignment: .leading, spacing: 18) {
+                        LazyVStack(alignment: .leading, spacing: 18) {
                             if hiddenCount > 0 {
                                 earlierMessagesButton(hiddenCount: hiddenCount) {
                                     let anchorId = visibleMessages.first?.message.id

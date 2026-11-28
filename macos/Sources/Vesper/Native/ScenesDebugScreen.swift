@@ -106,7 +106,7 @@ struct ScenesDebugScreen: View {
     private var transitionLabHeaderText: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Stage transitions & wind-down").vesperText(.heading, theme)
-            Text("60fps diorama stage, 800ms hold, rapid-click transient skip, 240ms crossfade + scale settle, 600ms wind-down")
+            Text("120Hz ProMotion diorama stage, 800ms hold, rapid-click transient skip, 240ms crossfade + scale settle, 600ms wind-down")
                 .vesperText(.small, theme)
                 .foregroundStyle(theme.palette.secondaryText)
         }

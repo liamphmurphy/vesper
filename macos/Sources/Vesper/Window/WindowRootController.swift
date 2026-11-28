@@ -13,6 +13,7 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
     private var railWidth: NSLayoutConstraint?
     private var splitTrailing: NSLayoutConstraint?
     private var toastHost: NSHostingView<ToastOverlayView>?
+    private var perfHUD: PerfHUDView?
 
     var onToggleSidebar: ((Any?) -> Void)?
     var onToggleInspector: ((Any?) -> Void)?
@@ -49,6 +50,10 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
 
         if let toastHost {
             attachToasts(toastHost, to: root)
+        }
+
+        if let perfHUD {
+            attachPerfHUD(perfHUD, to: root)
         }
     }
 
@@ -94,6 +99,25 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         }
     }
 
+    /// Installs the opt-in Performance HUD pill (`VESPER_PERF_HUD=1` or View ▸ Show Performance HUD)
+    /// pinned to the top-trailing corner of the split area. Completely inactive when disabled.
+    func installPerfHUD(settings: PerfHUDSettings = .shared) {
+        precondition(perfHUD == nil)
+        let hud = PerfHUDView()
+        hud.translatesAutoresizingMaskIntoConstraints = false
+        perfHUD = hud
+        if isViewLoaded {
+            attachPerfHUD(hud, to: view)
+        }
+        track({ [weak settings] in settings?.isEnabled ?? false }) { [weak hud] enabled in
+            hud?.isEnabled = enabled
+        }
+    }
+
+    func teardownPerfHUD() {
+        perfHUD?.teardown()
+    }
+
     private func attachRail(_ bar: RailBarView, to root: NSView) {
         splitTrailing?.isActive = false
         splitTrailing = nil
@@ -121,6 +145,14 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
             host.centerXAnchor.constraint(equalTo: root.centerXAnchor),
             host.bottomAnchor.constraint(equalTo: root.bottomAnchor, constant: -20),
             host.widthAnchor.constraint(lessThanOrEqualToConstant: 440),
+        ])
+    }
+
+    private func attachPerfHUD(_ hud: PerfHUDView, to root: NSView) {
+        root.addSubview(hud, positioned: .above, relativeTo: nil)
+        NSLayoutConstraint.activate([
+            hud.topAnchor.constraint(equalTo: root.safeAreaLayoutGuide.topAnchor, constant: 10),
+            hud.trailingAnchor.constraint(equalTo: split.view.trailingAnchor, constant: -12),
         ])
     }
 

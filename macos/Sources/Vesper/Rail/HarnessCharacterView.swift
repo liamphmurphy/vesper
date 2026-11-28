@@ -1,11 +1,14 @@
+import CoreGraphics
+import QuartzCore
 import SwiftUI
 import VesperCore
 
 /// Animated harness characters drawn on a 64x64 grid for the chat composer's status strip and
-/// usage button. Reduce Motion, occluded/hidden hosts, backgrounded app (when idle), and Low Power
-/// Mode (when idle) freeze the pose at t = 0 with no timeline running.
+/// usage button via `CADisplayLink` at native ProMotion refresh rates (120Hz active, 30Hz Low Power).
+/// Reduce Motion, occluded/hidden hosts, backgrounded app (when idle), and Low Power Mode (when
+/// idle) freeze the pose at t = 0 with no display link running.
 struct HarnessCharacterView: View {
-    enum Kind { case robot, comet, jet }
+    enum Kind: Hashable { case robot, comet, jet }
 
     let kind: Kind
     let working: Bool
@@ -13,7 +16,6 @@ struct HarnessCharacterView: View {
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.vesperWindowVisible) private var windowVisible
-    @State private var start = Date()
 
     /// nil for a harness without a character (the caller keeps the avatar).
     static func kind(for harness: String) -> Kind? {
@@ -34,33 +36,38 @@ struct HarnessCharacterView: View {
     }
 
     var body: some View {
-        let context = AppPowerState.shared.animationContext(
+        let power = AppPowerState.shared
+        let context = power.animationContext(
             reduceMotion: reduceMotion,
             windowVisible: windowVisible
         )
         let animate = AnimationPolicy.shouldAnimate(working: working, context: context)
-        Group {
-            if animate {
-                // Use `.periodic` instead of `.animation(minimumInterval:)` so SwiftUI does not
-                // attach a 120Hz ProMotion DisplayLink just to throttle it down.
-                TimelineView(.periodic(from: start, by: AnimationPolicy.harnessTickInterval(working: working))) { timeline in
-                    canvas(at: timeline.date.timeIntervalSinceReferenceDate)
-                }
-            } else {
-                canvas(at: 0)
-            }
+        let frameRate = AnimationPolicy.displayLinkFrameRate(working: working, lowPowerMode: power.isLowPowerMode)
+        let redrawToken: Int = {
+            var hasher = Hasher()
+            hasher.combine(kind)
+            hasher.combine(working)
+            return hasher.finalize()
+        }()
+        let characterKind = kind
+        let isWorking = working
+
+        DisplayLinkCanvasView(
+            isAnimating: animate,
+            frameRateProfile: frameRate,
+            redrawToken: redrawToken
+        ) { cg, canvasSize, timestamp in
+            let scale = min(canvasSize.width, canvasSize.height) / 64
+            let dx = (canvasSize.width - 64 * scale) * 0.5
+            let dy = (canvasSize.height - 64 * scale) * 0.5
+            cg.saveGState()
+            cg.translateBy(x: dx, y: dy)
+            cg.scaleBy(x: scale, y: scale)
+            CharacterDrawing.draw(characterKind, working: isWorking, t: animate ? timestamp : 0, in: cg)
+            cg.restoreGState()
         }
         .frame(width: size, height: size)
         .accessibilityHidden(true)
-    }
-
-    private func canvas(at t: Double) -> some View {
-        Canvas { ctx, canvas in
-            let scale = min(canvas.width, canvas.height) / 64
-            var c = ctx
-            c.scaleBy(x: scale, y: scale)
-            CharacterDrawing.draw(kind, working: working, t: t, in: &c)
-        }
     }
 }
 
@@ -171,142 +178,218 @@ private enum Motion {
     static let twinkle = CSSAnimation(duration: 1.3, easing: .steps2, frames: [(0.5, Pose(opacity: 0.25))])
 }
 
-// MARK: - Drawing
+// MARK: - CoreGraphics Drawing (Y-down 64x64 viewBox)
 
 private enum CharacterDrawing {
     static let pivot = CGPoint(x: 32, y: 34)
 
-    /// `pose` as CSS `transform: translate() rotate() scale()` about 32,34.
-    static func apply(_ pose: Pose, to c: inout GraphicsContext) {
-        c.translateBy(x: pose.tx, y: pose.ty)
-        c.translateBy(x: pivot.x, y: pivot.y)
-        c.rotate(by: .degrees(pose.rot))
-        c.scaleBy(x: pose.sx, y: pose.sy)
-        c.translateBy(x: -pivot.x, y: -pivot.y)
+    private static let colorBlack = cgColor(0x000000)
+    private static let colorRobot = cgColor(0xF2A97E)
+    private static let colorRobotSpark = cgColor(0xFFD6A0)
+    private static let colorRobotEye = cgColor(0x30202B)
+    private static let colorRobotMouth = cgColor(0x70443D)
+    private static let colorComet = cgColor(0xB09AEF)
+    private static let colorCometEye = cgColor(0x30213F)
+    private static let colorCometMouth = cgColor(0x65467F)
+    private static let colorCometLight = cgColor(0xDEC9FF)
+    private static let colorJet = cgColor(0x78BFDE)
+    private static let colorJetFlame = cgColor(0x94D5F4)
+    private static let colorJetCore = cgColor(0xFFCB9F)
+    private static let colorJetWing = cgColor(0x4B85AD)
+    private static let colorJetVisor = cgColor(0x21485E)
+    private static let colorJetEye = cgColor(0xBDEAFF)
+    private static let colorJetDot = cgColor(0xD0EFFF)
+
+    private static func cgColor(_ hex: UInt32) -> CGColor {
+        CGColor(
+            srgbRed: CGFloat((hex >> 16) & 0xFF) / 255,
+            green: CGFloat((hex >> 8) & 0xFF) / 255,
+            blue: CGFloat(hex & 0xFF) / 255,
+            alpha: 1
+        )
     }
 
-    /// Draws `body` with the pose's transform and opacity on a copy of the context.
-    static func group(_ pose: Pose, _ c: inout GraphicsContext, _ body: (inout GraphicsContext) -> Void) {
-        var g = c
-        apply(pose, to: &g)
-        g.opacity = c.opacity * pose.opacity
-        body(&g)
+    private static func bodyColor(for kind: HarnessCharacterView.Kind) -> CGColor {
+        switch kind {
+        case .robot: colorRobot
+        case .comet: colorComet
+        case .jet: colorJet
+        }
     }
 
-    static func rect(_ c: inout GraphicsContext, _ x: Double, _ y: Double, _ w: Double, _ h: Double, _ r: Double, _ color: Color) {
-        c.fill(Path(roundedRect: CGRect(x: x, y: y, width: w, height: h), cornerRadius: r), with: .color(color))
+    /// Draws `body` with the pose's transform and multiplied alpha on a saved graphics state.
+    private static func group(
+        _ pose: Pose,
+        alpha: CGFloat,
+        in ctx: CGContext,
+        _ body: (CGContext, CGFloat) -> Void
+    ) {
+        let nextAlpha = alpha * CGFloat(pose.opacity)
+        ctx.saveGState()
+        ctx.translateBy(x: pose.tx, y: pose.ty)
+        ctx.translateBy(x: pivot.x, y: pivot.y)
+        ctx.rotate(by: pose.rot * .pi / 180)
+        ctx.scaleBy(x: pose.sx, y: pose.sy)
+        ctx.translateBy(x: -pivot.x, y: -pivot.y)
+        ctx.setAlpha(nextAlpha)
+        body(ctx, nextAlpha)
+        ctx.restoreGState()
     }
 
-    static func ellipse(_ c: inout GraphicsContext, _ cx: Double, _ cy: Double, _ rx: Double, _ ry: Double, _ color: Color) {
-        c.fill(Path(ellipseIn: CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2)), with: .color(color))
+    private static func rect(_ ctx: CGContext, _ x: CGFloat, _ y: CGFloat, _ w: CGFloat, _ h: CGFloat, _ r: CGFloat, _ color: CGColor) {
+        let path = CGPath(roundedRect: CGRect(x: x, y: y, width: w, height: h), cornerWidth: r, cornerHeight: r, transform: nil)
+        ctx.setFillColor(color)
+        ctx.addPath(path)
+        ctx.fillPath()
     }
 
-    static func stroke(_ c: inout GraphicsContext, _ path: Path, _ color: Color, _ width: Double, round: Bool) {
-        c.stroke(path, with: .color(color), style: StrokeStyle(lineWidth: width, lineCap: round ? .round : .butt))
+    private static func ellipse(_ ctx: CGContext, _ cx: CGFloat, _ cy: CGFloat, _ rx: CGFloat, _ ry: CGFloat, _ color: CGColor) {
+        ctx.setFillColor(color)
+        ctx.fillEllipse(in: CGRect(x: cx - rx, y: cy - ry, width: rx * 2, height: ry * 2))
     }
 
-    static func draw(_ kind: HarnessCharacterView.Kind, working: Bool, t: Double, in c: inout GraphicsContext) {
-        let color = HarnessCharacterView.color(for: kind)
+    private static func stroke(_ ctx: CGContext, _ path: CGPath, _ color: CGColor, _ width: CGFloat, round: Bool) {
+        ctx.setStrokeColor(color)
+        ctx.setLineWidth(width)
+        ctx.setLineCap(round ? .round : .butt)
+        ctx.addPath(path)
+        ctx.strokePath()
+    }
+
+    static func draw(_ kind: HarnessCharacterView.Kind, working: Bool, t: Double, in ctx: CGContext) {
+        let color = bodyColor(for: kind)
         let blink = Motion.blink.pose(at: t)
         let shadow = Motion.shadow.pose(at: t)
-        func shadowEllipse(cy: Double, rx: Double, ry: Double) {
-            group(shadow, &c) { ellipse(&$0, 32, cy, rx, ry, .black) }
+        func shadowEllipse(cy: CGFloat, rx: CGFloat, ry: CGFloat) {
+            group(shadow, alpha: 1, in: ctx) { c, _ in ellipse(c, 32, cy, rx, ry, colorBlack) }
         }
         switch kind {
         case .robot:
             shadowEllipse(cy: 58, rx: 17, ry: 3)
             let legA = working ? Motion.leg.pose(at: t) : Pose()
             let legB = working ? Motion.legB.pose(at: t) : Pose()
-            for (x, y, w, h, pose) in [(15.0, 43.0, 6.0, 11.0, legA), (25, 43, 5, 12, legB), (35, 43, 5, 12, legA), (44, 43, 6, 11, legB)] {
-                group(pose, &c) { rect(&$0, x, y, w, h, 2, color) }
+            for (x, y, w, h, pose) in [(CGFloat(15), CGFloat(43), CGFloat(6), CGFloat(11), legA),
+                                       (25, 43, 5, 12, legB),
+                                       (35, 43, 5, 12, legA),
+                                       (44, 43, 6, 11, legB)] {
+                group(pose, alpha: 1, in: ctx) { c, _ in rect(c, x, y, w, h, 2, color) }
             }
             let body = working ? Motion.tap.pose(at: t) : Motion.breathe.pose(at: t)
-            group(body, &c) { b in
-                rect(&b, 7, 28, 7, 12, 3, color)
-                rect(&b, 50, 28, 7, 12, 3, color)
-                rect(&b, 12, 20, 40, 27, 6, color)
-                var stem = Path(); stem.move(to: CGPoint(x: 32, y: 20)); stem.addLine(to: CGPoint(x: 32, y: 14))
-                stroke(&b, stem, color, 3, round: false)
+            group(body, alpha: 1, in: ctx) { b, alpha in
+                rect(b, 7, 28, 7, 12, 3, color)
+                rect(b, 50, 28, 7, 12, 3, color)
+                rect(b, 12, 20, 40, 27, 6, color)
+                let stem = CGMutablePath()
+                stem.move(to: CGPoint(x: 32, y: 20))
+                stem.addLine(to: CGPoint(x: 32, y: 14))
+                stroke(b, stem, color, 3, round: false)
                 if working {
-                    group(Motion.twinkle.pose(at: t), &b) { ellipse(&$0, 32, 12, 3, 3, Color(hex: 0xFFD6A0)) }
+                    group(Motion.twinkle.pose(at: t), alpha: alpha, in: b) { c, _ in
+                        ellipse(c, 32, 12, 3, 3, colorRobotSpark)
+                    }
                 }
-                group(blink, &b) { e in
-                    rect(&e, 22, 29, 4, 6, 1.5, Color(hex: 0x30202B))
-                    rect(&e, 39, 29, 4, 6, 1.5, Color(hex: 0x30202B))
+                group(blink, alpha: alpha, in: b) { e, _ in
+                    rect(e, 22, 29, 4, 6, 1.5, colorRobotEye)
+                    rect(e, 39, 29, 4, 6, 1.5, colorRobotEye)
                 }
-                var mouth = Path(); mouth.move(to: CGPoint(x: 29, y: 39))
+                let mouth = CGMutablePath()
+                mouth.move(to: CGPoint(x: 29, y: 39))
                 mouth.addQuadCurve(to: CGPoint(x: 37, y: 38), control: CGPoint(x: 33, y: 42))
-                stroke(&b, mouth, Color(hex: 0x70443D), 1.5, round: true)
+                stroke(b, mouth, colorRobotMouth, 1.5, round: true)
             }
+
         case .comet:
             shadowEllipse(cy: 58, rx: 15, ry: 2.5)
             if working {
-                var trail = Path()
-                for (a, b) in [((8.0, 43.0), (3.0, 50.0)), ((13, 48), (9, 54)), ((7, 35), (2, 39))] {
-                    trail.move(to: CGPoint(x: a.0, y: a.1)); trail.addLine(to: CGPoint(x: b.0, y: b.1))
+                let trail = CGMutablePath()
+                for (a, b) in [((CGFloat(8), CGFloat(43)), (CGFloat(3), CGFloat(50))),
+                               ((13, 48), (9, 54)),
+                               ((7, 35), (2, 39))] {
+                    trail.move(to: CGPoint(x: a.0, y: a.1))
+                    trail.addLine(to: CGPoint(x: b.0, y: b.1))
                 }
-                var g = c; g.opacity = 0.4
-                stroke(&g, trail, color, 3, round: true)
+                ctx.saveGState()
+                ctx.setAlpha(0.4)
+                stroke(ctx, trail, color, 3, round: true)
+                ctx.restoreGState()
             }
             let body = working ? Motion.comet.pose(at: t) : Motion.float(5).pose(at: t)
-            group(body, &c) { b in
-                var star = Path()
+            group(body, alpha: 1, in: ctx) { b, alpha in
+                let star = CGMutablePath()
                 star.move(to: CGPoint(x: 32, y: 10))
-                for (cx, cy, x, y) in [(35.0, 24.0, 48.0, 18.0), (42, 29, 55, 34), (42, 35, 45, 49), (34, 42, 26, 54),
-                                       (24, 40, 11, 43), (20, 32, 10, 24), (24, 25, 32, 10)] {
+                for (cx, cy, x, y) in [(CGFloat(35), CGFloat(24), CGFloat(48), CGFloat(18)),
+                                       (42, 29, 55, 34),
+                                       (42, 35, 45, 49),
+                                       (34, 42, 26, 54),
+                                       (24, 40, 11, 43),
+                                       (20, 32, 10, 24),
+                                       (24, 25, 32, 10)] {
                     star.addQuadCurve(to: CGPoint(x: x, y: y), control: CGPoint(x: cx, y: cy))
                 }
                 star.closeSubpath()
-                b.fill(star, with: .color(color))
-                group(blink, &b) { e in
-                    ellipse(&e, 28, 31, 2, 3, Color(hex: 0x30213F))
-                    ellipse(&e, 39, 31, 2, 3, Color(hex: 0x30213F))
+                b.setFillColor(color)
+                b.addPath(star)
+                b.fillPath()
+                group(blink, alpha: alpha, in: b) { e, _ in
+                    ellipse(e, 28, 31, 2, 3, colorCometEye)
+                    ellipse(e, 39, 31, 2, 3, colorCometEye)
                 }
-                var mouth = Path(); mouth.move(to: CGPoint(x: 31, y: 37))
+                let mouth = CGMutablePath()
+                mouth.move(to: CGPoint(x: 31, y: 37))
                 mouth.addQuadCurve(to: CGPoint(x: 37, y: 36), control: CGPoint(x: 34, y: 40))
-                stroke(&b, mouth, Color(hex: 0x65467F), 1.5, round: true)
+                stroke(b, mouth, colorCometMouth, 1.5, round: true)
             }
             if working {
-                group(Motion.orbit.pose(at: t), &c) { o in
-                    let light = Color(hex: 0xDEC9FF)
-                    ellipse(&o, 55, 15, 2, 2, light)
-                    var plus = Path()
-                    plus.move(to: CGPoint(x: 11, y: 9)); plus.addLine(to: CGPoint(x: 11, y: 15))
-                    plus.move(to: CGPoint(x: 8, y: 12)); plus.addLine(to: CGPoint(x: 14, y: 12))
-                    stroke(&o, plus, light, 1.5, round: false)
+                group(Motion.orbit.pose(at: t), alpha: 1, in: ctx) { o, _ in
+                    ellipse(o, 55, 15, 2, 2, colorCometLight)
+                    let plus = CGMutablePath()
+                    plus.move(to: CGPoint(x: 11, y: 9))
+                    plus.addLine(to: CGPoint(x: 11, y: 15))
+                    plus.move(to: CGPoint(x: 8, y: 12))
+                    plus.addLine(to: CGPoint(x: 14, y: 12))
+                    stroke(o, plus, colorCometLight, 1.5, round: false)
                 }
             }
+
         case .jet:
             shadowEllipse(cy: 59, rx: 15, ry: 2.5)
             let body = working ? Motion.boost.pose(at: t) : Motion.float(4).pose(at: t)
-            group(body, &c) { b in
+            group(body, alpha: 1, in: ctx) { b, alpha in
                 if working {
-                    group(Motion.flame.pose(at: t), &b) { x in
-                        var flame = Path()
-                        flame.move(to: CGPoint(x: 23, y: 45)); flame.addQuadCurve(to: CGPoint(x: 26, y: 59), control: CGPoint(x: 20, y: 56))
+                    group(Motion.flame.pose(at: t), alpha: alpha, in: b) { x, _ in
+                        let flame = CGMutablePath()
+                        flame.move(to: CGPoint(x: 23, y: 45))
+                        flame.addQuadCurve(to: CGPoint(x: 26, y: 59), control: CGPoint(x: 20, y: 56))
                         flame.addQuadCurve(to: CGPoint(x: 28, y: 45), control: CGPoint(x: 31, y: 52))
-                        flame.move(to: CGPoint(x: 36, y: 45)); flame.addQuadCurve(to: CGPoint(x: 39, y: 59), control: CGPoint(x: 33, y: 56))
+                        flame.move(to: CGPoint(x: 36, y: 45))
+                        flame.addQuadCurve(to: CGPoint(x: 39, y: 59), control: CGPoint(x: 33, y: 56))
                         flame.addQuadCurve(to: CGPoint(x: 41, y: 45), control: CGPoint(x: 44, y: 52))
-                        x.fill(flame, with: .color(Color(hex: 0x94D5F4)))
-                        var core = Path()
-                        for (a, m, z) in [(25.0, 26.0, 28.0), (37, 39, 41)] {
-                            core.move(to: CGPoint(x: a, y: 45)); core.addLine(to: CGPoint(x: m, y: 54))
-                            core.addLine(to: CGPoint(x: z, y: 45)); core.closeSubpath()
+                        x.setFillColor(colorJetFlame)
+                        x.addPath(flame)
+                        x.fillPath()
+                        let core = CGMutablePath()
+                        for (a, m, z) in [(CGFloat(25), CGFloat(26), CGFloat(28)), (37, 39, 41)] {
+                            core.move(to: CGPoint(x: a, y: 45))
+                            core.addLine(to: CGPoint(x: m, y: 54))
+                            core.addLine(to: CGPoint(x: z, y: 45))
+                            core.closeSubpath()
                         }
-                        x.fill(core, with: .color(Color(hex: 0xFFCB9F)))
+                        x.setFillColor(colorJetCore)
+                        x.addPath(core)
+                        x.fillPath()
                     }
                 }
-                rect(&b, 11, 26, 8, 21, 4, Color(hex: 0x4B85AD))
-                rect(&b, 45, 26, 8, 21, 4, Color(hex: 0x4B85AD))
-                rect(&b, 18, 14, 28, 34, 14, color)
-                rect(&b, 21, 25, 22, 13, 6, Color(hex: 0x21485E))
-                group(blink, &b) { e in
-                    ellipse(&e, 28, 31, 1.8, 2.4, Color(hex: 0xBDEAFF))
-                    ellipse(&e, 37, 31, 1.8, 2.4, Color(hex: 0xBDEAFF))
+                rect(b, 11, 26, 8, 21, 4, colorJetWing)
+                rect(b, 45, 26, 8, 21, 4, colorJetWing)
+                rect(b, 18, 14, 28, 34, 14, color)
+                rect(b, 21, 25, 22, 13, 6, colorJetVisor)
+                group(blink, alpha: alpha, in: b) { e, _ in
+                    ellipse(e, 28, 31, 1.8, 2.4, colorJetEye)
+                    ellipse(e, 37, 31, 1.8, 2.4, colorJetEye)
                 }
-                rect(&b, 22, 44, 7, 7, 3, color)
-                rect(&b, 35, 44, 7, 7, 3, color)
-                ellipse(&b, 32, 42, 1.3, 1.3, Color(hex: 0xD0EFFF))
+                rect(b, 22, 44, 7, 7, 3, color)
+                rect(b, 35, 44, 7, 7, 3, color)
+                ellipse(b, 32, 42, 1.3, 1.3, colorJetDot)
             }
         }
     }

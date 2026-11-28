@@ -1,4 +1,5 @@
 import AppKit
+import QuartzCore
 import SwiftUI
 import VesperCore
 
@@ -29,18 +30,23 @@ struct PersonaStateStageView: View {
         let target = PersonaStateLoops.loop(for: reduceMotion ? .idle : state, talking: talking && !reduceMotion, complete: complete && !reduceMotion, in: loops)
         let pixels = Int((height * displayScale).rounded(.up))
         let isActiveState = (state != .idle && state != .staticState) || talking || complete
+        let power = AppPowerState.shared
         let animate = AnimationPolicy.shouldAnimate(
             working: isActiveState,
-            context: AppPowerState.shared.animationContext(
+            context: power.animationContext(
                 reduceMotion: reduceMotion,
                 windowVisible: windowVisible
             )
         )
         ZStack {
             if let shown {
-                LoopPlayer(frames: shown.frames, animate: animate)
-                    .id(shown.url)
-                    .transition(.opacity)
+                LoopPlayer(
+                    frames: shown.frames,
+                    animate: animate,
+                    lowPowerMode: power.isLowPowerMode
+                )
+                .id(shown.url)
+                .transition(.opacity)
             }
         }
         .frame(width: width, height: height)
@@ -59,28 +65,65 @@ struct PersonaStateStageView: View {
     }
 }
 
-/// Plays decoded frames on a periodic timer matching the loop's own frame delay; paused/single-frame
-/// loops mount no `TimelineView` at all so zero wakeups occur while occluded or backgrounded.
+/// Plays decoded frames phase-locked to VSync via `CADisplayLink`, only redrawing when `frameIndex`
+/// advances. Paused or single-frame loops run zero display links.
 private struct LoopPlayer: View {
     let frames: AnimatedImageFrames
     let animate: Bool
-    @State private var start = Date()
+    let lowPowerMode: Bool
+    @State private var clock = LoopClock()
 
     var body: some View {
-        if !animate || frames.frames.count < 2 {
-            frame(0)
-        } else {
-            TimelineView(.periodic(from: start, by: frames.recommendedTickInterval)) { ctx in
-                frame(frames.frameIndex(at: ctx.date.timeIntervalSince(start)))
+        let shouldAnimate = animate && frames.frames.count >= 2
+        let nativeFPS = frames.recommendedTickInterval > 0 ? (1.0 / frames.recommendedTickInterval) : 24.0
+        let profile = AnimationPolicy.displayLinkFrameRate(forTargetFPS: nativeFPS, lowPowerMode: lowPowerMode)
+        let loopFrames = frames
+        let loopClock = clock
+
+        DisplayLinkCanvasView(
+            isAnimating: shouldAnimate,
+            frameRateProfile: profile,
+            redrawToken: shouldAnimate ? 1 : 0,
+            shouldDraw: { timestamp in
+                let idx = loopFrames.frameIndex(at: max(0, timestamp - loopClock.start))
+                if idx == loopClock.lastDrawnIndex {
+                    return false
+                }
+                loopClock.lastDrawnIndex = idx
+                return true
             }
+        ) { cg, size, timestamp in
+            let idx = shouldAnimate ? loopFrames.frameIndex(at: max(0, timestamp - loopClock.start)) : 0
+            loopClock.lastDrawnIndex = idx
+            guard loopFrames.frames.indices.contains(idx) else { return }
+            Self.drawAspectFit(loopFrames.frames[idx], in: cg, boundsSize: size)
         }
     }
 
-    private func frame(_ i: Int) -> some View {
-        Image(decorative: frames.frames[i], scale: 1)
-            .resizable()
-            .interpolation(.medium)
-            .scaledToFit()
+    /// Draws `image` aspect-fit centered inside a Y-down `CGContext` (flipping locally because
+    /// `CGContext.draw(_:in:)` renders bitmaps in Y-up coordinates).
+    private static func drawAspectFit(_ image: CGImage, in cg: CGContext, boundsSize: CGSize) {
+        let imgW = CGFloat(image.width)
+        let imgH = CGFloat(image.height)
+        guard imgW > 0, imgH > 0, boundsSize.width > 0, boundsSize.height > 0 else { return }
+        let scale = min(boundsSize.width / imgW, boundsSize.height / imgH)
+        let drawW = imgW * scale
+        let drawH = imgH * scale
+        let dx = (boundsSize.width - drawW) * 0.5
+        let dy = (boundsSize.height - drawH) * 0.5
+
+        cg.saveGState()
+        cg.interpolationQuality = .medium
+        cg.translateBy(x: dx, y: dy + drawH)
+        cg.scaleBy(x: 1, y: -1)
+        cg.draw(image, in: CGRect(x: 0, y: 0, width: drawW, height: drawH))
+        cg.restoreGState()
+    }
+
+    @MainActor
+    private final class LoopClock {
+        let start: CFTimeInterval = CACurrentMediaTime()
+        var lastDrawnIndex: Int = -1
     }
 }
 

@@ -497,6 +497,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         app.aux.update { $0.tabs.layout = $0.tabs.layout == .compact ? .separate : .compact }
     }
 
+    @objc func togglePerfHUD(_ sender: Any?) {
+        PerfHUDSettings.shared.toggle()
+    }
+
     // MARK: Validation
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
@@ -570,6 +574,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             return (tabs()?.windows.count ?? 0) > 1
         case #selector(toggleCompactLayout(_:)):
             item.state = app.compactLayout ? .on : .off
+            return true
+        case #selector(togglePerfHUD(_:)):
+            item.state = PerfHUDSettings.shared.isEnabled ? .on : .off
             return true
         case #selector(moveTabToNewWindowAction(_:)):
             if let c = compactController { return c.tabs.list.count > 1 }

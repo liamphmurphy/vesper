@@ -255,4 +255,72 @@ struct ChatTranscriptPolishTests {
         #expect(observedChange.withLock { $0 })
         #expect(counter.parentBodies == initialBodies)
     }
+
+    @Test("split-view animation defers TextKit 2 and table reflows until settle, then reflows once")
+    func splitAnimationDefersTextKitAndTableReflowUntilSettle() {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 600),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.isReleasedWhenClosed = false
+        let root = NSView(frame: NSRect(x: 0, y: 0, width: 900, height: 600))
+        window.contentView = root
+
+        let theme = ThemeTokens(mode: .dark)
+        let options = MarkdownRenderOptions(textStyle: .chat, codeBlocks: true)
+
+        let proseDoc = MarkdownParser.parse(
+            "This is a multi-line assistant reply with enough prose to wrap differently when the right-rail inspector slides open and narrows the chat transcript column significantly.",
+            chat: true
+        )
+        let proseView = MarkdownTextView()
+        let proseCoordinator = MarkdownRenderCoordinator()
+        proseCoordinator.latest = (proseDoc, theme, options)
+        root.addSubview(proseView)
+        proseCoordinator.render(proseView, width: 820)
+        let initialProseHeight = proseView.fittingHeight(width: 820)
+        #expect(proseView.layoutPassCount == 1)
+
+        let tableDoc = MarkdownParser.parse("| Column A | Column B |\n| --- | --- |\n| Alpha value | Beta value |", chat: true)
+        let tableView = MarkdownTextView()
+        let tableCoordinator = MarkdownRenderCoordinator()
+        tableCoordinator.latest = (tableDoc, theme, options)
+        root.addSubview(tableView)
+        tableCoordinator.render(tableView, width: 820)
+        _ = tableView.fittingHeight(width: 820)
+        #expect(tableCoordinator.fullRenderCount == 1)
+        #expect(tableView.layoutPassCount == 1)
+
+        // During a split animation sweep, zero TextKit layouts or table re-renders should run.
+        SplitAnimationCoordinator.shared.beginAnimation(for: window)
+        for width: CGFloat in stride(from: 800, through: 360, by: -20) {
+            proseCoordinator.render(proseView, width: width)
+            let h = proseView.fittingHeight(width: width)
+            #expect(h == initialProseHeight)
+
+            tableCoordinator.render(tableView, width: width)
+            _ = tableView.fittingHeight(width: width)
+        }
+        #expect(proseView.layoutPassCount == 1)
+        #expect(proseView.textContainer?.widthTracksTextView == false)
+        #expect(proseView.clipsToBounds == true)
+        #expect(tableCoordinator.fullRenderCount == 1)
+        #expect(tableView.layoutPassCount == 1)
+
+        // Settling restores container tracking and allows one final crisp reflow at the target width.
+        SplitAnimationCoordinator.shared.endAnimation(for: window)
+        #expect(proseView.deferredReflowCount == 1)
+        #expect(proseView.textContainer?.widthTracksTextView == true)
+        #expect(proseView.clipsToBounds == false)
+        #expect(tableView.deferredReflowCount == 1)
+
+        let settledProseHeight = proseView.fittingHeight(width: 360)
+        #expect(proseView.layoutPassCount == 2)
+        #expect(settledProseHeight > initialProseHeight)
+
+        tableCoordinator.render(tableView, width: 360)
+        #expect(tableCoordinator.fullRenderCount == 2)
+    }
 }

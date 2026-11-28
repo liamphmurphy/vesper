@@ -7,20 +7,31 @@ import Testing
 struct TabContainerTests {
     private final class TrackingVC: NSViewController {
         var windowMoves = 0
+        var frameSizeChanges = 0
 
         override func loadView() {
             let v = TrackingView()
             v.onMoveToWindow = { [weak self] in self?.windowMoves += 1 }
+            v.onSetFrameSize = { [weak self] in self?.frameSizeChanges += 1 }
             view = v
         }
     }
 
     private final class TrackingView: NSView {
         var onMoveToWindow: (() -> Void)?
+        var onSetFrameSize: (() -> Void)?
 
         override func viewDidMoveToWindow() {
             super.viewDidMoveToWindow()
             onMoveToWindow?()
+        }
+
+        override func setFrameSize(_ newSize: NSSize) {
+            let changed = frame.size != newSize
+            super.setFrameSize(newSize)
+            if changed {
+                onSetFrameSize?()
+            }
         }
     }
 
@@ -111,5 +122,39 @@ struct TabContainerTests {
         #expect(tabB.view.superview == nil)
         #expect(tabB.parent == nil)
         #expect(!tabB.view.isHidden)
+    }
+
+    @Test("resizing the container skips layout on hidden mounted tabs and snaps on switch")
+    func resizingContainerSkipsHiddenTabLayout() {
+        let (window, container) = makeHostedContainer()
+        window.isReleasedWhenClosed = false
+        window.setContentSize(NSSize(width: 800, height: 600))
+
+        let tabA = TrackingVC()
+        let tabB = TrackingVC()
+        container.show(tabA)
+        window.contentView?.layoutSubtreeIfNeeded()
+        #expect(tabA.view.frame.width == 800)
+
+        container.show(tabB)
+        window.contentView?.layoutSubtreeIfNeeded()
+        #expect(tabB.view.frame.width == 800)
+
+        let hiddenResizesBefore = tabA.frameSizeChanges
+        // Simulate a split-view resize shrinking the center content pane.
+        for w: CGFloat in stride(from: 760, through: 520, by: -40) {
+            window.setContentSize(NSSize(width: w, height: 600))
+            window.contentView?.layoutSubtreeIfNeeded()
+        }
+
+        #expect(tabB.view.frame.width == 520)
+        #expect(tabA.view.frame.width == 800)
+        #expect(tabA.frameSizeChanges == hiddenResizesBefore)
+
+        // Switching back to tabA re-pins edge constraints and snaps to the new 520pt width.
+        container.show(tabA)
+        window.contentView?.layoutSubtreeIfNeeded()
+        #expect(tabA.view.frame.width == 520)
+        #expect(tabA.frameSizeChanges == hiddenResizesBefore + 1)
     }
 }

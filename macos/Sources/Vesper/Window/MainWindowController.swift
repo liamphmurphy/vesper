@@ -1,8 +1,40 @@
 import AppKit
 import Quartz
+import QuartzCore
 import SwiftUI
 import VesperCore
 import WebKit
+
+/// `NSSplitViewController` subclass that coordinates sidebar toggles with `SplitAnimationCoordinator`
+/// and a crisp 220ms ease-out curve so TextKit 2 reflows defer until the slide settles.
+@MainActor
+final class VesperSplitViewController: NSSplitViewController {
+    static let transitionDuration: TimeInterval = 0.22
+
+    override func viewDidLoad() {
+        super.viewDidLoad()
+        view.wantsLayer = true
+    }
+
+    override func toggleSidebar(_ sender: Any?) {
+        guard let sidebar = splitViewItems.first(where: { $0.behavior == .sidebar }) else {
+            super.toggleSidebar(sender)
+            return
+        }
+        let targetCollapsed = !sidebar.isCollapsed
+        let windowId = SplitAnimationCoordinator.shared.beginAnimation(for: view.window)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = Self.transitionDuration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            sidebar.animator().isCollapsed = targetCollapsed
+        }, completionHandler: {
+            Task { @MainActor in
+                SplitAnimationCoordinator.shared.endAnimation(windowId: windowId)
+            }
+        })
+    }
+}
 
 /// A window: Mail-style split view (native sidebar + web content) and unified toolbar. In the
 /// separate layout it holds one tab (and the system groups windows into tabs); in the compact
@@ -17,7 +49,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     /// Compact layout: several tabs in this window, drawn by us in the toolbar.
     let compact: Bool
     let tabs = TabsModel()
-    let split = NSSplitViewController()
+    let split: NSSplitViewController = VesperSplitViewController()
     let toastStore = ToastStore()
     private let container = TabContainerController()
     private var rootController: WindowRootController?
@@ -121,6 +153,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 openInNewTab: { [weak self] path in self?.openInMain(path: path, newTab: true) }
             ))
             sidebar.sizingOptions = []
+            sidebar.view.wantsLayer = true
             let item = NSSplitViewItem(sidebarWithViewController: sidebar)
             item.allowsFullHeightLayout = true
             item.minimumThickness = 185
@@ -182,6 +215,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             services: { [weak app] in app?.system }
         )
         root.installToasts(store: toastStore)
+        root.installPerfHUD()
         root.onToggleSidebar = { [weak self] sender in self?.split.toggleSidebar(sender) }
         root.onToggleInspector = { [weak self] sender in self?.toggleInspector(sender) }
         root.canToggleSidebar = { [weak self] in self?.hasSidebar == true }
@@ -363,6 +397,27 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         }
     }
 
+    /// Runs an AppKit split-view animation with a crisp ease-out curve while telling
+    /// `SplitAnimationCoordinator` to defer per-frame TextKit 2 reflows until the slide settles.
+    private func animateSplitTransition(
+        duration: TimeInterval = VesperSplitViewController.transitionDuration,
+        changes: () -> Void,
+        completion: (@MainActor () -> Void)? = nil
+    ) {
+        let windowId = SplitAnimationCoordinator.shared.beginAnimation(for: window)
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = duration
+            context.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            context.allowsImplicitAnimation = true
+            changes()
+        }, completionHandler: {
+            Task { @MainActor in
+                SplitAnimationCoordinator.shared.endAnimation(windowId: windowId)
+                completion?()
+            }
+        })
+    }
+
     /// Folds the sidebar while the active tab's page asks for the whole window, and unfolds it after,
     /// unless the person folded it themselves: a sidebar that was already folded stays folded.
     private func syncSidebarHidden(_ hidden: Bool) {
@@ -370,15 +425,13 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         if hidden {
             guard !item.isCollapsed else { return }
             sidebarFoldedForPage = true
-            NSAnimationContext.runAnimationGroup { context in
-                context.allowsImplicitAnimation = true
+            animateSplitTransition {
                 item.animator().isCollapsed = true
             }
         } else if sidebarFoldedForPage {
             sidebarFoldedForPage = false
             guard item.isCollapsed else { return }
-            NSAnimationContext.runAnimationGroup { context in
-                context.allowsImplicitAnimation = true
+            animateSplitTransition {
                 item.animator().isCollapsed = false
             }
         }
@@ -444,8 +497,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
         let desired = desiredInspectorWidth(for: widthClass)
         let dividerPos = splitWidth - desired - split.splitView.dividerThickness
         if animated {
-            NSAnimationContext.runAnimationGroup { context in
-                context.allowsImplicitAnimation = true
+            animateSplitTransition {
                 split.splitView.animator().setPosition(dividerPos, ofDividerAt: divider)
             }
         } else {
@@ -469,21 +521,18 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             item.maximumThickness = CGFloat(thickness.max)
         }
         inspectorSyncDepth += 1
-        NSAnimationContext.runAnimationGroup({ context in
-            context.allowsImplicitAnimation = true
+        animateSplitTransition(changes: {
             item.animator().isCollapsed = collapsed
-        }, completionHandler: {
-            Task { @MainActor [weak self, effectiveWidth, pinnedForAnimation] in
-                guard let self else { return }
-                if pinnedForAnimation, self.isAnimatingPinnedWidth, let insp = self.inspectorItem {
-                    self.isAnimatingPinnedWidth = false
-                    let activeWidth = InspectorLogic.activeTab(in: self.state.inspector)?.width ?? effectiveWidth
-                    let current = InspectorLogic.thickness(for: activeWidth)
-                    insp.minimumThickness = CGFloat(current.min)
-                    insp.maximumThickness = CGFloat(current.max)
-                }
-                self.inspectorSyncDepth = max(0, self.inspectorSyncDepth - 1)
+        }, completion: { [weak self, effectiveWidth, pinnedForAnimation] in
+            guard let self else { return }
+            if pinnedForAnimation, self.isAnimatingPinnedWidth, let insp = self.inspectorItem {
+                self.isAnimatingPinnedWidth = false
+                let activeWidth = InspectorLogic.activeTab(in: self.state.inspector)?.width ?? effectiveWidth
+                let current = InspectorLogic.thickness(for: activeWidth)
+                insp.minimumThickness = CGFloat(current.min)
+                insp.maximumThickness = CGFloat(current.max)
             }
+            self.inspectorSyncDepth = max(0, self.inspectorSyncDepth - 1)
         })
     }
 
@@ -667,6 +716,8 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
     }
 
     func windowWillClose(_ notification: Notification) {
+        SplitAnimationCoordinator.shared.clear(for: window)
+        rootController?.teardownPerfHUD()
         inspectorCollapseObservation = nil
         inspectorController?.teardown()
         container.teardown()

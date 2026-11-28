@@ -8,6 +8,7 @@ import VesperCore
 @MainActor
 final class NeedsYouPopover: NSObject, NSPopoverDelegate {
     private let popover = NSPopover()
+    private var hostController: NSHostingController<NeedsYouContent>?
     private let services: () -> SystemServices?
     private let navigate: (String) -> Void
 
@@ -35,9 +36,21 @@ final class NeedsYouPopover: NSObject, NSPopoverDelegate {
                 self?.navigate("/inbox")
             },
             close: { [weak self] in self?.close() })
-        let host = NSHostingController(rootView: root)
-        host.sizingOptions = [.preferredContentSize]
-        popover.contentViewController = host
+        let host: NSHostingController<NeedsYouContent>
+        if let existing = hostController {
+            existing.rootView = root
+            host = existing
+        } else {
+            let created = NSHostingController(rootView: root)
+            created.sizingOptions = [.preferredContentSize]
+            hostController = created
+            popover.contentViewController = created
+            host = created
+        }
+        let fitted = host.sizeThatFits(in: CGSize(width: NeedsYouContent.width, height: 520))
+        if fitted.width > 0 && fitted.height > 0 {
+            popover.contentSize = NSSize(width: NeedsYouContent.width, height: min(520, ceil(fitted.height)))
+        }
         popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minX)
     }
 
@@ -65,7 +78,7 @@ private struct NeedsYouContent: View {
     @State private var drafts: [String: String] = [:]
     @FocusState private var listFocused: Bool
 
-    private static let width: CGFloat = 380
+    static let width: CGFloat = 380
 
     private var list: [InboxItem] { tab == .needs ? inbox.tray.needs : inbox.tray.updates }
 
@@ -92,7 +105,7 @@ private struct NeedsYouContent: View {
                 .frame(maxWidth: .infinity).padding(.vertical, 36).padding(.horizontal, 20)
             } else {
                 ScrollViewReader { proxy in
-                    ScrollView {
+                    let scroll = ScrollView {
                         LazyVStack(spacing: 2) {
                             ForEach(items, id: \.id) { item in
                                 row(item).id(item.id)
@@ -100,9 +113,18 @@ private struct NeedsYouContent: View {
                         }
                         .padding(6)
                     }
-                    .frame(maxHeight: 420)
-                    .fixedSize(horizontal: false, vertical: true)
-                    .onChange(of: selection) { _, id in if let id { proxy.scrollTo(id) } }
+                    // Avoid `.fixedSize(vertical: true)` on large lists because it defeats
+                    // `LazyVStack` by forcing every row to measure synchronously on frame 0.
+                    if items.count <= 5 {
+                        scroll
+                            .frame(maxHeight: 420)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .onChange(of: selection) { _, id in if let id { proxy.scrollTo(id) } }
+                    } else {
+                        scroll
+                            .frame(height: 420)
+                            .onChange(of: selection) { _, id in if let id { proxy.scrollTo(id) } }
+                    }
                 }
             }
             Divider()
