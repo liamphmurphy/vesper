@@ -218,7 +218,7 @@ private struct MarkdownText: NSViewRepresentable {
     let onLink: (MarkdownLinkTarget, Bool, MarkdownLinkAnchor?) -> Void
     let onSelectionAction: (@MainActor (ChatSelectionAction, String) -> Void)?
 
-    func makeCoordinator() -> Coordinator { Coordinator() }
+    func makeCoordinator() -> MarkdownRenderCoordinator { MarkdownRenderCoordinator() }
 
     func makeNSView(context: Context) -> MarkdownTextView { MarkdownTextView() }
 
@@ -240,44 +240,62 @@ private struct MarkdownText: NSViewRepresentable {
         }
         return CGSize(width: width, height: view.fittingHeight(width: width))
     }
+}
 
-    @MainActor
-    final class Coordinator {
-        var latest: (document: MarkdownDocument, theme: ThemeTokens, options: MarkdownRenderOptions)?
+/// Caches rendered markdown for `MarkdownTextView`, avoiding full `NSAttributedString` rebuilds and
+/// TextKit storage replacement when only container width changes on prose or code-block documents.
+@MainActor
+final class MarkdownRenderCoordinator {
+    var latest: (document: MarkdownDocument, theme: ThemeTokens, options: MarkdownRenderOptions)?
+    var width: CGFloat?
+    private(set) var fullRenderCount = 0
+    private var rendered: Key?
+
+    /// Everything the rendered attributed text depends on; `width` is `nil` whenever the document
+    /// does not contain tables, loaded images, or loaded display math (code-fence "Copy" headers
+    /// adjust their right tab stop in-place on `MarkdownTextView`).
+    struct Key: Equatable {
+        var document: MarkdownDocument
+        var theme: ThemeTokens
+        var textStyle: ThemeTokens.TextStyle
+        var textColor: String
+        var anchors: Bool
+        var codeBlocks: Bool
         var width: CGFloat?
-        private var rendered: Key?
+        var expanded: Set<Int>
+        var copied: Int?
+        var highlights: [Int: [[CodeToken]]]
+        var links: [String: MarkdownLinkState]
+        var images: Set<String>
+        var math: Set<MarkdownMath>
+    }
 
-        /// Everything the text depends on; images by which have loaded.
-        struct Key: Equatable {
-            var document: MarkdownDocument
-            var theme: ThemeTokens
-            var textStyle: ThemeTokens.TextStyle
-            var textColor: String
-            var anchors: Bool
-            var codeBlocks: Bool
-            var width: CGFloat
-            var expanded: Set<Int>
-            var copied: Int?
-            var highlights: [Int: [[CodeToken]]]
-            var links: [String: MarkdownLinkState]
-            var images: Set<String>
-            var math: Set<MarkdownMath>
-        }
-
-        func render(_ view: MarkdownTextView, width: CGFloat) {
-            guard let latest else { return }
-            self.width = width
-            var options = latest.options
-            options.width = width
-            let key = Key(
-                document: latest.document, theme: latest.theme, textStyle: options.textStyle, textColor: options.textColor,
-                anchors: options.anchors, codeBlocks: options.codeBlocks, width: width.rounded(), expanded: options.expandedCodeBlocks,
-                copied: options.copiedCodeBlock, highlights: options.highlights, links: options.links, images: Set(options.images.keys),
-                math: Set(options.math.keys)
-            )
-            guard key != rendered else { return }
+    func render(_ view: MarkdownTextView, width: CGFloat) {
+        guard let latest else { return }
+        self.width = width
+        var options = latest.options
+        options.width = width
+        let imageKeys = Set(options.images.keys)
+        let displayMathKeys = Set(options.math.keys.filter(\.display).map(\.tex))
+        let widthSensitive = latest.document.requiresRerenderOnWidthChange(
+            loadedImageURLs: imageKeys,
+            loadedDisplayMath: displayMathKeys
+        )
+        let key = Key(
+            document: latest.document, theme: latest.theme, textStyle: options.textStyle, textColor: options.textColor,
+            anchors: options.anchors, codeBlocks: options.codeBlocks, width: widthSensitive ? width.rounded() : nil,
+            expanded: options.expandedCodeBlocks, copied: options.copiedCodeBlock, highlights: options.highlights,
+            links: options.links, images: imageKeys, math: Set(options.math.keys)
+        )
+        if key != rendered {
             rendered = key
-            view.show(MarkdownRenderer.render(latest.document, theme: latest.theme, options: options))
+            fullRenderCount &+= 1
+            view.show(
+                MarkdownRenderer.render(latest.document, theme: latest.theme, options: options),
+                renderedWidth: width
+            )
+        } else {
+            view.updateRightTabStops(forWidth: width)
         }
     }
 }

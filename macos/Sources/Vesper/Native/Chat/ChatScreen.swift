@@ -117,24 +117,12 @@ struct ChatScreen: View {
         ChatCompanions.companion(for: chatId ?? "new")
     }
 
-    private var codeReviewRequest: APIRequest<API.CodeReviewList>? {
-        chatId.map { API.getChatCodeReview(id: $0) }
-    }
-
-    private var playgroundRequest: APIRequest<API.ChatPlaygroundState>? {
-        chatId.map { API.getChatPlayground(id: $0) }
-    }
-
     private var canvasesRequest: APIRequest<API.ChatCanvases>? {
         chatId.map { API.listChatCanvases(id: $0) }
     }
 
     private var messagesRequest: APIRequest<API.ListChatMessagesResponse>? {
         chatId.map { API.listChatMessages(id: $0, limit: 200) }
-    }
-
-    private var costsRequest: APIRequest<API.CostReport>? {
-        chatId.map { API.getCosts(chat: $0) }
     }
 
     private var chatsRequest: APIRequest<API.ListChatsResponse> {
@@ -149,12 +137,6 @@ struct ChatScreen: View {
         chatId.map { API.getChat(id: $0) }
     }
 
-    private var searchRequest: APIRequest<API.ChatSearchResults>? {
-        let trimmed = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard trimmed.count >= 2 else { return nil }
-        return API.searchChats(q: trimmed)
-    }
-
     var body: some View {
         let store = context.store
         let boot = store.entry(Self.bootRequest).data
@@ -166,16 +148,9 @@ struct ChatScreen: View {
         let workflows = store.entry(Self.workflowsRequest).data?.workflows ?? []
         let repositories = store.entry(Self.repositoriesRequest).data ?? []
         let promptTemplates = store.entry(Self.promptTemplatesRequest).data?.templates ?? []
-        let chatsEntry = store.entry(chatsRequest)
-        let chats = chatsEntry.data?.chats ?? []
         let session = sessionRequest.flatMap { store.entry($0).data }
-        let searchEntry = searchRequest.map { store.entry($0) }
         let activePersona = resolvedPersona(session: session, personas: personas)
-        let codeReviews = codeReviewRequest.flatMap { store.entry($0).data?.repositories } ?? []
-        let playgroundState = playgroundRequest.flatMap { store.entry($0).data }
-        let canvases = canvasesRequest.flatMap { store.entry($0).data?.canvases } ?? []
         let messages = messagesRequest.flatMap { store.entry($0).data?.messages } ?? []
-        let costs = costsRequest.flatMap { store.entry($0).data }
         let forceSetup = context.match.query["setup"] != nil
         let wizardMode = OnboardingLogic.wizardMode(me: boot?.me, forceSetup: forceSetup)
         let activeWizardMode: OnboardingLogic.WizardMode? = (chatId == nil && !model.wizardDismissed && boot != nil) ? wizardMode : nil
@@ -355,27 +330,25 @@ struct ChatScreen: View {
             // Live Voice in a new chat carries on into the chat its first message created.
             if oldId != nil { liveVoiceOpen = false }
         }
-        .onChange(
-            of: buildChrome(
-                chats: chats,
-                chatsError: chatsEntry.error?.userMessage,
+        .background {
+            // Isolate sidebar/inspector chrome publishing so toggling right-rail tabs or filtering
+            // the sidebar does not re-evaluate ChatScreen.body, the transcript, or the composer.
+            ChatChromeBridge(
+                chatId: chatId,
+                model: model,
+                activeWizardMode: activeWizardMode,
                 session: session,
-                spaces: spaces,
                 personas: personas,
-                searchEntry: searchEntry,
-                messages: messages,
+                spaces: spaces,
                 harnessModels: harnessModels,
-                costs: costs,
-                codeReviews: codeReviews,
-                playgroundState: playgroundState,
-                canvases: canvases,
+                messages: messages,
                 liveActivity: liveActivity,
-                wizardMode: activeWizardMode,
-                wizardStep: model.wizardStep
-            ),
-            initial: true
-        ) { _, next in
-            context.chrome = next
+                onCanvasesChange: { updatedCanvases in
+                    if let canvasQuery = context.match.query["canvas"], !canvasQuery.isEmpty, canvasQuery != "none" {
+                        applyInspectorQuery(context.match.query, canvases: updatedCanvases)
+                    }
+                }
+            )
         }
         .onChange(of: activeWizardMode, initial: true) { oldMode, newMode in
             if let newMode, (oldMode != newMode || (newMode == .harnessOnly && model.wizardStep != .connectHarness)) {
@@ -386,7 +359,7 @@ struct ChatScreen: View {
             if oldId != newId {
                 model.resetInspectorForChatSwitch()
                 if model.stoppingChatId == oldId { model.stoppingChatId = nil }
-                applyInspectorQuery(context.match.query, canvases: canvases)
+                applyInspectorQuery(context.match.query, canvases: currentCanvases())
             }
         }
         .onChange(of: session?.state) { _, state in
@@ -405,12 +378,7 @@ struct ChatScreen: View {
             if chatId == nil, query["temporary"] == "1" {
                 model.temporaryMode = true
             }
-            applyInspectorQuery(query, canvases: canvases)
-        }
-        .onChange(of: canvases) { _, updatedCanvases in
-            if let canvasQuery = context.match.query["canvas"], !canvasQuery.isEmpty, canvasQuery != "none" {
-                applyInspectorQuery(context.match.query, canvases: updatedCanvases)
-            }
+            applyInspectorQuery(query, canvases: currentCanvases())
         }
         .task(id: watchKey(session: session, liveSince: liveSince)) { watch(session: session, liveSince: liveSince) }
         .task(id: windowVisible && AppPowerState.shared.isActive) {
@@ -466,7 +434,7 @@ struct ChatScreen: View {
             if chatId == nil, context.match.query["temporary"] == "1" {
                 model.temporaryMode = true
             }
-            applyInspectorQuery(context.match.query, canvases: canvases)
+            applyInspectorQuery(context.match.query, canvases: currentCanvases())
             installCommandHandler()
             installInspectorView()
             installKeyboardMonitor()
@@ -485,7 +453,7 @@ struct ChatScreen: View {
             get: { model.renameTargetId != nil },
             set: { if !$0 { model.renameTargetId = nil } }
         )) {
-            renameSheet(chats: chats)
+            renameSheet()
         }
         .sheet(item: Binding(
             get: { model.forkTarget.map { MessageSheetTarget(message: $0) } },
@@ -961,107 +929,8 @@ struct ChatScreen: View {
 
     // MARK: - Chrome & Sidebar
 
-    private func buildChrome(
-        chats: [API.ChatSession],
-        chatsError: String?,
-        session: API.ChatSession?,
-        spaces: [API.ChatSpace],
-        personas: [API.Persona],
-        searchEntry: QueryEntry<API.ChatSearchResults>?,
-        messages: [API.ChatMessage],
-        harnessModels: [API.ChatHarnessModels],
-        costs: API.CostReport?,
-        codeReviews: [API.CodeReview],
-        playgroundState: API.ChatPlaygroundState?,
-        canvases: [API.ChatCanvasSummary],
-        liveActivity: ChatTurnActivity?,
-        wizardMode: OnboardingLogic.WizardMode?,
-        wizardStep: OnboardingLogic.WizardStep
-    ) -> NativeChrome {
-        if let wizardMode {
-            return NativeChrome(
-                title: wizardMode == .harnessOnly ? "Connect a harness" : "Welcome to Vesper",
-                inspector: nil,
-                navigator: OnboardingLogic.sidebarNavModel(mode: wizardMode, step: wizardStep),
-                areaOverride: nil
-            )
-        }
-        var input = ChatNav.Input()
-        input.chats = chats.map { ChatNav.ChatRow($0, pinned: model.pinnedIds.contains($0.id)) }
-        input.viewedChatId = chatId
-        input.spaces = spaces.map(ChatNav.SpaceRow.init)
-        input.selectedSpaceId = model.selectedSpaceId
-        input.personas = personas.map { ChatNav.FilterOption(value: $0.id, label: $0.name) }
-        input.selectedPersonaId = model.selectedPersonaId
-        input.view = model.viewMode
-        input.query = model.searchQuery
-        input.error = chatsError
-        input.origin = context.baseURL()
-
-        if !model.selectedPersonaId.isEmpty,
-           let matched = personas.first(where: { $0.id == model.selectedPersonaId }) {
-            input.filteredToPersona = (matched.id, matched.name)
-        }
-
-        let trimmed = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
-        if !trimmed.isEmpty {
-            if trimmed.count < 2 {
-                input.searchState = .short
-            } else if let searchEntry {
-                if let err = searchEntry.error {
-                    input.searchState = .error(err.userMessage)
-                } else if let data = searchEntry.data {
-                    input.searchState = .ready(data.hits.map(ChatNav.SearchHit.init))
-                } else {
-                    input.searchState = .pending
-                }
-            }
-        }
-
-        let inspector = ChatInspectorLogic.buildInspectorModel(ChatInspectorLogic.Input(
-            chatId: chatId,
-            session: session,
-            messages: messages,
-            harnessModels: harnessModels,
-            costs: costs,
-            codeReviews: codeReviews,
-            playgroundState: playgroundState,
-            canvases: canvases,
-            liveActivity: liveActivity,
-            open: model.inspectorOpen,
-            activeTabId: model.inspectorTabId,
-            activeDesignId: model.activeDesignId,
-            activeCanvasId: model.activeCanvasId,
-            designReviewing: model.designReviewing,
-            threadMessageId: model.threadMessageId,
-            forceShowCode: model.forceShowCode,
-            startingPlayground: model.startingPlayground
-        ))
-
-        let navigator: NavModel
-        let areaOverride: AreaId?
-        if let spaceId = session?.space?.id {
-            let spaceChats = context.store.entry(SpacesLogic.spaceChatsRequest(spaceId: spaceId)).data?.chats ?? []
-            navigator = SpacesLogic.navModel(
-                spaces: spaces,
-                activeSpaceId: spaceId,
-                chats: spaceChats,
-                viewedChatId: chatId,
-                personas: personas,
-                origin: context.baseURL()
-            )
-            areaOverride = .spaces
-        } else {
-            navigator = ChatNav.model(input)
-            areaOverride = nil
-        }
-
-        return NativeChrome(
-            title: session.map { ChatNav.chatTitle($0.title) } ?? "Chat",
-            inspector: inspector,
-            navigator: navigator,
-            areaOverride: areaOverride
-        )
+    private func currentCanvases() -> [API.ChatCanvasSummary] {
+        canvasesRequest.flatMap { context.store.entry($0).data?.canvases } ?? []
     }
 
     private func applyInspectorQuery(_ query: [String: String], canvases: [API.ChatCanvasSummary]) {
@@ -1559,8 +1428,9 @@ struct ChatScreen: View {
         }
     }
 
-    private func renameSheet(chats: [API.ChatSession]) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
+    private func renameSheet() -> some View {
+        let chats = context.store.entry(chatsRequest).data?.chats ?? []
+        return VStack(alignment: .leading, spacing: 12) {
             Text("Rename conversation")
                 .font(.headline)
             TextField("Conversation title", text: $model.renameDraft)
@@ -1785,8 +1655,7 @@ struct ChatScreen: View {
     private func watchKey(session: API.ChatSession?, liveSince: String?) -> String {
         let activeRunId = session?.state == .running ? (session?.currentRunId ?? "") : ""
         let activeSince = session?.state == .running ? (liveSince ?? "") : ""
-        let spaceId = session?.space?.id ?? ""
-        return "\(chatId ?? "")|\(spaceId)|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)|\(activeRunId)|\(activeSince)"
+        return "\(chatId ?? "")|\(activeRunId)|\(activeSince)"
     }
 
     private func watch(session: API.ChatSession?, liveSince: String?) {
@@ -1809,19 +1678,221 @@ struct ChatScreen: View {
         track(Self.workflowsRequest)
         track(Self.repositoriesRequest)
         track(Self.promptTemplatesRequest)
+        if let sessionRequest { track(sessionRequest) }
+        if let messagesRequest { track(messagesRequest) }
+        if session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty {
+            track(ChatTurnActivity.liveEventsRequest(runId: runId, since: liveSince))
+        }
+        watched = keys
+    }
+}
+
+/// Isolated observer for sidebar navigation and inspector chrome state.
+/// Keeping these `QueryStore` and `ChatScreenModel` reads outside `ChatScreen.body` ensures
+/// clicking right-rail inspector tabs, typing in sidebar search, or receiving background chat-list/cost
+/// updates never forces a frame-0 re-evaluation of the chat transcript or composer.
+private struct ChatChromeBridge: View {
+    @Environment(NativeScreenContext.self) private var context
+
+    let chatId: String?
+    let model: ChatScreenModel
+    let activeWizardMode: OnboardingLogic.WizardMode?
+    let session: API.ChatSession?
+    let personas: [API.Persona]
+    let spaces: [API.ChatSpace]
+    let harnessModels: [API.ChatHarnessModels]
+    let messages: [API.ChatMessage]
+    let liveActivity: ChatTurnActivity?
+    let onCanvasesChange: @MainActor ([API.ChatCanvasSummary]) -> Void
+
+    @State private var watched: [QueryKey] = []
+
+    private var chatsRequest: APIRequest<API.ListChatsResponse> {
+        API.listChats(
+            archived: model.viewMode == .archived ? true : nil,
+            personaId: ChatNav.listPersonaQuery(model.selectedPersonaId),
+            space: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
+        )
+    }
+
+    private var searchRequest: APIRequest<API.ChatSearchResults>? {
+        let trimmed = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard trimmed.count >= 2 else { return nil }
+        return API.searchChats(q: trimmed)
+    }
+
+    private var codeReviewRequest: APIRequest<API.CodeReviewList>? {
+        chatId.map { API.getChatCodeReview(id: $0) }
+    }
+
+    private var playgroundRequest: APIRequest<API.ChatPlaygroundState>? {
+        chatId.map { API.getChatPlayground(id: $0) }
+    }
+
+    private var canvasesRequest: APIRequest<API.ChatCanvases>? {
+        chatId.map { API.listChatCanvases(id: $0) }
+    }
+
+    private var costsRequest: APIRequest<API.CostReport>? {
+        chatId.map { API.getCosts(chat: $0) }
+    }
+
+    private var watchKey: String {
+        let spaceId = session?.space?.id ?? ""
+        return "\(chatId ?? "")|\(spaceId)|\(model.viewMode.rawValue)|\(model.selectedSpaceId)|\(model.selectedPersonaId)|\(model.searchQuery)"
+    }
+
+    var body: some View {
+        let store = context.store
+        let chatsEntry = store.entry(chatsRequest)
+        let chats = chatsEntry.data?.chats ?? []
+        let searchEntry = searchRequest.map { store.entry($0) }
+        let codeReviews = codeReviewRequest.flatMap { store.entry($0).data?.repositories } ?? []
+        let playgroundState = playgroundRequest.flatMap { store.entry($0).data }
+        let canvases = canvasesRequest.flatMap { store.entry($0).data?.canvases } ?? []
+        let costs = costsRequest.flatMap { store.entry($0).data }
+
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .onChange(
+                of: buildChrome(
+                    chats: chats,
+                    chatsError: chatsEntry.error?.userMessage,
+                    searchEntry: searchEntry,
+                    costs: costs,
+                    codeReviews: codeReviews,
+                    playgroundState: playgroundState,
+                    canvases: canvases
+                ),
+                initial: true
+            ) { _, next in
+                context.chrome = next
+            }
+            .onChange(of: canvases) { _, updated in
+                onCanvasesChange(updated)
+            }
+            .task(id: watchKey) { watch() }
+            .onDisappear {
+                for key in watched { context.store.stopObserving(key) }
+                watched = []
+            }
+    }
+
+    private func buildChrome(
+        chats: [API.ChatSession],
+        chatsError: String?,
+        searchEntry: QueryEntry<API.ChatSearchResults>?,
+        costs: API.CostReport?,
+        codeReviews: [API.CodeReview],
+        playgroundState: API.ChatPlaygroundState?,
+        canvases: [API.ChatCanvasSummary]
+    ) -> NativeChrome {
+        if let activeWizardMode {
+            return NativeChrome(
+                title: activeWizardMode == .harnessOnly ? "Connect a harness" : "Welcome to Vesper",
+                inspector: nil,
+                navigator: OnboardingLogic.sidebarNavModel(mode: activeWizardMode, step: model.wizardStep),
+                areaOverride: nil
+            )
+        }
+        var input = ChatNav.Input()
+        input.chats = chats.map { ChatNav.ChatRow($0, pinned: model.pinnedIds.contains($0.id)) }
+        input.viewedChatId = chatId
+        input.spaces = spaces.map(ChatNav.SpaceRow.init)
+        input.selectedSpaceId = model.selectedSpaceId
+        input.personas = personas.map { ChatNav.FilterOption(value: $0.id, label: $0.name) }
+        input.selectedPersonaId = model.selectedPersonaId
+        input.view = model.viewMode
+        input.query = model.searchQuery
+        input.error = chatsError
+        input.origin = context.baseURL()
+
+        if !model.selectedPersonaId.isEmpty,
+           let matched = personas.first(where: { $0.id == model.selectedPersonaId }) {
+            input.filteredToPersona = (matched.id, matched.name)
+        }
+
+        let trimmed = model.searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !trimmed.isEmpty {
+            if trimmed.count < 2 {
+                input.searchState = .short
+            } else if let searchEntry {
+                if let err = searchEntry.error {
+                    input.searchState = .error(err.userMessage)
+                } else if let data = searchEntry.data {
+                    input.searchState = .ready(data.hits.map(ChatNav.SearchHit.init))
+                } else {
+                    input.searchState = .pending
+                }
+            }
+        }
+
+        let inspector = ChatInspectorLogic.buildInspectorModel(ChatInspectorLogic.Input(
+            chatId: chatId,
+            session: session,
+            messages: messages,
+            harnessModels: harnessModels,
+            costs: costs,
+            codeReviews: codeReviews,
+            playgroundState: playgroundState,
+            canvases: canvases,
+            liveActivity: liveActivity,
+            open: model.inspectorOpen,
+            activeTabId: model.inspectorTabId,
+            activeDesignId: model.activeDesignId,
+            activeCanvasId: model.activeCanvasId,
+            designReviewing: model.designReviewing,
+            threadMessageId: model.threadMessageId,
+            forceShowCode: model.forceShowCode,
+            startingPlayground: model.startingPlayground
+        ))
+
+        let navigator: NavModel
+        let areaOverride: AreaId?
+        if let spaceId = session?.space?.id {
+            let spaceChats = context.store.entry(SpacesLogic.spaceChatsRequest(spaceId: spaceId)).data?.chats ?? []
+            navigator = SpacesLogic.navModel(
+                spaces: spaces,
+                activeSpaceId: spaceId,
+                chats: spaceChats,
+                viewedChatId: chatId,
+                personas: personas,
+                origin: context.baseURL()
+            )
+            areaOverride = .spaces
+        } else {
+            navigator = ChatNav.model(input)
+            areaOverride = nil
+        }
+
+        return NativeChrome(
+            title: session.map { ChatNav.chatTitle($0.title) } ?? "Chat",
+            inspector: inspector,
+            navigator: navigator,
+            areaOverride: areaOverride
+        )
+    }
+
+    private func watch() {
+        let store = context.store
+        for key in watched { store.stopObserving(key) }
+        var keys: [QueryKey] = []
+
+        func track<V: Sendable>(_ req: APIRequest<V>) {
+            store.observe(req)
+            store.load(req)
+            keys.append(req.key)
+        }
+
         track(chatsRequest)
         if let spaceId = session?.space?.id {
             track(SpacesLogic.spaceChatsRequest(spaceId: spaceId))
         }
-        if let sessionRequest { track(sessionRequest) }
         if let codeReviewRequest { track(codeReviewRequest) }
         if let playgroundRequest { track(playgroundRequest) }
         if let canvasesRequest { track(canvasesRequest) }
-        if let messagesRequest { track(messagesRequest) }
         if let costsRequest { track(costsRequest) }
-        if session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty {
-            track(ChatTurnActivity.liveEventsRequest(runId: runId, since: liveSince))
-        }
         if let searchRequest { track(searchRequest) }
         watched = keys
     }
