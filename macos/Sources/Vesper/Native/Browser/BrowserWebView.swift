@@ -67,10 +67,12 @@ enum BrowserWebViewFactory {
         profileDataStoreID: UUID = browsingStoreID,
         contentRuleLists: [WKContentRuleList] = [],
         adBlockPageScript: WKUserScript? = nil,
+        darkModeScript: WKUserScript? = nil,
         webExtensionController: WKWebExtensionController? = nil,
         autofillMessageHandler: (any WKScriptMessageHandler)? = nil,
         adBlockMetricsHandler: (any WKScriptMessageHandler)? = nil,
         passkeyMessageHandler: (any WKScriptMessageHandler)? = nil,
+        darkModeMessageHandler: (any WKScriptMessageHandler)? = nil,
         lockdownModeEnabled: Bool = false,
         proxyConfig: BrowserProxyConfig = .none
     ) -> BrowserWKWebView {
@@ -135,6 +137,16 @@ enum BrowserWebViewFactory {
         }
         if let adBlockPageScript {
             config.userContentController.addUserScript(adBlockPageScript)
+        }
+        if let darkModeScript {
+            config.userContentController.addUserScript(darkModeScript)
+        }
+        if let darkModeMessageHandler {
+            config.userContentController.add(
+                darkModeMessageHandler,
+                contentWorld: .defaultClient,
+                name: BrowserDarkModeScripts.handlerName
+            )
         }
         if let autofillMessageHandler {
             let script = WKUserScript(

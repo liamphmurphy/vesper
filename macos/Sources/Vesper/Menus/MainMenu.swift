@@ -127,6 +127,7 @@ enum MainMenu {
             item("Toggle Focus Mode", #selector(AppDelegate.toggleBrowserFocusMode(_:)), "f", [.command, .shift]),
             item("Mute / Unmute Tab", #selector(AppDelegate.toggleBrowserTabMute(_:)), "m", [.command, .option]),
             item("Toggle Reader Mode", #selector(AppDelegate.toggleBrowserReaderMode(_:)), "r", [.command, .option]),
+            item("Toggle Auto Dark Mode", #selector(AppDelegate.toggleBrowserDarkMode(_:)), "d", [.command, .option]),
             item("Bookmark Page", #selector(AppDelegate.toggleBrowserBookmark(_:)), "b", [.command, .shift]),
             item("Highlight Selection to Knowledge", #selector(AppDelegate.highlightBrowserSelection(_:)), "h", [.command, .shift]),
             item("Toggle Companion Auto-Follow", #selector(AppDelegate.toggleBrowserAutoFollow(_:))),

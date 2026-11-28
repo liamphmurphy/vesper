@@ -222,16 +222,16 @@ struct BrowserIntegrationTests {
             )
         }
 
-        // Attached initially: metrics bridge + passkey bridge + passkey observer + autofill + adblock page script = 5 user scripts.
-        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
+        // Attached initially: metrics bridge + passkey bridge + passkey observer + autofill + dark mode + adblock page script = 6 user scripts.
+        #expect(session.webView.configuration.userContentController.userScripts.count == 6)
 
-        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill, passkey & metrics scripts.
+        // Navigating to allowlisted host detaches adblock page script while preserving AutoFill, passkey, dark mode & metrics scripts.
         session.syncAdBlockForURL("https://trusted.example/page")
-        #expect(session.webView.configuration.userContentController.userScripts.count == 4)
+        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
 
         // Navigating back to a protected host reattaches the adblock page script instantaneously.
         session.syncAdBlockForURL("https://news.example/article")
-        #expect(session.webView.configuration.userContentController.userScripts.count == 5)
+        #expect(session.webView.configuration.userContentController.userScripts.count == 6)
     }
 
     @Test("BrowserAdBlockEngine downloads, caches, handles 304 ETag, and compiles upstream filter lists")
@@ -624,6 +624,96 @@ struct BrowserIntegrationTests {
         #expect(afterCount == 0)
         let restoredText = (try? await webView.evaluateJavaScript("document.getElementById('p2').textContent")) as? String
         #expect(restoredText == "Exact context before target phrase after exact suffix.")
+    }
+
+    @Test("Auto Dark Mode darkens light pages, skips native dark pages, and updates live without reload")
+    func autoDarkModeAppliesToLightPagesSkipsNativeDarkAndUpdatesLive() async throws {
+        let activeState = BrowserDarkModeEffectiveState(
+            enabled: true,
+            forceOverride: false,
+            theme: .default,
+            respectNativeDarkMode: true,
+            dimImages: true,
+            brightness: 1.0,
+            contrast: 1.0
+        )
+        let darkScript = WKUserScript(
+            source: BrowserDarkModeScripts.makeUserScriptSource(for: activeState),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .defaultClient
+        )
+        let webView = BrowserWebViewFactory.makeWebView(isPrivate: true, darkModeScript: darkScript)
+        let waiter1 = TestNavigationWaiter()
+        webView.navigationDelegate = waiter1
+
+        let lightHTML = """
+        <!doctype html>
+        <html>
+          <head><title>Light Site</title></head>
+          <body style="background-color: #ffffff; color: #111111;">
+            <h1>Hello Light World</h1>
+            <img src="data:image/gif;base64,R0lGODlhAQABAAAAACw=" width="40" height="40">
+          </body>
+        </html>
+        """
+        webView.loadHTMLString(lightHTML, baseURL: URL(string: "https://light.example/"))
+        await waiter1.waitForFinish()
+        try? await Task.sleep(for: .milliseconds(120))
+
+        let inspectJS = """
+        (() => ({
+          active: document.documentElement.getAttribute('data-vesper-dark') === '1',
+          hasStyle: Boolean(document.getElementById('__vesper_dark_mode_style__')),
+          leakedGlobal: typeof window.__vesperDarkModeApply !== 'undefined'
+        }))();
+        """
+        let lightResult = try #require((try? await webView.evaluateJavaScript(inspectJS)) as? [String: Any])
+        #expect((lightResult["active"] as? Bool) == true)
+        #expect((lightResult["hasStyle"] as? Bool) == true)
+        // Must stay isolated in `.defaultClient`, never leaking to `.page`.
+        #expect((lightResult["leakedGlobal"] as? Bool) == false)
+
+        // Live disable without page reload removes dark mode immediately.
+        let disableJS = BrowserDarkModeScripts.makeLiveUpdateJS(for: .disabled)
+        _ = try? await webView.evaluateJavaScript(disableJS, in: nil, contentWorld: .defaultClient)
+        let afterDisable = try #require((try? await webView.evaluateJavaScript(inspectJS)) as? [String: Any])
+        #expect((afterDisable["active"] as? Bool) == false)
+        #expect((afterDisable["hasStyle"] as? Bool) == false)
+
+        // Native dark site is automatically skipped when respectNativeDarkMode is enabled.
+        let waiter2 = TestNavigationWaiter()
+        webView.navigationDelegate = waiter2
+        let nativeDarkHTML = """
+        <!doctype html>
+        <html>
+          <head><title>Native Dark Site</title></head>
+          <body style="background-color: #121417; color: #eaecef;">
+            <h1>Already Dark</h1>
+          </body>
+        </html>
+        """
+        webView.loadHTMLString(nativeDarkHTML, baseURL: URL(string: "https://dark.example/"))
+        await waiter2.waitForFinish()
+        try? await Task.sleep(for: .milliseconds(120))
+
+        let nativeResult = try #require((try? await webView.evaluateJavaScript(inspectJS)) as? [String: Any])
+        #expect((nativeResult["active"] as? Bool) == false)
+
+        // Force Dark per-site override applies even on a native dark site.
+        let forceState = BrowserDarkModeEffectiveState(
+            enabled: true,
+            forceOverride: true,
+            theme: .midnight,
+            respectNativeDarkMode: true,
+            dimImages: false,
+            brightness: 1.0,
+            contrast: 1.0
+        )
+        let forceJS = BrowserDarkModeScripts.makeLiveUpdateJS(for: forceState)
+        _ = try? await webView.evaluateJavaScript(forceJS, in: nil, contentWorld: .defaultClient)
+        let forcedResult = try #require((try? await webView.evaluateJavaScript(inspectJS)) as? [String: Any])
+        #expect((forcedResult["active"] as? Bool) == true)
     }
 }
 

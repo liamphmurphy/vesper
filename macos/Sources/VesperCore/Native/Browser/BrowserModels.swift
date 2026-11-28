@@ -304,6 +304,8 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
     public var spaceId: String?
     /// Persistent web highlights stored per profile and synced to Knowledge notes.
     public var highlights: [BrowserWebHighlight]
+    /// Per-site Auto Dark Mode overrides (`.on` forces dark mode, `.off` disables it).
+    public var darkModeSiteOverrides: [String: BrowserDarkModeSiteOverride]
 
     public init(
         id: UUID = UUID(),
@@ -329,7 +331,8 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         sitePermissions: [String: [String: BrowserPermissionSetting]] = [:],
         proxyConfig: BrowserProxyConfig = .none,
         spaceId: String? = nil,
-        highlights: [BrowserWebHighlight] = []
+        highlights: [BrowserWebHighlight] = [],
+        darkModeSiteOverrides: [String: BrowserDarkModeSiteOverride] = [:]
     ) {
         self.id = id
         self.name = name
@@ -355,6 +358,7 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         self.proxyConfig = proxyConfig
         self.spaceId = spaceId
         self.highlights = highlights
+        self.darkModeSiteOverrides = darkModeSiteOverrides
     }
 
     public static func defaultPersonal(
@@ -405,6 +409,7 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         case proxyConfig = "proxy_config"
         case spaceId = "space_id"
         case highlights
+        case darkModeSiteOverrides = "dark_mode_site_overrides"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -433,6 +438,7 @@ public struct BrowserProfile: Codable, Sendable, Equatable, Hashable, Identifiab
         proxyConfig = try c.decodeIfPresent(BrowserProxyConfig.self, forKey: .proxyConfig) ?? .none
         spaceId = try c.decodeIfPresent(String.self, forKey: .spaceId)
         highlights = try c.decodeIfPresent([BrowserWebHighlight].self, forKey: .highlights) ?? []
+        darkModeSiteOverrides = try c.decodeIfPresent([String: BrowserDarkModeSiteOverride].self, forKey: .darkModeSiteOverrides) ?? [:]
     }
 }
 
@@ -506,6 +512,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
     public var adBlockConfig: BrowserAdBlockConfig
     public var securityConfig: BrowserSecurityConfig
     public var layoutConfig: BrowserLayoutConfig
+    public var darkModeConfig: BrowserDarkModeConfig
 
     public init(
         tabs: [BrowserTabRecord] = [],
@@ -522,7 +529,8 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         autofillEnabled: Bool = true,
         adBlockConfig: BrowserAdBlockConfig = .default,
         securityConfig: BrowserSecurityConfig = .default,
-        layoutConfig: BrowserLayoutConfig = .default
+        layoutConfig: BrowserLayoutConfig = .default,
+        darkModeConfig: BrowserDarkModeConfig = .default
     ) {
         self.tabs = tabs
         self.activeTabId = activeTabId
@@ -552,6 +560,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         self.adBlockConfig = adBlockConfig
         self.securityConfig = securityConfig
         self.layoutConfig = layoutConfig
+        self.darkModeConfig = darkModeConfig
     }
 
     public static let empty = BrowserPersistedState()
@@ -572,6 +581,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         case adBlockConfig = "ad_block_config"
         case securityConfig = "security_config"
         case layoutConfig = "layout_config"
+        case darkModeConfig = "dark_mode_config"
     }
 
     public init(from decoder: any Decoder) throws {
@@ -589,6 +599,7 @@ public struct BrowserPersistedState: Codable, Sendable, Equatable {
         adBlockConfig = try c.decodeIfPresent(BrowserAdBlockConfig.self, forKey: .adBlockConfig) ?? .default
         securityConfig = try c.decodeIfPresent(BrowserSecurityConfig.self, forKey: .securityConfig) ?? .default
         layoutConfig = try c.decodeIfPresent(BrowserLayoutConfig.self, forKey: .layoutConfig) ?? .default
+        darkModeConfig = try c.decodeIfPresent(BrowserDarkModeConfig.self, forKey: .darkModeConfig) ?? .default
 
         let decodedProfiles = try c.decodeIfPresent([BrowserProfile].self, forKey: .profiles) ?? []
         if decodedProfiles.isEmpty {

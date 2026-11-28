@@ -91,6 +91,7 @@ final class AppModel {
         }
         aux.commandPalette.sendAppearance(cmd)
         aux.broadcastAppearanceToCustomAppWindows(cmd)
+        browser.handleAppAppearanceChanged()
     }
 
     @discardableResult

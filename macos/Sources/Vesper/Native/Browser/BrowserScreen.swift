@@ -22,11 +22,12 @@ struct BrowserScreen: View {
     @State private var extensionsPopoverOpen = false
     @State private var downloadsPopoverOpen = false
     @State private var knowledgePopoverOpen = false
+    @State private var darkModePopoverOpen = false
     @State private var omniboxPeekVisible = false
     @State private var sidebarPeekVisible = false
 
     private var anyPopoverOpen: Bool {
-        sharePopoverOpen || shieldPopoverOpen || siteSecurityPopoverOpen || autofillPopoverOpen || extensionsPopoverOpen || downloadsPopoverOpen || knowledgePopoverOpen
+        sharePopoverOpen || shieldPopoverOpen || siteSecurityPopoverOpen || autofillPopoverOpen || extensionsPopoverOpen || downloadsPopoverOpen || knowledgePopoverOpen || darkModePopoverOpen
     }
 
     @State private var askPrompt = ""
@@ -695,6 +696,31 @@ struct BrowserScreen: View {
                     .hoverTooltip("Keychain AutoFill & Password Generator (⌘⇧A)")
                     .popover(isPresented: $autofillPopoverOpen, arrowEdge: .bottom) {
                         autofillPopover(store: store, tab: tab)
+                    }
+
+                    Button {
+                        darkModePopoverOpen.toggle()
+                    } label: {
+                        let dmApplied = tab.darkModeStatus == .applied
+                        let dmNative = tab.darkModeStatus == .skippedNative
+                        Image(systemName: dmApplied ? "moon.stars.fill" : (dmNative ? "moon.fill" : "moon.stars"))
+                            .font(.system(size: 11))
+                            .foregroundStyle(
+                                dmApplied
+                                    ? theme.palette.accent
+                                    : (dmNative ? theme.palette.secondaryText : theme.palette.tertiaryText)
+                            )
+                    }
+                    .buttonStyle(.plain)
+                    .hoverTooltip(
+                        tab.darkModeStatus == .applied
+                            ? "Auto Dark Mode: Active (⌥⌘D)"
+                            : (tab.darkModeStatus == .skippedNative
+                                ? "Auto Dark Mode: Native dark site detected (⌥⌘D)"
+                                : "Auto Dark Mode (⌥⌘D)")
+                    )
+                    .popover(isPresented: $darkModePopoverOpen, arrowEdge: .bottom) {
+                        BrowserDarkModePopover(store: store, tab: tab)
                     }
 
                     Button {
@@ -3279,5 +3305,227 @@ private struct BrowserShieldPopover: View {
                 .disabled(customRulesDraft == store.adBlockConfig.customRules)
             }
         }
+    }
+}
+
+// MARK: - Auto Dark Mode Popover (Noir / Dark Reader Style)
+
+private struct BrowserDarkModePopover: View {
+    let store: BrowserStore
+    let tab: BrowserTabSession
+
+    private var currentHost: String? {
+        BrowserPageGuard.normalizeHost(tab.urlString)
+    }
+
+    private var siteOverride: BrowserDarkModeSiteOverride {
+        store.darkModeSiteOverride(for: tab.urlString)
+    }
+
+    private var statusBadge: (label: String, color: Color) {
+        switch tab.darkModeStatus {
+        case .applied:
+            return ("Active", .accentColor)
+        case .skippedNative:
+            return ("Native Dark", .green)
+        case .inactive:
+            if siteOverride == .off {
+                return ("Off for Site", .secondary)
+            }
+            return ("Off", .secondary)
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 11) {
+            // Header + Live Page Status
+            HStack(alignment: .center, spacing: 8) {
+                Image(systemName: tab.darkModeStatus == .applied ? "moon.stars.fill" : "moon.stars")
+                    .font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(tab.darkModeStatus == .applied ? Color.accentColor : Color.secondary)
+
+                VStack(alignment: .leading, spacing: 1) {
+                    Text("Auto Dark Mode")
+                        .font(.system(size: 13, weight: .semibold))
+                    Text(currentHost ?? "Current page")
+                        .font(.system(size: 10.5))
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                }
+
+                Spacer()
+
+                Text(statusBadge.label)
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(statusBadge.color)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 2)
+                    .background(Capsule().fill(statusBadge.color.opacity(0.14)))
+            }
+
+            if let host = currentHost {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("This Site")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+
+                    Picker("", selection: Binding(
+                        get: { siteOverride },
+                        set: { store.setDarkModeSiteOverride($0, forHost: host) }
+                    )) {
+                        ForEach(BrowserDarkModeSiteOverride.allCases) { option in
+                            Text(option.label).tag(option)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+
+                    if tab.darkModeStatus == .skippedNative && siteOverride == .inherit {
+                        Text("Skipped because this site already renders in dark mode. Choose Force Dark to override.")
+                            .font(.system(size: 10))
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                Divider()
+            }
+
+            // Global Mode
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Global Mode")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Text(store.darkModeConfig.mode.summary)
+                        .font(.system(size: 10))
+                        .foregroundStyle(.tertiary)
+                }
+
+                Picker("", selection: Binding(
+                    get: { store.darkModeConfig.mode },
+                    set: { store.setDarkModeMode($0) }
+                )) {
+                    ForEach(BrowserDarkModeMode.allCases) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .labelsHidden()
+                .controlSize(.small)
+            }
+
+            // Theme Swatches
+            VStack(alignment: .leading, spacing: 5) {
+                Text("Theme")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(.secondary)
+
+                HStack(spacing: 6) {
+                    ForEach(BrowserDarkModeTheme.allCases) { item in
+                        let selected = store.darkModeConfig.theme == item
+                        Button {
+                            store.setDarkModeTheme(item)
+                        } label: {
+                            VStack(spacing: 4) {
+                                RoundedRectangle(cornerRadius: 5)
+                                    .fill(Color(hex: item.backgroundHex) ?? .black)
+                                    .frame(height: 22)
+                                    .overlay(
+                                        RoundedRectangle(cornerRadius: 5)
+                                            .stroke(
+                                                selected ? Color.accentColor : (Color(hex: item.swatchBorderHex) ?? .gray),
+                                                lineWidth: selected ? 1.8 : 1
+                                            )
+                                    )
+                                Text(item.label)
+                                    .font(.system(size: 10, weight: selected ? .semibold : .regular))
+                                    .foregroundStyle(selected ? .primary : .secondary)
+                            }
+                            .frame(maxWidth: .infinity)
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+
+            Divider()
+
+            // Smart Options
+            VStack(alignment: .leading, spacing: 6) {
+                Toggle("Respect Native Dark Mode", isOn: Binding(
+                    get: { store.darkModeConfig.respectNativeDarkMode },
+                    set: { store.setDarkModeRespectNative($0) }
+                ))
+                .font(.system(size: 11.5))
+
+                Toggle("Dim Images & Media", isOn: Binding(
+                    get: { store.darkModeConfig.dimImages },
+                    set: { store.setDarkModeDimImages($0) }
+                ))
+                .font(.system(size: 11.5))
+            }
+
+            // Brightness & Contrast Fine-Tuning
+            VStack(alignment: .leading, spacing: 6) {
+                HStack {
+                    Text("Fine-Tune")
+                        .font(.system(size: 10.5, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    if store.darkModeConfig.hasCustomAdjustments {
+                        Button("Reset") {
+                            store.resetDarkModeAdjustments()
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 10.5, weight: .medium))
+                        .foregroundStyle(Color.accentColor)
+                    }
+                }
+
+                HStack(spacing: 8) {
+                    Text("Brightness")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 64, alignment: .leading)
+                    Slider(
+                        value: Binding(
+                            get: { store.darkModeConfig.brightness },
+                            set: { store.setDarkModeBrightness($0) }
+                        ),
+                        in: BrowserDarkModeConfig.minBrightness...BrowserDarkModeConfig.maxBrightness,
+                        step: 0.05
+                    )
+                    .controlSize(.small)
+                    Text("\(Int((store.darkModeConfig.brightness * 100).rounded()))%")
+                        .font(.system(size: 10.5).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+
+                HStack(spacing: 8) {
+                    Text("Contrast")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 64, alignment: .leading)
+                    Slider(
+                        value: Binding(
+                            get: { store.darkModeConfig.contrast },
+                            set: { store.setDarkModeContrast($0) }
+                        ),
+                        in: BrowserDarkModeConfig.minContrast...BrowserDarkModeConfig.maxContrast,
+                        step: 0.05
+                    )
+                    .controlSize(.small)
+                    Text("\(Int((store.darkModeConfig.contrast * 100).rounded()))%")
+                        .font(.system(size: 10.5).monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(width: 34, alignment: .trailing)
+                }
+            }
+        }
+        .padding(14)
+        .frame(width: 304)
     }
 }
