@@ -336,11 +336,10 @@ private struct StandaloneCustomAppRootView: View {
             .environment(\.colorScheme, model.theme.mode == .dark ? .dark : .light)
             .environment(context)
 
-            if !toastStore.toasts.isEmpty {
-                ToastOverlayView(store: toastStore)
-                    .frame(maxWidth: 440)
-                    .padding(.bottom, 20)
-            }
+            ToastOverlayView(store: toastStore)
+                .frame(maxWidth: 440)
+                .padding(.bottom, 20)
+                .allowsHitTesting(!toastStore.toasts.isEmpty)
         }
     }
 }

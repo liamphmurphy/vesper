@@ -103,7 +103,7 @@ struct LibraryLinksView: View {
                 Divider().overlay(theme.palette.border)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 20) {
                     LibraryHeading(description: "Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links.")
                     if let uploadError {
                         Text(uploadError).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
@@ -480,7 +480,7 @@ struct LibraryFridgeView: View {
                 Divider().overlay(theme.palette.border)
             }
             ScrollView {
-                VStack(alignment: .leading, spacing: 20) {
+                LazyVStack(alignment: .leading, spacing: 20) {
                     LibraryHeading(description: "Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links.")
                     if let uploadError {
                         Text(uploadError).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))

@@ -437,8 +437,10 @@ private struct ChatCitationBubbleView: View {
             }
         }
         .frame(width: ChatCitationBubblePresenter.cardWidth, alignment: .leading)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
-        .background(p.surface.opacity(0.75), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .background(
+            theme.swiftUIColor("surface-raised", fallback: p.surface),
+            in: RoundedRectangle(cornerRadius: 10, style: .continuous)
+        )
         .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 10, style: .continuous)

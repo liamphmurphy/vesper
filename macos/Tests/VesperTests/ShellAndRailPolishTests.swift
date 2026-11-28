@@ -86,4 +86,46 @@ struct ShellAndRailPolishTests {
         button.mouseExited(with: dummyEvent)
         #expect(!presenter.isVisible)
     }
+
+    @Test("WindowRootController preserves toast exit grace window while passing hits through immediately")
+    func toastHostAllowsExitTransitionAndPassesHitsThrough() async throws {
+        let split = NSSplitViewController()
+        let root = WindowRootController(split: split)
+        let store = ToastStore()
+        root.installToasts(store: store, exitGraceMs: 120)
+        _ = root.view
+        root.view.frame = NSRect(x: 0, y: 0, width: 800, height: 600)
+        root.view.layoutSubtreeIfNeeded()
+
+        #expect(root.isToastHostHidden)
+
+        // Showing a toast reveals the host immediately.
+        store.show(ToastItemModel(id: "t1", title: "Saved", tone: .success, durationMs: 5_000))
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(!root.isToastHostHidden)
+
+        // Dismissing the last toast immediately disables hit-testing while keeping the host visible
+        // during the exit transition grace window, then hides it once the animation finishes.
+        store.dismissByUser(id: "t1")
+        try await Task.sleep(for: .milliseconds(25))
+        let hostView = try #require(root.toastHostView)
+        #expect(hostView.hitTest(NSPoint(x: 10, y: 10)) == nil)
+        if !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            #expect(!root.isToastHostHidden)
+        }
+
+        try await Task.sleep(for: .milliseconds(160))
+        #expect(root.isToastHostHidden)
+
+        // Showing another toast during exit cancels the scheduled hide.
+        store.show(ToastItemModel(id: "t2", title: "Copied", tone: .success, durationMs: 5_000))
+        try await Task.sleep(for: .milliseconds(25))
+        #expect(!root.isToastHostHidden)
+        store.dismissByUser(id: "t2")
+        try await Task.sleep(for: .milliseconds(30))
+        store.show(ToastItemModel(id: "t3", title: "Pinned", tone: .success, durationMs: 5_000))
+        try await Task.sleep(for: .milliseconds(160))
+        #expect(!root.isToastHostHidden)
+        store.teardown()
+    }
 }

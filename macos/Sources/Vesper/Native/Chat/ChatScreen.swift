@@ -865,8 +865,7 @@ struct ChatScreen: View {
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 10)
-                                .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                                .modifier(VesperHoverCardModifier(cornerRadius: 10))
                             }
                             .buttonStyle(.plain)
                         }
@@ -902,8 +901,7 @@ struct ChatScreen: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                            .modifier(VesperHoverCardModifier(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
                     } else {
@@ -940,8 +938,7 @@ struct ChatScreen: View {
                                         }
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 8)
-                                        .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
-                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                                        .modifier(VesperHoverCardModifier(cornerRadius: 10))
                                     }
                                     .buttonStyle(.plain)
                                 }
@@ -2029,5 +2026,28 @@ private struct ChatHeaderTitleView: View {
             }
             .help("Double-click to rename conversation")
         }
+    }
+}
+
+/// Tactile hover surface + accent border lift for interactive cards (suggestions, spaces, starters).
+struct VesperHoverCardModifier: ViewModifier {
+    @Environment(\.vesperTheme) private var theme
+    var cornerRadius: CGFloat = 10
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        let p = theme.palette
+        content
+            .background(
+                isHovered ? theme.swiftUIColor("surface-raised", fallback: p.hover) : p.surface,
+                in: RoundedRectangle(cornerRadius: cornerRadius)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(isHovered ? p.accent.opacity(0.45) : p.border, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.14), value: isHovered)
     }
 }

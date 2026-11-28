@@ -290,24 +290,27 @@ struct ChatTranscriptView: View {
                                 ChatPushRequestStackView(requests: pushes.trailing)
                             }
 
-                            if isRunning {
-                                ChatLiveActivityCardView(
-                                    chatId: chatId,
-                                    runId: session?.currentRunId,
-                                    since: liveSince,
-                                    waitingForMessages: waitingForMessages,
-                                    speaker: session?.speaker ?? session?.persona,
-                                    personas: personas,
-                                    fallbackSpeakerName: session?.agent.name ?? "Assistant",
-                                    isStopping: isStopping,
-                                    hasPinnedPlanBar: hasPinnedPlanBar,
-                                    morphId: liveSince.map { "turn-card-\($0)" },
-                                    morphNamespace: activityMorphNamespace
-                                )
-                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
-                                .id("live-activity")
-                                ChatLiveAsidesView(parentChatId: chatId, asides: liveAsides)
+                            VStack(alignment: .leading, spacing: 18) {
+                                if isRunning {
+                                    ChatLiveActivityCardView(
+                                        chatId: chatId,
+                                        runId: session?.currentRunId,
+                                        since: liveSince,
+                                        waitingForMessages: waitingForMessages,
+                                        speaker: session?.speaker ?? session?.persona,
+                                        personas: personas,
+                                        fallbackSpeakerName: session?.agent.name ?? "Assistant",
+                                        isStopping: isStopping,
+                                        hasPinnedPlanBar: hasPinnedPlanBar,
+                                        morphId: liveSince.map { "turn-card-\($0)" },
+                                        morphNamespace: activityMorphNamespace
+                                    )
+                                    .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
+                                    .id("live-activity")
+                                    ChatLiveAsidesView(parentChatId: chatId, asides: liveAsides)
+                                }
                             }
+                            .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86), value: isRunning)
                             if !pushes.live.isEmpty {
                                 ChatPushRequestStackView(requests: pushes.live)
                             }
@@ -326,7 +329,6 @@ struct ChatTranscriptView: View {
                         .padding(.vertical, 20)
                         .frame(maxWidth: 860, alignment: .leading)
                         .frame(maxWidth: .infinity)
-                        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86), value: isRunning)
                     }
                     .defaultScrollAnchor(.bottom)
                     .onScrollGeometryChange(for: Bool.self) { geo in
@@ -668,13 +670,13 @@ private struct ChatMessageRowView: View {
                             TonePill(label: "Pinned", tone: "review")
                         }
                         ChatHoverRevealSlot(hoverState: hoverState, alwaysVisible: isEditingUserMessage) {
-                            HStack(spacing: 6) {
+                            HStack(spacing: 2) {
                                 Button {
                                     toggleBookmark()
                                 } label: {
                                     Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
                                         .imageScale(.small)
-                                        .foregroundStyle(message.bookmarked == true ? p.accent : p.tertiaryText)
+                                        .modifier(ChatActionIconPill(active: message.bookmarked == true))
                                 }
                                 .buttonStyle(.plain)
                                 .disabled(togglingBookmark)
@@ -686,7 +688,7 @@ private struct ChatMessageRowView: View {
                                     } label: {
                                         Image(systemName: "arrowshape.turn.up.left")
                                             .imageScale(.small)
-                                            .foregroundStyle(p.tertiaryText)
+                                            .modifier(ChatActionIconPill())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Quote in composer")
@@ -698,7 +700,7 @@ private struct ChatMessageRowView: View {
                                     } label: {
                                         Image(systemName: "pencil")
                                             .imageScale(.small)
-                                            .foregroundStyle(p.tertiaryText)
+                                            .modifier(ChatActionIconPill())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Edit message and re-send (↑ in empty composer)")
@@ -710,7 +712,7 @@ private struct ChatMessageRowView: View {
                                     } label: {
                                         Image(systemName: "text.badge.star")
                                             .imageScale(.small)
-                                            .foregroundStyle(p.tertiaryText)
+                                            .modifier(ChatActionIconPill())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Save as reusable prompt template")
@@ -722,7 +724,7 @@ private struct ChatMessageRowView: View {
                                     } label: {
                                         Image(systemName: "arrow.triangle.branch")
                                             .imageScale(.small)
-                                            .foregroundStyle(p.tertiaryText)
+                                            .modifier(ChatActionIconPill())
                                     }
                                     .buttonStyle(.plain)
                                     .help("Fork conversation from here")
@@ -994,18 +996,17 @@ private struct ChatMessageRowView: View {
 
     @ViewBuilder
     private var assistantActionBar: some View {
-        let p = theme.palette
         let otherPersonas = personas.filter { $0.id != personaId }
         let availableModels = harnessModels.filter { $0.available && !$0.models.isEmpty }
 
-        HStack(spacing: 8) {
+        HStack(spacing: 2) {
             if isFoldableReply {
                 Button {
                     isReplyCollapsed.toggle()
                 } label: {
                     Image(systemName: isReplyCollapsed ? "arrow.up.left.and.arrow.down.right" : "arrow.down.right.and.arrow.up.left")
                         .imageScale(.small)
-                        .foregroundStyle(p.tertiaryText)
+                        .modifier(ChatActionIconPill())
                 }
                 .buttonStyle(.plain)
                 .help(isReplyCollapsed ? "Expand reply" : "Collapse reply")
@@ -1017,7 +1018,7 @@ private struct ChatMessageRowView: View {
                 } label: {
                     Image(systemName: "arrowshape.turn.up.left")
                         .imageScale(.small)
-                        .foregroundStyle(p.tertiaryText)
+                        .modifier(ChatActionIconPill())
                 }
                 .buttonStyle(.plain)
                 .help("Quote in composer")
@@ -1029,7 +1030,7 @@ private struct ChatMessageRowView: View {
                 } label: {
                     Image(systemName: "bubble.left.and.bubble.right")
                         .imageScale(.small)
-                        .foregroundStyle(p.tertiaryText)
+                        .modifier(ChatActionIconPill())
                 }
                 .buttonStyle(.plain)
                 .help("Start thread on this message")
@@ -1041,7 +1042,7 @@ private struct ChatMessageRowView: View {
                 } label: {
                     Image(systemName: isReadingAloud ? "stop.circle.fill" : "speaker.wave.2")
                         .imageScale(.small)
-                        .foregroundStyle(isReadingAloud ? p.accent : p.tertiaryText)
+                        .modifier(ChatActionIconPill(active: isReadingAloud))
                 }
                 .buttonStyle(.plain)
                 .help(isReadingAloud ? "Stop reading aloud" : "Read message aloud")
@@ -1052,7 +1053,7 @@ private struct ChatMessageRowView: View {
             } label: {
                 Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
                     .imageScale(.small)
-                    .foregroundStyle(message.bookmarked == true ? p.accent : p.tertiaryText)
+                    .modifier(ChatActionIconPill(active: message.bookmarked == true))
             }
             .buttonStyle(.plain)
             .disabled(togglingBookmark)
@@ -1067,7 +1068,7 @@ private struct ChatMessageRowView: View {
                 } label: {
                     Image(systemName: "arrow.clockwise")
                         .imageScale(.small)
-                        .foregroundStyle(p.tertiaryText)
+                        .modifier(ChatActionIconPill())
                 }
                 .buttonStyle(.plain)
                 .disabled(regenerating)
@@ -1088,7 +1089,7 @@ private struct ChatMessageRowView: View {
                 } label: {
                     Image(systemName: "rectangle.split.2x1")
                         .imageScale(.small)
-                        .foregroundStyle(p.tertiaryText)
+                        .modifier(ChatActionIconPill())
                 }
                 .menuStyle(.borderlessButton)
                 .menuIndicator(.hidden)
@@ -1102,7 +1103,7 @@ private struct ChatMessageRowView: View {
             } label: {
                 Image(systemName: "doc.on.doc")
                     .imageScale(.small)
-                    .foregroundStyle(p.tertiaryText)
+                    .modifier(ChatActionIconPill())
             }
             .buttonStyle(.plain)
             .help("Copy markdown")
@@ -1153,7 +1154,7 @@ private struct ChatMessageRowView: View {
             } label: {
                 Image(systemName: "ellipsis")
                     .imageScale(.small)
-                    .foregroundStyle(p.tertiaryText)
+                    .modifier(ChatActionIconPill())
             }
             .menuStyle(.borderlessButton)
             .menuIndicator(.hidden)
@@ -1353,6 +1354,28 @@ private struct ChatJumpToBottomPill: View {
         .onHover { isHovered = $0 }
         .animation(.easeOut(duration: 0.12), value: isHovered)
         .accessibilityLabel("Jump to bottom: \(label)")
+    }
+}
+
+/// Leaf hover-pill modifier for transcript message action buttons so pointer targeting feels
+/// tactile without re-evaluating `ChatMessageRowView.body`.
+private struct ChatActionIconPill: ViewModifier {
+    @Environment(\.vesperTheme) private var theme
+    var active: Bool = false
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        let p = theme.palette
+        content
+            .foregroundStyle(active ? p.accent : (isHovered ? p.text : p.tertiaryText))
+            .frame(width: 24, height: 22)
+            .background(
+                isHovered ? p.hover : .clear,
+                in: RoundedRectangle(cornerRadius: 5, style: .continuous)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.10), value: isHovered)
     }
 }
 
