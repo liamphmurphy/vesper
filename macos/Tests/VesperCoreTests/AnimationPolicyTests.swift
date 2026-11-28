@@ -50,6 +50,12 @@ final class AnimationPolicyTests: XCTestCase {
             AnimationPolicy.harnessTickInterval(working: false),
             AnimationPolicy.harnessTickInterval(working: true)
         )
-        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval, 1.0 / 24.0, accuracy: 1e-6)
+        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval, 1.0 / 60.0, accuracy: 1e-6)
+        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval(lowPowerMode: false), 1.0 / 60.0, accuracy: 1e-6)
+        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval(lowPowerMode: true), 1.0 / 30.0, accuracy: 1e-6)
+        XCTAssertGreaterThan(
+            AnimationPolicy.activitySceneTickInterval(lowPowerMode: true),
+            AnimationPolicy.activitySceneTickInterval(lowPowerMode: false)
+        )
     }
 }

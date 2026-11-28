@@ -187,7 +187,7 @@ final class ActivitySceneTests: XCTestCase {
         t.advance(to: 0.79)
         XCTAssertEqual(t.current, .thinking)
 
-        // Hold expires at 0.8s -> switches directly to writingCode, skips readingCode, starts 240ms crossfade.
+        // Hold expires at 0.8s -> switches directly to writingCode, skips readingCode, starts 240ms crossfade + scale settle.
         t.advance(to: 0.92)
         XCTAssertEqual(t.current, .writingCode)
         XCTAssertEqual(t.previous, .thinking)
@@ -195,11 +195,17 @@ final class ActivitySceneTests: XCTestCase {
         XCTAssertLessThan(t.currentOpacity(at: 0.92), 1.0)
         XCTAssertGreaterThan(t.previousOpacity(at: 0.92), 0.0)
         XCTAssertLessThan(t.previousOpacity(at: 0.92), 0.9)
+        XCTAssertGreaterThan(t.currentScale(at: 0.92), 0.95)
+        XCTAssertLessThan(t.currentScale(at: 0.92), 1.0)
+        XCTAssertGreaterThan(t.previousScale(at: 0.92), 0.98)
+        XCTAssertLessThan(t.previousScale(at: 0.92), 1.0)
 
         // Crossfade finishes at 0.8 + 0.24 = 1.04s.
         t.advance(to: 1.05)
         XCTAssertNil(t.previous)
         XCTAssertEqual(t.currentOpacity(at: 1.05), 1.0, accuracy: 1e-6)
+        XCTAssertEqual(t.currentScale(at: 1.05), 1.0, accuracy: 1e-6)
+        XCTAssertEqual(t.previousScale(at: 1.05), 1.0, accuracy: 1e-6)
 
         // Returning to current kind inside hold cancels pending transition.
         t.request(.tests, at: 1.1)

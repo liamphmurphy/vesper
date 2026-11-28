@@ -17,20 +17,22 @@ public enum ActivitySceneRenderer {
         render(kind, at: t, palette: palette, reduceMotion: false, opacity: 1, in: ctx, size: size)
     }
 
-    /// Renders `kind` into a Y-down `CGContext` with optional `reduceMotion` and layer `opacity`.
+    /// Renders `kind` into a Y-down `CGContext` with optional `reduceMotion`, layer `opacity`, and `contentScale`.
     public static func render(
         _ kind: ActivitySceneKind,
         at t: Double,
         palette: ActivityScenePalette,
         reduceMotion: Bool = false,
         opacity: Double = 1,
+        contentScale: Double = 1,
         in ctx: CGContext,
         size: CGSize
     ) {
-        guard size.width > 0, size.height > 0, opacity > 0.001 else { return }
+        guard size.width > 0, size.height > 0, opacity > 0.001, contentScale > 0.01 else { return }
         let def = ActivitySceneCatalog.definition(for: kind)
         let vb = ActivitySceneDefinition.viewBoxSize
-        let scale = min(size.width / vb.width, size.height / vb.height)
+        let baseScale = min(size.width / vb.width, size.height / vb.height)
+        let scale = baseScale * contentScale
         let dx = (size.width - vb.width * scale) * 0.5
         let dy = (size.height - vb.height * scale) * 0.5
 
@@ -205,9 +207,24 @@ public enum ActivitySceneRenderer {
             if let fillRGBA = pose.fillOverride ?? style.fill.map({ palette.resolve($0) }) {
                 let alpha = fillRGBA.alpha * style.fillOpacity * pose.opacity
                 if alpha > 0.001 {
-                    ctx.setFillColor(cgColor(fillRGBA, alpha: alpha))
-                    ctx.addPath(path)
-                    ctx.fillPath()
+                    let isDark = isDarkPalette(palette)
+                    if style.fill == .surfaceRaised && pose.fillOverride == nil {
+                        drawPaperSheenFill(path: path, base: fillRGBA, alpha: alpha, isDark: isDark, in: ctx)
+                    } else {
+                        ctx.saveGState()
+                        if isLuminousToken(style.fill) && alpha > 0.18 {
+                            let glowAlpha = alpha * (isDark ? 0.34 : 0.16)
+                            ctx.setShadow(
+                                offset: .zero,
+                                blur: isDark ? 3.5 : 2.0,
+                                color: cgColor(fillRGBA, alpha: glowAlpha)
+                            )
+                        }
+                        ctx.setFillColor(cgColor(fillRGBA, alpha: alpha))
+                        ctx.addPath(path)
+                        ctx.fillPath()
+                        ctx.restoreGState()
+                    }
                 }
             }
 
@@ -236,12 +253,23 @@ public enum ActivitySceneRenderer {
                     }
 
                     if let strokedPath {
+                        let isDark = isDarkPalette(palette)
+                        ctx.saveGState()
+                        if isLuminousToken(strokeToken) && alpha > 0.12 {
+                            let glowAlpha = alpha * (isDark ? 0.42 : 0.20)
+                            ctx.setShadow(
+                                offset: .zero,
+                                blur: isDark ? 4.0 : 2.2,
+                                color: cgColor(strokeRGBA, alpha: glowAlpha)
+                            )
+                        }
                         ctx.setStrokeColor(cgColor(strokeRGBA, alpha: alpha))
                         ctx.setLineWidth(style.strokeWidth)
                         ctx.setLineCap(cgLineCap(style.lineCap))
                         ctx.setLineJoin(cgLineJoin(style.lineJoin))
                         ctx.addPath(strokedPath)
                         ctx.strokePath()
+                        ctx.restoreGState()
                     }
                 }
             }
@@ -365,6 +393,69 @@ public enum ActivitySceneRenderer {
         case .round: .round
         case .bevel: .bevel
         }
+    }
+
+    private static func isDarkPalette(_ palette: ActivityScenePalette) -> Bool {
+        let s = palette.surfaceSunken
+        return (s.red * 0.299 + s.green * 0.587 + s.blue * 0.114) < 0.5
+    }
+
+    private static func isLuminousToken(_ token: SceneColorToken?) -> Bool {
+        switch token {
+        case .accent, .stateDone, .stateProgress: true
+        default: false
+        }
+    }
+
+    /// Gives `.paper` (`surfaceRaised`) elements a subtle vertical sheen gradient so mini cards,
+    /// terminals, and documents feel layered instead of stamped flat.
+    private static func drawPaperSheenFill(
+        path: CGPath,
+        base: RGBA,
+        alpha: Double,
+        isDark: Bool,
+        in ctx: CGContext
+    ) {
+        let bbox = path.boundingBoxOfPath
+        guard !bbox.isNull, bbox.width > 0.5, bbox.height > 0.5 else {
+            ctx.setFillColor(cgColor(base, alpha: alpha))
+            ctx.addPath(path)
+            ctx.fillPath()
+            return
+        }
+        let lift = isDark ? 0.08 : 0.03
+        let drop = isDark ? 0.02 : 0.035
+        let topColor = RGBA(
+            red: min(1, base.red + lift * (1 - base.red)),
+            green: min(1, base.green + lift * (1 - base.green)),
+            blue: min(1, base.blue + lift * (1 - base.blue)),
+            alpha: alpha
+        )
+        let bottomColor = RGBA(
+            red: max(0, base.red - drop * base.red),
+            green: max(0, base.green - drop * base.green),
+            blue: max(0, base.blue - drop * base.blue),
+            alpha: alpha
+        )
+        ctx.saveGState()
+        ctx.addPath(path)
+        ctx.clip()
+        if let gradient = CGGradient(
+            colorsSpace: srgb,
+            colors: [cgColor(topColor, alpha: alpha), cgColor(bottomColor, alpha: alpha)] as CFArray,
+            locations: [0, 1]
+        ) {
+            ctx.drawLinearGradient(
+                gradient,
+                start: CGPoint(x: bbox.midX, y: bbox.minY),
+                end: CGPoint(x: bbox.midX, y: bbox.maxY),
+                options: []
+            )
+        } else {
+            ctx.setFillColor(cgColor(base, alpha: alpha))
+            ctx.fill(bbox)
+        }
+        ctx.restoreGState()
     }
 
     private static func cgColor(_ rgba: RGBA, alpha: Double) -> CGColor {
