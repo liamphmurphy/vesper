@@ -2,13 +2,14 @@ import AppKit
 import SwiftUI
 import VesperCore
 
-/// The compact top bar of the native inspector: tab icons, title, active tab header actions, and pop-out.
+/// The compact top bar of the native inspector: tab icons, title, active tab header actions, pop-out, and close.
 struct InspectorHeaderView: View {
     let tabs: TabsModel
     let isPoppedOut: Bool
     let onSelectTab: (String) -> Void
     let onHeaderAction: (String, String, String?) -> Void
     let onPopOutToggle: () -> Void
+    var onClose: (() -> Void)? = nil
 
     var body: some View {
         let model = tabs.list.active?.state.inspector
@@ -48,9 +49,20 @@ struct InspectorHeaderView: View {
                     .frame(width: 22, height: 22)
                     .contentShape(Rectangle())
             }
-            .buttonStyle(.borderless)
-            .help(isPoppedOut ? "Re-dock inspector" : "Pop out inspector")
-            .accessibilityLabel(isPoppedOut ? "Re-dock inspector" : "Pop out inspector")
+            .buttonStyle(.plain)
+            .hoverTooltip(isPoppedOut ? "Re-dock inspector" : "Pop out inspector", highlightHover: true)
+
+            if !isPoppedOut, let onClose {
+                Button(action: onClose) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 22, height: 22)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .hoverTooltip("Close inspector", hint: "⌘\\", highlightHover: true)
+            }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 6)
@@ -127,6 +139,8 @@ private struct InspectorHeaderActionButton: View {
 
 /// Hosts the native SwiftUI body for whichever native tab is active on the window's active tab.
 struct InspectorBodyHost: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     let tabs: TabsModel
     let send: (NativeCommand) -> Void
     let navigate: (String, Bool) -> Void
@@ -136,17 +150,21 @@ struct InspectorBodyHost: View {
         let state = tabs.list.active?.state
         let theme = state?.theme ?? ThemeTokens(mode: .dark)
         let model = state?.inspector
-        Group {
-            if let active = InspectorLogic.activeTab(in: model), active.kind == .native {
+        let active = InspectorLogic.activeTab(in: model)
+        let tabKey = "\(model?.id ?? ""):\(active?.id ?? "none")"
+        ZStack {
+            if let active, active.kind == .native {
                 if let custom = state?.nativeInspectorView?(active.id) {
                     custom
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                        .id("\(model?.id ?? ""):\(active.id)")
+                        .id(tabKey)
+                        .transition(.opacity)
                 } else {
                     InspectorBodyView(tab: active, send: send, navigate: navigate, openURL: openURL)
-                        .id("\(model?.id ?? ""):\(active.id)")
+                        .id(tabKey)
+                        .transition(.opacity)
                 }
-            } else if InspectorLogic.activeTab(in: model) == nil {
+            } else if active == nil {
                 Text("No inspector for this tab.")
                     .font(theme.font(.small))
                     .foregroundStyle(.secondary)
@@ -156,6 +174,7 @@ struct InspectorBodyHost: View {
                 Color.clear
             }
         }
+        .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: tabKey)
         .environment(\.vesperTheme, theme)
     }
 }
@@ -168,6 +187,7 @@ struct InspectorBodyView: View {
     let openURL: (URL) -> Void
 
     @Environment(\.vesperTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var collapsedSections: [String: Bool] = [:]
 
     var body: some View {
@@ -180,13 +200,22 @@ struct InspectorBodyView: View {
                 .padding(20)
         } else {
             ScrollView {
-                VStack(alignment: .leading, spacing: 16) {
+                LazyVStack(alignment: .leading, spacing: 16) {
                     ForEach(sections) { section in
                         InspectorSectionView(
                             tabId: tab.id,
                             section: section,
                             collapsed: isCollapsed(section),
-                            onToggleCollapse: { collapsedSections[section.id] = !isCollapsed(section) },
+                            onToggleCollapse: {
+                                let next = !isCollapsed(section)
+                                if reduceMotion {
+                                    collapsedSections[section.id] = next
+                                } else {
+                                    withAnimation(.easeOut(duration: 0.18)) {
+                                        collapsedSections[section.id] = next
+                                    }
+                                }
+                            },
                             send: send,
                             navigate: navigate,
                             openURL: openURL
@@ -213,6 +242,7 @@ private struct InspectorSectionView: View {
     let navigate: (String, Bool) -> Void
     let openURL: (URL) -> Void
     @Environment(\.vesperTheme) private var theme
+    @State private var headerHovered = false
 
     private var hasHeader: Bool {
         section.title != nil || section.aside != nil || section.badge != nil
@@ -224,25 +254,28 @@ private struct InspectorSectionView: View {
                 headerRow
             }
             if !collapsed {
-                if section.items.isEmpty {
-                    if let empty = section.emptyText {
-                        Text(empty)
-                            .font(theme.scaledFont(size: 11))
-                            .foregroundStyle(.secondary)
-                    }
-                } else {
-                    VStack(alignment: .leading, spacing: 8) {
-                        ForEach(section.items) { item in
-                            InspectorItemView(
-                                tabId: tabId,
-                                item: item,
-                                send: send,
-                                navigate: navigate,
-                                openURL: openURL
-                            )
+                Group {
+                    if section.items.isEmpty {
+                        if let empty = section.emptyText {
+                            Text(empty)
+                                .font(theme.scaledFont(size: 11))
+                                .foregroundStyle(.secondary)
+                        }
+                    } else {
+                        LazyVStack(alignment: .leading, spacing: 8) {
+                            ForEach(section.items) { item in
+                                InspectorItemView(
+                                    tabId: tabId,
+                                    item: item,
+                                    send: send,
+                                    navigate: navigate,
+                                    openURL: openURL
+                                )
+                            }
                         }
                     }
                 }
+                .transition(.opacity)
             }
         }
     }
@@ -250,9 +283,10 @@ private struct InspectorSectionView: View {
     @ViewBuilder private var headerRow: some View {
         let content = HStack(spacing: 6) {
             if section.collapsible == true {
-                Image(systemName: collapsed ? "chevron.right" : "chevron.down")
+                Image(systemName: "chevron.right")
                     .font(.system(size: 9, weight: .semibold))
                     .foregroundStyle(.secondary)
+                    .rotationEffect(.degrees(collapsed ? 0 : 90))
             }
             if let title = section.title {
                 Text(title.uppercased())
@@ -273,8 +307,19 @@ private struct InspectorSectionView: View {
             }
         }
         if section.collapsible == true {
-            Button(action: onToggleCollapse) { content.contentShape(Rectangle()) }
-                .buttonStyle(.plain)
+            Button(action: onToggleCollapse) {
+                content
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 3)
+                    .background(
+                        RoundedRectangle(cornerRadius: 5)
+                            .fill(headerHovered ? Color.primary.opacity(0.06) : .clear)
+                    )
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .padding(.horizontal, -4)
+            .onHover { headerHovered = $0 }
         } else {
             content
         }

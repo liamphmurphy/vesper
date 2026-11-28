@@ -132,6 +132,8 @@ final class RailBarView: NSVisualEffectView {
 final class RailButton: NSButton {
     private(set) var item: RailItem?
     private let onClick: (RailButton) -> Void
+    private let tooltipPresenter: HoverTooltipPresenter
+    private let tooltipOwnerID = UUID()
     private let activeBar = NSView()
     private let badgeView = RailBadgeView()
     private let statusView = RailStatusDot()
@@ -142,7 +144,11 @@ final class RailButton: NSButton {
 
     static let size: CGFloat = 32
 
-    init(onClick: @escaping (RailButton) -> Void) {
+    init(
+        tooltipPresenter: HoverTooltipPresenter = .shared,
+        onClick: @escaping (RailButton) -> Void
+    ) {
+        self.tooltipPresenter = tooltipPresenter
         self.onClick = onClick
         super.init(frame: NSRect(x: 0, y: 0, width: Self.size, height: Self.size))
         isBordered = false
@@ -181,12 +187,16 @@ final class RailButton: NSButton {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    @objc private func fire() { onClick(self) }
+    @objc private func fire() {
+        tooltipPresenter.mouseExited(ownerID: tooltipOwnerID)
+        onClick(self)
+    }
 
     func configure(_ item: RailItem, theme: ThemeTokens = ThemeTokens(mode: .dark)) {
         self.item = item
         self.theme = theme
-        toolTip = item.label
+        // Managed by HoverTooltipPresenter for snappy leading-edge tooltips with shortcut hints.
+        toolTip = nil
         setAccessibilityLabel(item.label)
         isEnabled = item.disabled != true
         alphaValue = isEnabled ? 1 : 0.4
@@ -202,6 +212,15 @@ final class RailButton: NSButton {
             image?.isTemplate = true
         }
         updateAppearance()
+        if hovering {
+            tooltipPresenter.update(
+                ownerID: tooltipOwnerID,
+                text: item.label,
+                hint: RailLogic.tooltipHint(for: item),
+                anchorView: self,
+                placement: .leading
+            )
+        }
     }
 
     private func showAvatar(_ avatar: Avatar) {
@@ -264,8 +283,34 @@ final class RailButton: NSButton {
         updateAppearance()
     }
 
-    override func mouseEntered(with event: NSEvent) { hovering = true; updateAppearance() }
-    override func mouseExited(with event: NSEvent) { hovering = false; updateAppearance() }
+    override func mouseEntered(with event: NSEvent) {
+        hovering = true
+        updateAppearance()
+        if let item {
+            tooltipPresenter.mouseEntered(
+                ownerID: tooltipOwnerID,
+                text: item.label,
+                hint: RailLogic.tooltipHint(for: item),
+                anchorView: self,
+                placement: .leading
+            )
+        }
+    }
+
+    override func mouseExited(with event: NSEvent) {
+        hovering = false
+        updateAppearance()
+        tooltipPresenter.mouseExited(ownerID: tooltipOwnerID)
+    }
+
+    override func viewWillMove(toWindow newWindow: NSWindow?) {
+        if newWindow == nil {
+            hovering = false
+            tooltipPresenter.mouseExited(ownerID: tooltipOwnerID)
+        }
+        super.viewWillMove(toWindow: newWindow)
+    }
+
     override var acceptsFirstResponder: Bool { true }
     override var focusRingMaskBounds: NSRect { bounds }
     override func drawFocusRingMask() { NSBezierPath(roundedRect: bounds, xRadius: 7, yRadius: 7).fill() }
@@ -328,14 +373,33 @@ private final class RailBadgeView: NSView {
 
     private static let font = NSFont.systemFont(ofSize: 9.5, weight: .bold)
 
-    override func draw(_ dirtyRect: NSRect) {
-        // Cutout ring separates the badge cleanly from the underlying rail glyph.
-        NSColor.windowBackgroundColor.setFill()
-        NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+    private var isDarkAppearance: Bool {
+        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
 
+    override func draw(_ dirtyRect: NSRect) {
+        // Translucent adaptive rim + subtle shadow separates the badge over behind-window vibrancy
+        // without painting an opaque windowBackgroundColor halo that clashes with wallpaper tint.
         let inner = bounds.insetBy(dx: 1.5, dy: 1.5)
+        let path = NSBezierPath(roundedRect: inner, xRadius: inner.height / 2, yRadius: inner.height / 2)
+
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 2.0
+        shadow.shadowOffset = NSSize(width: 0, height: -0.5)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isDarkAppearance ? 0.42 : 0.16)
+        shadow.set()
         color.setFill()
-        NSBezierPath(roundedRect: inner, xRadius: inner.height / 2, yRadius: inner.height / 2).fill()
+        path.fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        let rim = isDarkAppearance
+            ? NSColor.black.withAlphaComponent(0.45)
+            : NSColor.white.withAlphaComponent(0.88)
+        rim.setStroke()
+        path.lineWidth = 1.0
+        path.stroke()
+
         guard let text else { return }
         let attrs: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: NSColor.white]
         let size = (text as NSString).size(withAttributes: attrs)
@@ -396,11 +460,30 @@ private final class RailStatusDot: NSView {
         }
     }
 
+    private var isDarkAppearance: Bool {
+        effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
+    }
+
     override func draw(_ dirtyRect: NSRect) {
         guard let color else { return }
-        NSColor.windowBackgroundColor.setFill()
-        NSBezierPath(ovalIn: bounds).fill()
+        let inner = bounds.insetBy(dx: 1.5, dy: 1.5)
+        let path = NSBezierPath(ovalIn: inner)
+
+        NSGraphicsContext.saveGraphicsState()
+        let shadow = NSShadow()
+        shadow.shadowBlurRadius = 1.5
+        shadow.shadowOffset = NSSize(width: 0, height: -0.5)
+        shadow.shadowColor = NSColor.black.withAlphaComponent(isDarkAppearance ? 0.42 : 0.16)
+        shadow.set()
         color.setFill()
-        NSBezierPath(ovalIn: bounds.insetBy(dx: 1.5, dy: 1.5)).fill()
+        path.fill()
+        NSGraphicsContext.restoreGraphicsState()
+
+        let rim = isDarkAppearance
+            ? NSColor.black.withAlphaComponent(0.45)
+            : NSColor.white.withAlphaComponent(0.88)
+        rim.setStroke()
+        path.lineWidth = 1.0
+        path.stroke()
     }
 }

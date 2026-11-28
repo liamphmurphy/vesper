@@ -143,4 +143,51 @@ final class TabListTests: XCTestCase {
         XCTAssertEqual(TabCloseOutcome.decide(tabsInWindow: 2, otherWindows: 0), .removeTab)
         XCTAssertEqual(TabCloseOutcome.decide(tabsInWindow: 3, otherWindows: 2), .removeTab)
     }
+
+    func testTabStripLogicOverflowTooltipsAndActivity() {
+        // Fits without scrolling -> no edge fades.
+        XCTAssertEqual(
+            TabStripLogic.overflow(contentWidth: 400, containerWidth: 500, contentOffsetX: 0),
+            TabStripLogic.Overflow(leading: false, trailing: false)
+        )
+        // Scrolled at leading edge -> trailing fade only.
+        XCTAssertEqual(
+            TabStripLogic.overflow(contentWidth: 900, containerWidth: 500, contentOffsetX: 0),
+            TabStripLogic.Overflow(leading: false, trailing: true)
+        )
+        // Scrolled in middle -> both fades.
+        XCTAssertEqual(
+            TabStripLogic.overflow(contentWidth: 900, containerWidth: 500, contentOffsetX: 180),
+            TabStripLogic.Overflow(leading: true, trailing: true)
+        )
+        // Scrolled to trailing end -> leading fade only.
+        XCTAssertEqual(
+            TabStripLogic.overflow(contentWidth: 900, containerWidth: 500, contentOffsetX: 400),
+            TabStripLogic.Overflow(leading: true, trailing: false)
+        )
+
+        // Tooltips include activity suffixes where appropriate.
+        XCTAssertEqual(TabStripLogic.tooltip(title: "Deploy fix", activity: .running, isActive: true), "Deploy fix — Running")
+        XCTAssertEqual(TabStripLogic.tooltip(title: "Deploy fix", activity: .needsAttention, isActive: false), "Deploy fix — Needs attention")
+        XCTAssertEqual(TabStripLogic.tooltip(title: "Deploy fix", activity: .unread, isActive: false), "Deploy fix — Unread")
+        XCTAssertEqual(TabStripLogic.tooltip(title: "Deploy fix", activity: .unread, isActive: true), "Deploy fix")
+        XCTAssertEqual(TabStripLogic.tooltip(title: "Deploy fix", activity: nil, isActive: false), "Deploy fix")
+
+        // Activity priority: running > needsAttention > background unread > nil.
+        XCTAssertEqual(
+            TabStripLogic.chatTabActivity(state: .running, unread: 2, hasPendingAttention: true, isActiveTab: false),
+            .running
+        )
+        XCTAssertEqual(
+            TabStripLogic.chatTabActivity(state: .idle, unread: 2, hasPendingAttention: true, isActiveTab: true),
+            .needsAttention
+        )
+        XCTAssertEqual(
+            TabStripLogic.chatTabActivity(state: .idle, unread: 1, hasPendingAttention: false, isActiveTab: false),
+            .unread
+        )
+        XCTAssertNil(
+            TabStripLogic.chatTabActivity(state: .idle, unread: 1, hasPendingAttention: false, isActiveTab: true)
+        )
+    }
 }

@@ -21,6 +21,7 @@ final class InspectorViewController: NSViewController {
     private let navigate: (String, Bool) -> Void
     private let openPlayground: (URL) -> Void
     private let onPopOutChanged: (Bool) -> Void
+    private let onClose: (() -> Void)?
     private let ownerWindow: () -> MainWindowController?
 
     let companionStore = CompanionChatStore()
@@ -46,6 +47,7 @@ final class InspectorViewController: NSViewController {
         navigate: @escaping (String, Bool) -> Void,
         openPlayground: @escaping (URL) -> Void,
         onPopOutChanged: @escaping (Bool) -> Void,
+        onClose: (() -> Void)? = nil,
         onPanelEvent: @escaping (String, String, String?) -> Void
     ) {
         self.app = app
@@ -55,6 +57,7 @@ final class InspectorViewController: NSViewController {
         self.navigate = navigate
         self.openPlayground = openPlayground
         self.onPopOutChanged = onPopOutChanged
+        self.onClose = onClose
         self.onPanelEvent = onPanelEvent
         super.init(nibName: nil, bundle: nil)
     }
@@ -200,6 +203,7 @@ final class InspectorViewController: NSViewController {
     /// hosts' frames so resizing or expanding the inspector never lays out hidden SwiftUI trees.
     private func activateHostView(_ target: NSView?) {
         guard target !== activeHostView else { return }
+        let hadPrevious = activeHostView != nil
         if let old = activeHostView {
             let key = ObjectIdentifier(old)
             if let constraints = activeHostConstraints.removeValue(forKey: key) {
@@ -225,8 +229,17 @@ final class InspectorViewController: NSViewController {
             NSLayoutConstraint.activate(constraints)
             activeHostConstraints[key] = constraints
         }
+        target.wantsLayer = true
         target.isHidden = false
         bodyContainer.needsLayout = true
+        if hadPrevious, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0.0
+            fade.toValue = 1.0
+            fade.duration = 0.14
+            fade.timingFunction = CAMediaTimingFunction(name: .easeOut)
+            target.layer?.add(fade, forKey: "vesper.inspector.host.fade")
+        }
     }
 
     private func makeHeaderView() -> InspectorHeaderView {
@@ -241,7 +254,8 @@ final class InspectorViewController: NSViewController {
             },
             onPopOutToggle: { [weak self] in
                 self?.togglePopOut()
-            }
+            },
+            onClose: onClose
         )
     }
 

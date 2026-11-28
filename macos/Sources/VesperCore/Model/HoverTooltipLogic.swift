@@ -39,7 +39,15 @@ public struct TooltipRect: Sendable, Equatable {
     public var midX: Double { x + width / 2 }
     public var maxX: Double { x + width }
     public var minY: Double { y }
+    public var midY: Double { y + height / 2 }
     public var maxY: Double { y + height }
+}
+
+public enum TooltipPlacement: Sendable, Equatable {
+    /// Centered below the anchor (flipping above near the bottom edge).
+    case below
+    /// To the leading (left) side of the anchor, vertically centered (for the trailing right rail).
+    case leading
 }
 
 /// Pure positioning and hover-delay policy for floating AppKit hover tooltips.
@@ -61,40 +69,67 @@ public enum HoverTooltipLogic: Sendable {
         return coldDelayMs
     }
 
-    /// Places a tooltip centered below `anchor` in bottom-up screen coordinates, clamping horizontally
-    /// to `visibleFrame` and flipping above `anchor` when there isn't enough room below.
+    /// Places a tooltip relative to `anchor` in bottom-up screen coordinates, clamping cleanly to
+    /// `visibleFrame` and flipping to the opposite side when the preferred side runs out of space.
     public static func origin(
         anchor: TooltipRect,
         tooltipSize: TooltipSize,
         visibleFrame: TooltipRect,
         gap: Double = 6,
-        edgePadding: Double = 6
+        edgePadding: Double = 6,
+        placement: TooltipPlacement = .below
     ) -> TooltipPoint {
         let minAllowedX = visibleFrame.minX + edgePadding
         let maxAllowedX = visibleFrame.maxX - edgePadding - tooltipSize.width
-        let centeredX = anchor.midX - tooltipSize.width / 2
-        let clampedX: Double
-        if maxAllowedX < minAllowedX {
-            clampedX = minAllowedX
-        } else {
-            clampedX = min(max(centeredX, minAllowedX), maxAllowedX)
-        }
-
         let minAllowedY = visibleFrame.minY + edgePadding
         let maxAllowedY = visibleFrame.maxY - edgePadding - tooltipSize.height
-        let belowY = anchor.minY - gap - tooltipSize.height
-        let chosenY: Double
-        if belowY >= minAllowedY {
-            chosenY = belowY
-        } else {
-            let aboveY = anchor.maxY + gap
-            if maxAllowedY < minAllowedY {
-                chosenY = minAllowedY
-            } else {
-                chosenY = min(max(aboveY, minAllowedY), maxAllowedY)
-            }
-        }
 
-        return TooltipPoint(x: clampedX.rounded(), y: chosenY.rounded())
+        switch placement {
+        case .below:
+            let centeredX = anchor.midX - tooltipSize.width / 2
+            let clampedX: Double
+            if maxAllowedX < minAllowedX {
+                clampedX = minAllowedX
+            } else {
+                clampedX = min(max(centeredX, minAllowedX), maxAllowedX)
+            }
+
+            let belowY = anchor.minY - gap - tooltipSize.height
+            let chosenY: Double
+            if belowY >= minAllowedY {
+                chosenY = belowY
+            } else {
+                let aboveY = anchor.maxY + gap
+                if maxAllowedY < minAllowedY {
+                    chosenY = minAllowedY
+                } else {
+                    chosenY = min(max(aboveY, minAllowedY), maxAllowedY)
+                }
+            }
+            return TooltipPoint(x: clampedX.rounded(), y: chosenY.rounded())
+
+        case .leading:
+            let leadingX = anchor.minX - gap - tooltipSize.width
+            let chosenX: Double
+            if leadingX >= minAllowedX {
+                chosenX = leadingX
+            } else {
+                let trailingX = anchor.maxX + gap
+                if maxAllowedX < minAllowedX {
+                    chosenX = minAllowedX
+                } else {
+                    chosenX = min(max(trailingX, minAllowedX), maxAllowedX)
+                }
+            }
+
+            let centeredY = anchor.midY - tooltipSize.height / 2
+            let clampedY: Double
+            if maxAllowedY < minAllowedY {
+                clampedY = minAllowedY
+            } else {
+                clampedY = min(max(centeredY, minAllowedY), maxAllowedY)
+            }
+            return TooltipPoint(x: chosenX.rounded(), y: clampedY.rounded())
+        }
     }
 }

@@ -64,6 +64,8 @@ final class ShellState {
     var nativeArea: AreaId?
     /// The area the area bar and tab icon mark.
     var currentArea: AreaId? { native?.areaOverride ?? nativeArea }
+    /// Live activity state shown as a compact badge in the tab strip.
+    var tabActivity: TabActivityStatus? { native?.tabActivity }
 
     // Tab navigation state (native history stack for Vesper tabs, WKWebView for playgrounds).
     var canGoBack = false

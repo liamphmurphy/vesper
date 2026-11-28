@@ -249,4 +249,13 @@ final class RailLogicTests: XCTestCase {
         XCTAssertNil(RailLogic.resolveAction(itemId: "harness:codex", menuItemId: "usage", reviewURL: lookup))
         XCTAssertNil(RailLogic.resolveAction(itemId: "unknown", menuItemId: nil, reviewURL: lookup))
     }
+
+    func testTooltipHintsForRailShortcuts() {
+        XCTAssertEqual(RailLogic.tooltipHint(for: RailItem(id: "settings", label: "Settings")), "⌘,")
+        XCTAssertEqual(RailLogic.tooltipHint(for: RailItem(id: "dock.tab:outline", label: "Outline")), "⌘⇧O")
+        XCTAssertEqual(RailLogic.tooltipHint(for: RailItem(id: "dock.tab:activity", label: "Activity", active: true)), "⌘\\")
+        XCTAssertNil(RailLogic.tooltipHint(for: RailItem(id: "dock.tab:activity", label: "Activity", active: false)))
+        XCTAssertEqual(RailLogic.tooltipHint(for: RailItem(id: "dock.tab:chat", label: "Chat", active: false)), "⌘\\")
+        XCTAssertNil(RailLogic.tooltipHint(for: RailItem(id: "needsYou", label: "Needs you")))
+    }
 }

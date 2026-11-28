@@ -284,11 +284,19 @@ struct WorkflowRunScreen: View {
         if !run.chatId.isEmpty {
             items.append(ShellToolbarItem(id: "wfrun.chat", label: "Open chat", icon: "msg", kind: .button, showsLabel: true))
         }
+        let tabActivity: TabActivityStatus? = if run.state == .waiting {
+            .needsAttention
+        } else if WorkflowsLogic.runActive(run.state) {
+            .running
+        } else {
+            nil
+        }
         return NativeChrome(
             title: run.name,
             subtitle: "v\(run.version) · \(WorkflowsLogic.runStateLabel(run.state))",
             toolbarItems: items,
-            navigator: WorkflowsLogic.buildWorkflowRunNavModel(run: run, selectedNodeId: selectedNodeId)
+            navigator: WorkflowsLogic.buildWorkflowRunNavModel(run: run, selectedNodeId: selectedNodeId),
+            tabActivity: tabActivity
         )
     }
 

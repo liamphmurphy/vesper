@@ -126,3 +126,66 @@ public func sessionState(urls: [String?], activeIndex: Int, bounds: WindowBounds
     let before = urls.prefix(max(0, activeIndex)).compactMap { $0 }.count
     return SessionState(tabs: saved, activeIndex: min(before, saved.count - 1), bounds: bounds)
 }
+
+/// Live background activity badge shown in the compact toolbar tab strip.
+public enum TabActivityStatus: String, Equatable, Hashable, Sendable {
+    case running
+    case needsAttention
+    case unread
+}
+
+/// Pure status, tooltip, and horizontal overflow fade rules for `TabStripView`.
+public enum TabStripLogic: Sendable {
+    public struct Overflow: Equatable, Sendable {
+        public var leading: Bool
+        public var trailing: Bool
+
+        public init(leading: Bool = false, trailing: Bool = false) {
+            self.leading = leading
+            self.trailing = trailing
+        }
+    }
+
+    public static func overflow(
+        contentWidth: Double,
+        containerWidth: Double,
+        contentOffsetX: Double,
+        threshold: Double = 4
+    ) -> Overflow {
+        guard contentWidth > containerWidth + threshold else {
+            return Overflow(leading: false, trailing: false)
+        }
+        let leading = contentOffsetX > threshold
+        let trailing = (contentOffsetX + containerWidth) < (contentWidth - threshold)
+        return Overflow(leading: leading, trailing: trailing)
+    }
+
+    public static func tooltip(
+        title: String,
+        activity: TabActivityStatus?,
+        isActive: Bool
+    ) -> String {
+        switch activity {
+        case .running:
+            return "\(title) — Running"
+        case .needsAttention:
+            return "\(title) — Needs attention"
+        case .unread where !isActive:
+            return "\(title) — Unread"
+        default:
+            return title
+        }
+    }
+
+    public static func chatTabActivity(
+        state: API.ChatState?,
+        unread: Int,
+        hasPendingAttention: Bool,
+        isActiveTab: Bool
+    ) -> TabActivityStatus? {
+        if state == .running { return .running }
+        if hasPendingAttention { return .needsAttention }
+        if !isActiveTab && unread > 0 { return .unread }
+        return nil
+    }
+}

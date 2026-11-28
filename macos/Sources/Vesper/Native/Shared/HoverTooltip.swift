@@ -20,6 +20,7 @@ final class HoverTooltipPresenter {
 
     private var activeOwnerID: UUID?
     private var panel: NSPanel?
+    private var activeHint: String?
     private var pendingTask: Task<Void, Never>?
     private var lastDismissedAtMs: Int?
     private var eventMonitor: Any?
@@ -46,7 +47,18 @@ final class HoverTooltipPresenter {
         return panel.accessibilityLabel()
     }
 
-    func mouseEntered(ownerID: UUID, text: String, hint: String?, anchorView: NSView) {
+    var currentHint: String? {
+        guard panel != nil else { return nil }
+        return activeHint
+    }
+
+    func mouseEntered(
+        ownerID: UUID,
+        text: String,
+        hint: String?,
+        anchorView: NSView,
+        placement: TooltipPlacement = .below
+    ) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             if activeOwnerID == ownerID { dismiss() }
@@ -65,25 +77,31 @@ final class HoverTooltipPresenter {
         )
 
         if delayMs <= 0 {
-            showIfStillHovered(ownerID: ownerID, text: trimmed, hint: hint, anchorView: anchorView)
+            showIfStillHovered(ownerID: ownerID, text: trimmed, hint: hint, anchorView: anchorView, placement: placement)
             return
         }
 
         pendingTask = Task { @MainActor [weak self, weak anchorView] in
             try? await Task.sleep(for: .milliseconds(delayMs))
             guard !Task.isCancelled, let self, let anchorView else { return }
-            self.showIfStillHovered(ownerID: ownerID, text: trimmed, hint: hint, anchorView: anchorView)
+            self.showIfStillHovered(ownerID: ownerID, text: trimmed, hint: hint, anchorView: anchorView, placement: placement)
         }
     }
 
-    func update(ownerID: UUID, text: String, hint: String?, anchorView: NSView) {
+    func update(
+        ownerID: UUID,
+        text: String,
+        hint: String?,
+        anchorView: NSView,
+        placement: TooltipPlacement = .below
+    ) {
         guard activeOwnerID == ownerID, panel != nil else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else {
             dismiss()
             return
         }
-        showIfStillHovered(ownerID: ownerID, text: trimmed, hint: hint, anchorView: anchorView)
+        showIfStillHovered(ownerID: ownerID, text: trimmed, hint: hint, anchorView: anchorView, placement: placement)
     }
 
     func mouseExited(ownerID: UUID) {
@@ -95,6 +113,7 @@ final class HoverTooltipPresenter {
         pendingTask?.cancel()
         pendingTask = nil
         activeOwnerID = nil
+        activeHint = nil
         if let existing = panel {
             existing.parent?.removeChildWindow(existing)
             existing.orderOut(nil)
@@ -104,7 +123,13 @@ final class HoverTooltipPresenter {
         removeDismissHooks()
     }
 
-    private func showIfStillHovered(ownerID: UUID, text: String, hint: String?, anchorView: NSView) {
+    private func showIfStillHovered(
+        ownerID: UUID,
+        text: String,
+        hint: String?,
+        anchorView: NSView,
+        placement: TooltipPlacement
+    ) {
         guard activeOwnerID == ownerID else { return }
         guard let window = anchorView.window, !anchorView.isHiddenOrHasHiddenAncestor else {
             dismiss()
@@ -143,7 +168,9 @@ final class HoverTooltipPresenter {
                 y: screenFrame.minY,
                 width: screenFrame.width,
                 height: screenFrame.height
-            )
+            ),
+            gap: placement == .leading ? 8 : 6,
+            placement: placement
         )
         let frame = NSRect(x: origin.x, y: origin.y, width: size.width, height: size.height)
 
@@ -173,6 +200,7 @@ final class HoverTooltipPresenter {
             targetPanel = created
         }
 
+        activeHint = hint
         targetPanel.appearance = window.effectiveAppearance
         targetPanel.contentView = content
         targetPanel.setAccessibilityLabel(text)
@@ -290,6 +318,7 @@ final class HoverTrackingNSView: NSView {
     let ownerID = UUID()
     var text: String
     var hint: String?
+    var placement: TooltipPlacement
     var presenter: HoverTooltipPresenter
     var onHoverChange: ((Bool) -> Void)?
     private var trackingArea: NSTrackingArea?
@@ -297,11 +326,13 @@ final class HoverTrackingNSView: NSView {
     init(
         text: String,
         hint: String?,
+        placement: TooltipPlacement = .below,
         presenter: HoverTooltipPresenter = .shared,
         onHoverChange: ((Bool) -> Void)? = nil
     ) {
         self.text = text
         self.hint = hint
+        self.placement = placement
         self.presenter = presenter
         self.onHoverChange = onHoverChange
         super.init(frame: .zero)
@@ -333,7 +364,7 @@ final class HoverTrackingNSView: NSView {
 
     override func mouseEntered(with event: NSEvent) {
         onHoverChange?(true)
-        presenter.mouseEntered(ownerID: ownerID, text: text, hint: hint, anchorView: self)
+        presenter.mouseEntered(ownerID: ownerID, text: text, hint: hint, anchorView: self, placement: placement)
     }
 
     override func mouseExited(with event: NSEvent) {
@@ -353,19 +384,21 @@ final class HoverTrackingNSView: NSView {
 private struct HoverTooltipAnchor: NSViewRepresentable {
     let text: String
     let hint: String?
+    let placement: TooltipPlacement
     let onHoverChange: (Bool) -> Void
 
     func makeNSView(context: Context) -> HoverTrackingNSView {
-        HoverTrackingNSView(text: text, hint: hint, onHoverChange: onHoverChange)
+        HoverTrackingNSView(text: text, hint: hint, placement: placement, onHoverChange: onHoverChange)
     }
 
     func updateNSView(_ nsView: HoverTrackingNSView, context: Context) {
-        let changed = nsView.text != text || nsView.hint != hint
+        let changed = nsView.text != text || nsView.hint != hint || nsView.placement != placement
         nsView.text = text
         nsView.hint = hint
+        nsView.placement = placement
         nsView.onHoverChange = onHoverChange
         if changed {
-            nsView.presenter.update(ownerID: nsView.ownerID, text: text, hint: hint, anchorView: nsView)
+            nsView.presenter.update(ownerID: nsView.ownerID, text: text, hint: hint, anchorView: nsView, placement: placement)
         }
     }
 }
@@ -373,6 +406,7 @@ private struct HoverTooltipAnchor: NSViewRepresentable {
 private struct HoverTooltipModifier: ViewModifier {
     let text: String
     let hint: String?
+    let placement: TooltipPlacement
     let highlightHover: Bool
     let cornerRadius: CGFloat
 
@@ -385,7 +419,7 @@ private struct HoverTooltipModifier: ViewModifier {
                     .fill(highlightHover && isHovered ? Color.primary.opacity(0.08) : .clear)
             )
             .background(
-                HoverTooltipAnchor(text: text, hint: hint) { hovered in
+                HoverTooltipAnchor(text: text, hint: hint, placement: placement) { hovered in
                     isHovered = hovered
                 }
             )
@@ -398,12 +432,14 @@ extension View {
     func hoverTooltip(
         _ text: String,
         hint: String? = nil,
+        placement: TooltipPlacement = .below,
         highlightHover: Bool = false,
         cornerRadius: CGFloat = 5
     ) -> some View {
         modifier(HoverTooltipModifier(
             text: text,
             hint: hint,
+            placement: placement,
             highlightHover: highlightHover,
             cornerRadius: cornerRadius
         ))

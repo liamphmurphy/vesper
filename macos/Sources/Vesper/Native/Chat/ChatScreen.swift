@@ -438,7 +438,7 @@ struct ChatScreen: View {
                 try? await Task.sleep(for: .milliseconds(Self.longTurnUsageRefreshIntervalMs))
             }
         }
-        .task(id: "\(chatId ?? "")|\(session?.unread ?? 0)|\(session?.messageCount ?? 0)") {
+        .task(id: "\(chatId ?? "")|\(session?.unread ?? 0)|\(session?.messageCount ?? 0)|\(context.isActiveTab)|\(windowVisible)") {
             await markReadIfNeeded(session: session)
         }
         .onAppear {
@@ -1513,6 +1513,7 @@ struct ChatScreen: View {
     }
 
     private func markReadIfNeeded(session: API.ChatSession?) async {
+        guard context.isActiveTab, windowVisible else { return }
         guard let chatId, let session, session.unread > 0, session.messageCount > 0 else { return }
         _ = try? await context.store.mutate(
             API.markChatRead(id: chatId, body: API.MarkChatReadBody(seq: session.messageCount)),
@@ -1920,11 +1921,22 @@ private struct ChatChromeBridge: View {
             areaOverride = nil
         }
 
+        let hasPendingApprovals = chatId.map { id in
+            context.store.entry(API.listChatToolApprovals(id: id)).data?.approvals.contains(where: { $0.state == .pending }) == true
+        } ?? false
+        let tabActivity = TabStripLogic.chatTabActivity(
+            state: session?.state,
+            unread: session?.unread ?? 0,
+            hasPendingAttention: hasPendingApprovals,
+            isActiveTab: context.isActiveTab
+        )
+
         return NativeChrome(
             title: session.map { ChatNav.chatTitle($0.title) } ?? "Chat",
             inspector: inspector,
             navigator: navigator,
-            areaOverride: areaOverride
+            areaOverride: areaOverride,
+            tabActivity: tabActivity
         )
     }
 
