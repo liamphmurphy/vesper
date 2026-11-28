@@ -646,12 +646,14 @@ struct ChatScreen: View {
                     .help("Temporary chat: no memory reads or writes, excluded from search, auto-deleted after 24h idle.")
                 }
 
-                if participants.count > 1 {
-                    HStack(spacing: 4) {
-                        ForEach(participants, id: \.id) { participant in
-                            TonePill(label: "@\(participant.name)", tone: "neutral")
+                if personas.count > 1 || participants.count > 1 {
+                    ChatParticipantsPopoverView(
+                        session: session,
+                        allPersonas: personas,
+                        onSendRoundtable: { prompt in
+                            await sendMessage(prompt, activePersona: activePersona)
                         }
-                    }
+                    )
                 }
             } else {
                 Text("New conversation")

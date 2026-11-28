@@ -850,3 +850,110 @@ func (s *Service) DecidePersonaCharacterProposal(ctx context.Context, ws, user, 
 	})
 	return out, err
 }
+
+// AddChatParticipant joins one of the caller's personas to the chat as a guest.
+func (s *Service) AddChatParticipant(ctx context.Context, ws, user, chatID, personaID uuid.UUID) (store.ChatSession, error) {
+	var out store.ChatSession
+	err := s.tx(ctx, func(q *store.Queries) error {
+		chat, err := lockChat(ctx, q, ws, user, chatID)
+		if err != nil {
+			return err
+		}
+		if chat.Archived {
+			return apperr.Conflict("the chat is archived")
+		}
+		if _, err := q.KeySharePersona(ctx, store.KeySharePersonaParams{ID: personaID, WorkspaceID: ws, UserID: user}); errors.Is(err, pgx.ErrNoRows) {
+			return apperr.ErrNotFound
+		} else if err != nil {
+			return err
+		}
+		if err := joinChat(ctx, q, chat, personaID); err != nil {
+			return err
+		}
+		out, err = q.BumpChatRevision(ctx, chat.ID)
+		return err
+	})
+	return out, err
+}
+
+// RemoveChatParticipant removes a guest persona from the chat. The host persona
+// cannot be removed. If the removed guest was the active speaker, speaker falls
+// back to the host.
+func (s *Service) RemoveChatParticipant(ctx context.Context, ws, user, chatID, personaID uuid.UUID) (store.ChatSession, error) {
+	var out store.ChatSession
+	err := s.tx(ctx, func(q *store.Queries) error {
+		chat, err := lockChat(ctx, q, ws, user, chatID)
+		if err != nil {
+			return err
+		}
+		if chat.Archived {
+			return apperr.Conflict("the chat is archived")
+		}
+		if chat.PersonaID != nil && *chat.PersonaID == personaID {
+			return apperr.Conflict("cannot remove the chat's host persona")
+		}
+		if err := q.RemoveChatParticipant(ctx, store.RemoveChatParticipantParams{ChatID: chat.ID, PersonaID: personaID}); err != nil {
+			return err
+		}
+		nextSpeaker := chat.SpeakerPersonaID
+		speakerChanged := false
+		if nextSpeaker != nil && *nextSpeaker == personaID {
+			nextSpeaker = chat.PersonaID
+			speakerChanged = true
+		}
+		nextQueue := make([]uuid.UUID, 0, len(chat.QueuedPersonaIds))
+		for _, qid := range chat.QueuedPersonaIds {
+			if qid != personaID {
+				nextQueue = append(nextQueue, qid)
+			}
+		}
+		if speakerChanged || len(nextQueue) != len(chat.QueuedPersonaIds) {
+			if _, err := q.SetChatSpeaker(ctx, store.SetChatSpeakerParams{
+				ID: chat.ID, SpeakerPersonaID: nextSpeaker, QueuedPersonaIds: nextQueue,
+				RelayTurns: chat.RelayTurns, RelayLimit: chat.RelayLimit,
+			}); err != nil {
+				return err
+			}
+		}
+		out, err = q.BumpChatRevision(ctx, chat.ID)
+		return err
+	})
+	return out, err
+}
+
+// SetChatDefaultSpeaker changes which persona answers the next message without
+// an explicit @mention. Passing nil resets to the chat's host persona.
+func (s *Service) SetChatDefaultSpeaker(ctx context.Context, ws, user, chatID uuid.UUID, personaID *uuid.UUID) (store.ChatSession, error) {
+	var out store.ChatSession
+	err := s.tx(ctx, func(q *store.Queries) error {
+		chat, err := lockChat(ctx, q, ws, user, chatID)
+		if err != nil {
+			return err
+		}
+		if chat.Archived {
+			return apperr.Conflict("the chat is archived")
+		}
+		target := personaID
+		if target != nil {
+			if _, err := q.KeySharePersona(ctx, store.KeySharePersonaParams{ID: *target, WorkspaceID: ws, UserID: user}); errors.Is(err, pgx.ErrNoRows) {
+				return apperr.ErrNotFound
+			} else if err != nil {
+				return err
+			}
+			if err := joinChat(ctx, q, chat, *target); err != nil {
+				return err
+			}
+		} else {
+			target = chat.PersonaID
+		}
+		if _, err := q.SetChatSpeaker(ctx, store.SetChatSpeakerParams{
+			ID: chat.ID, SpeakerPersonaID: target, QueuedPersonaIds: chat.QueuedPersonaIds,
+			RelayTurns: chat.RelayTurns, RelayLimit: chat.RelayLimit,
+		}); err != nil {
+			return err
+		}
+		out, err = q.BumpChatRevision(ctx, chat.ID)
+		return err
+	})
+	return out, err
+}

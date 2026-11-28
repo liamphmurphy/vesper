@@ -1113,6 +1113,15 @@ struct ChatComposerView: View {
         case "outline":
             clearComposer()
             onOpenOutline?()
+        case "roundtable":
+            let allNames = personas.map(\.name)
+            let partNames = (session?.participants ?? []).map(\.name)
+            switch ChatRoundtableLogic.buildPrompt(raw: cmd.arg, allPersonaNames: allNames, participantNames: partNames) {
+            case .prompt(let prompt):
+                sendPayload(body: prompt, mode: .send)
+            case .error(let msg):
+                errorMessage = msg
+            }
         case "thinking":
             switch ChatSlashCommandLogic.resolveThinkingToggle(raw: cmd.arg, current: showLiveThinking) {
             case .set(let next):

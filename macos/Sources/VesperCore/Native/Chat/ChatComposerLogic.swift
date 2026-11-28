@@ -35,6 +35,7 @@ public struct ChatSlashCommand: Sendable, Equatable, Hashable, Identifiable {
         ChatSlashCommand(name: "design", args: "what to design", hint: "Create a design (flow, diagram or wireframe) beside the chat", free: true),
         ChatSlashCommand(name: "music", args: "what to compose", hint: "Generate a music track in this chat", free: true, optionalArg: true),
         ChatSlashCommand(name: "compare", args: "model", hint: "Get a second opinion from another model without switching this chat"),
+        ChatSlashCommand(name: "roundtable", args: "personas & topic", hint: "Ask multiple personas for concise sequential takes", free: true),
         ChatSlashCommand(name: "outline", hint: "Open the thread outline (bookmarks, links, checklists, diffs, files)"),
         ChatSlashCommand(name: "thinking", args: "on|off", hint: "Show or hide live thinking blocks inline in the transcript", optionalArg: true),
     ]
@@ -977,5 +978,121 @@ public enum ChatHarnessUsageLogic {
             return rem > 0 ? "in \(hours)h \(rem)m" : "in \(hours)h"
         }
         return "in \(hours / 24)d"
+    }
+}
+
+// MARK: - Multi-Persona Roundtable (`/roundtable`)
+
+public enum ChatRoundtableResolution: Sendable, Equatable {
+    case prompt(String)
+    case error(String)
+}
+
+public enum ChatRoundtableLogic {
+    /// Builds a structured multi-persona roundtable prompt from `/roundtable [@A @B] <topic>`.
+    /// Mentions each participating persona so server routing queues them sequentially, and
+    /// includes an explicit relay cap phrase matching the participant count.
+    public static func buildPrompt(
+        raw: String,
+        allPersonaNames: [String],
+        participantNames: [String]
+    ) -> ChatRoundtableResolution {
+        let trimmed = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else {
+            return .error("Usage: /roundtable [@PersonaA @PersonaB] <topic>")
+        }
+
+        // Match longest names first so "@Tech Lead" beats "@Tech".
+        let sortedKnown = Array(Set(allPersonaNames.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }))
+            .sorted { $0.count > $1.count }
+
+        var mentioned: [String] = []
+        var remainder = trimmed
+        let loweredAll = sortedKnown.map { ($0, $0.lowercased()) }
+        var scanIdx = remainder.startIndex
+        var rangesToStrip: [Range<String.Index>] = []
+
+        while scanIdx < remainder.endIndex {
+            if remainder[scanIdx] == "@" {
+                let prevIsWord: Bool = {
+                    guard scanIdx > remainder.startIndex else { return false }
+                    let prev = remainder[remainder.index(before: scanIdx)]
+                    return prev.isLetter || prev.isNumber || prev == "_"
+                }()
+                if !prevIsWord {
+                    let afterAt = remainder.index(after: scanIdx)
+                    let tail = remainder[afterAt...]
+                    if let hit = loweredAll.first(where: { orig, low in
+                        guard tail.count >= orig.count else { return false }
+                        let end = remainder.index(afterAt, offsetBy: orig.count)
+                        guard remainder[afterAt..<end].lowercased() == low else { return false }
+                        if end < remainder.endIndex {
+                            let next = remainder[end]
+                            if next.isLetter || next.isNumber || next == "_" { return false }
+                        }
+                        return true
+                    }) {
+                        let end = remainder.index(afterAt, offsetBy: hit.0.count)
+                        if !mentioned.contains(where: { $0.caseInsensitiveCompare(hit.0) == .orderedSame }) {
+                            mentioned.append(hit.0)
+                        }
+                        rangesToStrip.append(scanIdx..<end)
+                        scanIdx = end
+                        continue
+                    }
+                }
+            }
+            scanIdx = remainder.index(after: scanIdx)
+        }
+
+        for r in rangesToStrip.reversed() {
+            remainder.replaceSubrange(r, with: "")
+        }
+        let topic = remainder
+            .trimmingCharacters(in: CharacterSet.whitespacesAndNewlines.union(CharacterSet(charactersIn: ":-–—")))
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+
+        let targets: [String]
+        if mentioned.count >= 2 {
+            targets = mentioned
+        } else if !mentioned.isEmpty {
+            // Combine explicitly mentioned persona with existing chat participants.
+            var combined = mentioned
+            for p in participantNames {
+                let clean = p.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !clean.isEmpty && !combined.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) {
+                    combined.append(clean)
+                }
+            }
+            targets = combined
+        } else if participantNames.count >= 2 {
+            targets = participantNames
+        } else {
+            return .error("Add at least 2 personas to this chat or mention them (e.g. /roundtable @Judy @Iris <topic>).")
+        }
+
+        return buildPrompt(selectedNames: targets, topic: topic)
+    }
+
+    public static func buildPrompt(selectedNames: [String], topic: String) -> ChatRoundtableResolution {
+        var unique: [String] = []
+        for rawName in selectedNames {
+            let clean = rawName.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !clean.isEmpty else { continue }
+            if !unique.contains(where: { $0.caseInsensitiveCompare(clean) == .orderedSame }) {
+                unique.append(clean)
+            }
+        }
+        guard unique.count >= 2 else {
+            return .error("Pick at least 2 personas for a roundtable.")
+        }
+        let cleanTopic = topic.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleanTopic.isEmpty else {
+            return .error("Provide a topic or question for the roundtable.")
+        }
+        let mentions = unique.map { "@\($0)" }.joined(separator: " ")
+        let replies = max(2, unique.count)
+        let prompt = "\(mentions) — Roundtable (keep it to \(replies) replies): each persona give one concise, distinct take on this without repeating earlier points.\n\n\(cleanTopic)"
+        return .prompt(prompt)
     }
 }

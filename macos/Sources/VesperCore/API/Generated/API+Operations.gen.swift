@@ -1314,6 +1314,28 @@ extension API {
         )
     }
 
+    /// Add one of your personas to this conversation
+    ///
+    /// `POST /chats/{id}/participants`
+    public static func addChatParticipant(id: Swift.String, body: ChatParticipantAdd) -> APIRequest<ChatSession> {
+        return APIRequest(
+            method: "POST", template: "/chats/{id}/participants",
+            path: "/api/v1/chats/\(APIPath.escape(id))/participants",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Remove a guest persona from this conversation
+    ///
+    /// `DELETE /chats/{id}/participants/{personaId}`
+    public static func removeChatParticipant(id: Swift.String, personaId: Swift.String) -> APIRequest<ChatSession> {
+        return APIRequest(
+            method: "DELETE", template: "/chats/{id}/participants/{personaId}",
+            path: "/api/v1/chats/\(APIPath.escape(id))/participants/\(APIPath.escape(personaId))",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
     /// Animated SVG character proposals in this chat, oldest first
     ///
     /// Pending proposals wait for the person's decision; decided and superseded ones stay for the record. 404 unknown chat.
@@ -1499,6 +1521,17 @@ extension API {
         return APIRequest(
             method: "POST", template: "/chats/{id}/runs",
             path: "/api/v1/chats/\(APIPath.escape(id))/runs",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Choose which persona answers the next message by default
+    ///
+    /// `PUT /chats/{id}/speaker`
+    public static func setChatSpeaker(id: Swift.String, body: ChatSpeakerUpdate) -> APIRequest<ChatSession> {
+        return APIRequest(
+            method: "PUT", template: "/chats/{id}/speaker",
+            path: "/api/v1/chats/\(APIPath.escape(id))/speaker",
             query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
         )
     }

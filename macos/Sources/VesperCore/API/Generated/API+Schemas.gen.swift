@@ -4822,6 +4822,30 @@ extension API {
         }
     }
 
+    public struct ChatParticipantAdd: Codable, Sendable, Equatable {
+        public var personaId: Swift.String
+
+        public init(
+            personaId: Swift.String
+        ) {
+            self.personaId = personaId
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case personaId = "persona_id"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.personaId = try c.decode(Swift.String.self, forKey: .personaId)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(personaId, forKey: .personaId)
+        }
+    }
+
     public struct ChatPatch: Codable, Sendable, Equatable {
         public var archived: Swift.Bool?
         /// Auto-compact this chat's context window when a turn reaches this many tokens (0 disables auto-compaction; null inherits the server default).
@@ -6238,6 +6262,30 @@ extension API {
             try c.encodeIfPresent(notes, forKey: .notes)
             try c.encodeIfPresent(position, forKey: .position)
             try c.encodeIfPresent(title, forKey: .title)
+        }
+    }
+
+    public struct ChatSpeakerUpdate: Codable, Sendable, Equatable {
+        public var personaId: APINullable<Swift.String>?
+
+        public init(
+            personaId: APINullable<Swift.String>? = nil
+        ) {
+            self.personaId = personaId
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case personaId = "persona_id"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.personaId = try c.decodeNullable(Swift.String.self, forKey: .personaId)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(personaId, forKey: .personaId)
         }
     }
 

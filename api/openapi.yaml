@@ -3502,6 +3502,71 @@ paths:
         "422": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /chats/{id}/participants:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    post:
+      operationId: addChatParticipant
+      summary: Add one of your personas to this conversation
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatParticipantAdd" }
+      responses:
+        "200":
+          description: Updated chat session with participant list
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/participants/{personaId}:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+      - name: personaId
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: removeChatParticipant
+      summary: Remove a guest persona from this conversation
+      tags: [chats]
+      responses:
+        "200":
+          description: Updated chat session without the removed guest
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /chats/{id}/speaker:
+    parameters:
+      - { $ref: "#/components/parameters/ChatId" }
+    put:
+      operationId: setChatSpeaker
+      summary: Choose which persona answers the next message by default
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChatSpeakerUpdate" }
+      responses:
+        "200":
+          description: Updated chat session with new default speaker
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ChatSession" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chat-search:
     get:
       operationId: searchChats
@@ -10192,6 +10257,15 @@ components:
         harness: { $ref: "#/components/schemas/Harness" }
         model: { type: string, description: "Optional model override when redoing or regenerating the last turn" }
         effort: { $ref: "#/components/schemas/ChatEffort" }
+    ChatParticipantAdd:
+      type: object
+      required: [persona_id]
+      properties:
+        persona_id: { type: string, format: uuid }
+    ChatSpeakerUpdate:
+      type: object
+      properties:
+        persona_id: { type: string, format: uuid, nullable: true }
     ChatAsideStart:
       type: object
       required: [body]
