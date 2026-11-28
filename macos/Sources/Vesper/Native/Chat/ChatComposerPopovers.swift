@@ -119,6 +119,7 @@ struct ChatPinnedPlanChecklistBar: View {
 
     var body: some View {
         let p = theme.palette
+        let doneColor = theme.swiftUIColor("state-done", fallback: .green)
         let failedColor = theme.swiftUIColor("pill-blocked-fg", fallback: .red)
         let ratio: CGFloat = progress.total > 0 ? CGFloat(progress.completed + progress.failed) / CGFloat(progress.total) : 0
         let listHeight = min(CGFloat(progress.steps.count) * Self.approxRowHeight + 12, CGFloat(Self.maxVisibleRows) * Self.approxRowHeight + 12)
@@ -132,7 +133,7 @@ struct ChatPinnedPlanChecklistBar: View {
                 HStack(spacing: 8) {
                     Image(systemName: progress.activeStep != nil ? "checklist" : (progress.failed > 0 ? "exclamationmark.triangle.fill" : "checkmark.circle.fill"))
                         .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(progress.failed > 0 && progress.activeStep == nil ? failedColor : (progress.activeStep != nil ? p.accent : .green))
+                        .foregroundStyle(progress.failed > 0 && progress.activeStep == nil ? failedColor : (progress.activeStep != nil ? p.accent : doneColor))
 
                     Text("\(progress.completed)/\(progress.total) \(progress.total == 1 ? "step" : "steps")")
                         .font(.system(size: theme.pointSize(.micro), weight: .semibold, design: .monospaced))
@@ -178,18 +179,25 @@ struct ChatPinnedPlanChecklistBar: View {
                     VStack(alignment: .leading, spacing: 5) {
                         ForEach(progress.steps, id: \.key) { step in
                             HStack(spacing: 7) {
-                                Image(systemName: stepIcon(step.state))
-                                    .imageScale(.small)
-                                    .foregroundStyle(stepColor(step.state, palette: p, failedColor: failedColor))
+                                if step.state == .active {
+                                    ChatPulsingStatusDot(color: p.accent, size: 6, active: true)
+                                        .frame(width: 14)
+                                } else {
+                                    Image(systemName: stepIcon(step.state))
+                                        .imageScale(.small)
+                                        .foregroundStyle(stepColor(step.state, palette: p, doneColor: doneColor, failedColor: failedColor))
+                                        .frame(width: 14)
+                                }
                                 Text(step.title)
                                     .font(.system(size: theme.pointSize(.small), weight: step.state == .active ? .medium : .regular))
                                     .foregroundStyle(stepTextColor(step.state, palette: p, failedColor: failedColor))
                                     .lineLimit(1)
                                 if step.state == .active, let detail = step.detail, !detail.isEmpty {
                                     Text("· \(detail)")
-                                        .font(.system(size: theme.pointSize(.micro)))
+                                        .font(.system(size: theme.pointSize(.micro), design: .monospaced))
                                         .foregroundStyle(p.tertiaryText)
                                         .lineLimit(1)
+                                        .truncationMode(.middle)
                                 }
                                 Spacer(minLength: 4)
                             }
@@ -219,9 +227,9 @@ struct ChatPinnedPlanChecklistBar: View {
         }
     }
 
-    private func stepColor(_ state: ChatStepState, palette p: NativePalette, failedColor: Color) -> Color {
+    private func stepColor(_ state: ChatStepState, palette p: NativePalette, doneColor: Color, failedColor: Color) -> Color {
         switch state {
-        case .done: .green
+        case .done: doneColor
         case .active: p.accent
         case .failed: failedColor
         case .planned: p.tertiaryText

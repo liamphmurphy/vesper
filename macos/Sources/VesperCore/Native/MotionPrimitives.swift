@@ -528,6 +528,20 @@ public struct ActivitySceneTransitioner: Sendable, Equatable {
         return 1 - MotionEasing.easeOut.apply(p)
     }
 
+    /// Subtle scale settle (`0.95 -> 1.0`) for the incoming `current` layer during crossfade.
+    public func currentScale(at now: Double) -> Double {
+        guard let fadeStart = fadeStartedAt else { return 1 }
+        let p = min(max((now - fadeStart) / Self.fadeDuration, 0), 1)
+        return 0.95 + 0.05 * MotionEasing.motionEase.apply(p)
+    }
+
+    /// Subtle scale recede (`1.0 -> 0.98`) for the outgoing `previous` layer during crossfade.
+    public func previousScale(at now: Double) -> Double {
+        guard previous != nil, let fadeStart = fadeStartedAt else { return 1 }
+        let p = min(max((now - fadeStart) / Self.fadeDuration, 0), 1)
+        return 1.0 - 0.02 * MotionEasing.easeOut.apply(p)
+    }
+
     private mutating func commitTransition(to nextKind: ActivitySceneKind, at transitionAt: Double) {
         previous = current
         previousClock = currentClock
