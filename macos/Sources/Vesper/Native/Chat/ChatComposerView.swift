@@ -78,6 +78,7 @@ struct ChatComposerView: View {
     @State private var errorMessage: String?
     @State private var dictationSettingsURL: URL?
     @State private var showFileImporter = false
+    @State private var showingModelPicker = false
     @State private var completionIndex = 0
     @State private var completionDismissedText: String?
     @State private var draftSaveTask: Task<Void, Never>?
@@ -756,63 +757,23 @@ struct ChatComposerView: View {
 
     private var modelAndEffortMenu: some View {
         let p = theme.palette
-        let available = harnessModels.filter { $0.available && !$0.models.isEmpty }
-        let currentModelId = selectedModel ?? session?.model
-        let currentModel = available.flatMap(\.models).first { $0.id == currentModelId }
-        let currentEffort = selectedEffort ?? session?.effort
-        let labelText = [currentModel?.label ?? currentModelId ?? "Auto", currentEffort?.rawValue.capitalized]
-            .compactMap { $0 }
-            .joined(separator: " · ")
+        let state = ChatModelEffortPickerLogic.resolve(
+            harnessModels: harnessModels,
+            selectedHarness: selectedHarness,
+            selectedModel: selectedModel,
+            selectedEffort: selectedEffort,
+            sessionHarness: session?.harness,
+            sessionModel: session?.model,
+            sessionEffort: session?.effort
+        )
 
-        return Menu {
-            Button("Auto (default)") {
-                selectedHarness = nil
-                selectedModel = nil
-                selectedEffort = nil
-            }
-            Divider()
-            ForEach(available, id: \.harness.rawValue) { group in
-                Section(group.label) {
-                    ForEach(group.models, id: \.id) { item in
-                        Button {
-                            selectedHarness = group.harness
-                            selectedModel = item.id
-                            if let eff = selectedEffort, !item.efforts.contains(eff) {
-                                selectedEffort = nil
-                            }
-                        } label: {
-                            if item.id == currentModelId {
-                                Label(item.label, systemImage: "checkmark")
-                            } else {
-                                Text(item.label)
-                            }
-                        }
-                    }
-                }
-            }
-            let efforts = currentModel?.efforts ?? API.ChatEffort.allKnown
-            if !efforts.isEmpty {
-                Divider()
-                Menu("Reasoning effort") {
-                    Button("Default") { selectedEffort = nil }
-                    ForEach(efforts, id: \.rawValue) { eff in
-                        Button {
-                            selectedEffort = eff
-                        } label: {
-                            if eff == currentEffort {
-                                Label(eff.rawValue.capitalized, systemImage: "checkmark")
-                            } else {
-                                Text(eff.rawValue.capitalized)
-                            }
-                        }
-                    }
-                }
-            }
+        return Button {
+            showingModelPicker.toggle()
         } label: {
             HStack(spacing: 4) {
                 Image(systemName: "slider.horizontal.3")
                     .imageScale(.small)
-                Text(labelText)
+                Text(state.pillLabel)
                     .lineLimit(1)
                 Image(systemName: "chevron.down")
                     .font(.system(size: 8, weight: .semibold))
@@ -822,13 +783,20 @@ struct ChatComposerView: View {
             .foregroundStyle(p.secondaryText)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .modifier(ChatComposerGhostPill(active: false))
+            .modifier(ChatComposerGhostPill(active: showingModelPicker))
         }
-        .menuStyle(.button)
         .buttonStyle(.plain)
-        .menuIndicator(.hidden)
         .fixedSize()
         .help("Model & reasoning effort")
+        .popover(isPresented: $showingModelPicker, arrowEdge: .top) {
+            ChatModelEffortPickerPopover(
+                state: state,
+                selectedHarness: $selectedHarness,
+                selectedModel: $selectedModel,
+                selectedEffort: $selectedEffort,
+                onDismiss: { showingModelPicker = false }
+            )
+        }
     }
 
     private var repositoryPickerMenu: some View {

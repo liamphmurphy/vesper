@@ -1098,3 +1098,88 @@ public enum ChatRoundtableLogic {
         return .prompt(prompt)
     }
 }
+
+// MARK: - Model & Reasoning Effort Picker
+
+public struct ChatModelEffortState: Equatable, Sendable {
+    public let availableGroups: [API.ChatHarnessModels]
+    public let currentModelId: String?
+    public let currentModel: API.ChatModel?
+    public let currentEffort: API.ChatEffort?
+    public let availableEfforts: [API.ChatEffort]
+    public let pillLabel: String
+}
+
+public struct ChatModelSelectionResult: Equatable, Sendable {
+    public let harness: API.Harness
+    public let model: String
+    public let effort: API.ChatEffort?
+    public let shouldDismiss: Bool
+}
+
+public enum ChatModelEffortPickerLogic {
+    public static func effortLabel(_ effort: API.ChatEffort) -> String {
+        switch effort.rawValue.lowercased() {
+        case "low": "Low"
+        case "medium": "Medium"
+        case "high": "High"
+        case "xhigh": "Extra high"
+        case "max": "Max"
+        default: effort.rawValue.capitalized
+        }
+    }
+
+    public static func resolve(
+        harnessModels: [API.ChatHarnessModels],
+        selectedHarness: API.Harness?,
+        selectedModel: String?,
+        selectedEffort: API.ChatEffort?,
+        sessionHarness: API.Harness?,
+        sessionModel: String?,
+        sessionEffort: API.ChatEffort?
+    ) -> ChatModelEffortState {
+        let available = harnessModels.filter { $0.available && !$0.models.isEmpty }
+        let currentModelId = selectedModel ?? sessionModel
+        let preferredHarness = selectedHarness ?? sessionHarness
+        let currentModel: API.ChatModel? = currentModelId.flatMap { id in
+            if let harness = preferredHarness,
+               let group = available.first(where: { $0.harness == harness }),
+               let match = group.models.first(where: { $0.id == id }) {
+                return match
+            }
+            return available.lazy.flatMap(\.models).first(where: { $0.id == id })
+        }
+        let currentEffort = selectedEffort ?? sessionEffort
+        let availableEfforts = currentModel?.efforts ?? API.ChatEffort.allKnown
+        let pillLabel = [currentModel?.label ?? currentModelId ?? "Auto", currentEffort.map(effortLabel)]
+            .compactMap { $0 }
+            .joined(separator: " · ")
+
+        return ChatModelEffortState(
+            availableGroups: available,
+            currentModelId: currentModelId,
+            currentModel: currentModel,
+            currentEffort: currentEffort,
+            availableEfforts: availableEfforts,
+            pillLabel: pillLabel
+        )
+    }
+
+    public static func selectModel(
+        _ model: API.ChatModel,
+        harness: API.Harness,
+        currentEffort: API.ChatEffort?
+    ) -> ChatModelSelectionResult {
+        let nextEffort: API.ChatEffort? = if let eff = currentEffort, model.efforts.contains(eff) {
+            eff
+        } else {
+            nil
+        }
+        return ChatModelSelectionResult(
+            harness: harness,
+            model: model.id,
+            effort: nextEffort,
+            shouldDismiss: model.efforts.isEmpty
+        )
+    }
+}
