@@ -35,6 +35,21 @@ struct SidebarView: View {
         NSEvent.modifierFlags.contains(.command) || NSApp.currentEvent?.modifierFlags.contains(.command) == true
     }
 
+    /// True when a single-section navigator repeats the top `nav.title` as its only section header
+    /// (for example Spaces: `Spaces` over `Spaces 4`). In that case `NavHeader` absorbs the badge
+    /// and `NavSectionView` omits the redundant subheader row.
+    static func hidesRedundantSectionHeader(nav: NavModel, section: NavSection) -> Bool {
+        guard nav.sections.count == 1,
+              let navTitle = nav.title?.trimmingCharacters(in: .whitespacesAndNewlines), !navTitle.isEmpty,
+              let secTitle = section.title?.trimmingCharacters(in: .whitespacesAndNewlines),
+              navTitle.caseInsensitiveCompare(secTitle) == .orderedSame,
+              (section.actions ?? []).isEmpty,
+              section.collapsible != true else {
+            return false
+        }
+        return true
+    }
+
     private var scrollTarget: SidebarScrollTarget? {
         guard let nav = state.navigator, let selected = nav.selectedId else { return nil }
         guard SidebarTree.isVisible(
@@ -194,6 +209,7 @@ private struct AreaBar: View {
 }
 
 private struct AreaButton: View {
+    @Environment(\.vesperTheme) private var theme
     let label: String
     let symbol: String
     let badge: AreaBadge?
@@ -202,14 +218,15 @@ private struct AreaButton: View {
     @State private var hovered = false
 
     var body: some View {
+        let accent = theme.palette.accent
         Button(action: action) {
             Image(systemName: symbol)
-                .font(.system(size: 14))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+                .font(.system(size: 14, weight: selected ? .medium : .regular))
+                .foregroundStyle(selected ? accent : Color.secondary)
                 .frame(maxWidth: .infinity, minHeight: 28)
                 .background(
                     RoundedRectangle(cornerRadius: 6)
-                        .fill(selected ? Color.accentColor.opacity(0.14) : hovered ? Color.primary.opacity(0.08) : Color.clear)
+                        .fill(selected ? accent.opacity(0.16) : hovered ? Color.primary.opacity(0.08) : Color.clear)
                 )
                 .overlay(alignment: .topTrailing) {
                     if let badge {
@@ -275,11 +292,17 @@ private struct NavHeader: View {
     }
 
     var body: some View {
+        let promotedBadge: NavBadge? = nav.sections.first.flatMap {
+            SidebarView.hidesRedundantSectionHeader(nav: nav, section: $0) ? $0.badge : nil
+        }
         VStack(alignment: .leading, spacing: 6) {
             if nav.title != nil || nav.search != nil || !(nav.actions ?? []).isEmpty {
-                HStack(spacing: 4) {
+                HStack(spacing: 5) {
                     if let title = nav.title {
                         Text(title).font(theme.scaledFont(size: 12, weight: .semibold)).lineLimit(1).layoutPriority(1)
+                    }
+                    if let promotedBadge {
+                        BadgeView(text: promotedBadge.text, tone: promotedBadge.tone)
                     }
                     Spacer(minLength: 4)
                     if nav.search != nil {
@@ -511,7 +534,10 @@ private struct NavSectionView: View {
     }
 
     private var hasHeader: Bool {
-        section.title != nil || !(section.actions ?? []).isEmpty || section.badge != nil
+        if SidebarView.hidesRedundantSectionHeader(nav: nav, section: section) {
+            return false
+        }
+        return section.title != nil || !(section.actions ?? []).isEmpty || section.badge != nil
     }
 
     private func toggleSection() {
@@ -617,7 +643,7 @@ private struct NavRow: View {
     }
 
     private var label: some View {
-        NavRowLabel(item: item)
+        NavRowLabel(item: item, isSelected: nav.selectedId == item.id)
             .contentShape(Rectangle())
             .selectionDisabled(item.disabled == true)
             .disabled(item.disabled == true)
@@ -641,10 +667,12 @@ private struct NavRow: View {
 
 private struct NavRowLabel: View {
     let item: NavItem
+    var isSelected: Bool = false
     @Environment(\.vesperTheme) private var theme
 
     var body: some View {
-        HStack(spacing: 8) {
+        let isActionRow = item.icon == "plus" && item.avatar == nil
+        HStack(spacing: 7) {
             if let status = item.status {
                 Circle().fill(status.color).frame(width: 7, height: 7)
             }
@@ -652,16 +680,24 @@ private struct NavRowLabel: View {
                 AvatarView(avatar: avatar)
             } else if let icon = item.icon {
                 Image(systemName: SidebarIcons.symbolName(icon))
-                    .font(theme.scaledFont(size: 12))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 16)
+                    .font(theme.scaledFont(size: isActionRow ? 10.5 : 12, weight: isActionRow ? .medium : .regular))
+                    .foregroundStyle(isSelected ? theme.palette.accent : Color.secondary)
+                    .frame(width: isActionRow ? 12 : 16)
             }
             VStack(alignment: .leading, spacing: 1) {
-                Text(item.title).font(theme.font(.body)).lineLimit(1)
+                Text(item.title)
+                    .font(isActionRow ? theme.font(.small) : theme.font(.body))
+                    .foregroundStyle(isActionRow ? Color.secondary : Color.primary)
+                    .lineLimit(1)
                 if let sub = item.subtitle { Text(sub).font(theme.scaledFont(size: 11)).foregroundStyle(.secondary).lineLimit(1) }
             }
             Spacer(minLength: 4)
-            if let trailing = item.trailing { Text(trailing).font(theme.scaledFont(size: 11)).foregroundStyle(.secondary) }
+            if let trailing = item.trailing {
+                Text(trailing)
+                    .font(theme.scaledFont(size: 11))
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
             if let badge = item.badge { BadgeView(text: badge.text, tone: badge.tone) }
         }
     }

@@ -22,6 +22,7 @@ struct MarkdownView: View {
     var textColor = "text"
     var anchors = false
     var chat = false
+    var hugWidth = false
     var citations: [Int] = []
     var findRow: Int?
     var onLink: ((MarkdownLinkTarget) -> Bool)?
@@ -63,6 +64,7 @@ struct MarkdownView: View {
                 match: NSColor(palette.selected),
                 current: NSColor(palette.accent.opacity(0.35))
             ),
+            hugWidth: hugWidth,
             onLink: { target, newTab, anchor in open(target, newTab: newTab, anchor: anchor, codeBlocks: codeBlocks) },
             onSelectionAction: onSelectionAction
         )
@@ -212,6 +214,7 @@ private struct MarkdownText: NSViewRepresentable {
     let theme: ThemeTokens
     let options: MarkdownRenderOptions
     let find: Find
+    let hugWidth: Bool
     let onLink: (MarkdownLinkTarget, Bool, MarkdownLinkAnchor?) -> Void
     let onSelectionAction: (@MainActor (ChatSelectionAction, String) -> Void)?
 
@@ -232,6 +235,9 @@ private struct MarkdownText: NSViewRepresentable {
     func sizeThatFits(_ proposal: ProposedViewSize, nsView view: MarkdownTextView, context: Context) -> CGSize? {
         guard let width = proposal.width, width.isFinite, width > 0 else { return nil }
         context.coordinator.render(view, width: width)
+        if hugWidth {
+            return view.fittingSize(maxWidth: width)
+        }
         return CGSize(width: width, height: view.fittingHeight(width: width))
     }
 

@@ -12,6 +12,7 @@ struct ChatParticipantsPopoverView: View {
     let onSendRoundtable: @MainActor (String) async -> String?
 
     @State private var open = false
+    @State private var isHovered = false
     @State private var busyPersonaId: String?
     @State private var errorMessage: String?
     @State private var roundtableIds: Set<String> = []
@@ -63,10 +64,21 @@ struct ChatParticipantsPopoverView: View {
             .foregroundStyle(participants.count > 1 ? p.text : p.secondaryText)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(p.surface, in: Capsule())
-            .overlay(Capsule().stroke(p.border))
+            .background(
+                (open ? p.selected : (participants.count > 1 ? p.surface.opacity(0.85) : (isHovered ? p.hover : Color.clear))),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().stroke(
+                    open
+                        ? p.accent.opacity(0.45)
+                        : (participants.count > 1 ? p.border : Color.clear)
+                )
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .help("Manage chat participants, next speaker, or start a roundtable")
         .popover(isPresented: $open, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {

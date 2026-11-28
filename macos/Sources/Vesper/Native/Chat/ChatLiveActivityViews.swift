@@ -109,6 +109,11 @@ struct ChatLightweightMarkdownView: View {
     }
 
     private func inlineAttributed(_ raw: String) -> AttributedString {
+        Self.inlineAttributed(raw, theme: theme)
+    }
+
+    /// Lightweight inline Markdown (`code`, **bold**, *italic*) for live activity telemetry lines and reasoning blocks.
+    static func inlineAttributed(_ raw: String, theme: ThemeTokens) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
@@ -117,7 +122,7 @@ struct ChatLightweightMarkdownView: View {
             return AttributedString(raw)
         }
         let monoFont = Font.system(size: max(10, theme.pointSize(.small) - 0.5), design: .monospaced)
-        let codeBg = theme.swiftUIColor("surface-raised", fallback: theme.palette.surface)
+        let codeBg = theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface)
         for run in parsed.runs {
             if let intent = run.inlinePresentationIntent, intent.contains(.code) {
                 parsed[run.range].font = monoFont
@@ -1077,7 +1082,6 @@ struct ChatLiveActivityCardView: View {
         }()
         let shouldShowLiveThinking = showLiveThinking && (!activity.thinkingBlocks.isEmpty || activity.timingPhase == .thinking)
         let deduplicatePlanSteps = activity.planned && hasPinnedPlanBar
-        let activePlanStep = deduplicatePlanSteps ? activity.steps.first(where: { $0.state == .active }) : nil
 
         VStack(alignment: .leading, spacing: 8) {
             // Message-row aligned persona identity header (24pt avatar matches ChatMessageRowView)
@@ -1125,7 +1129,7 @@ struct ChatLiveActivityCardView: View {
             }
 
             // Indented to align cleanly with assistant reply content & finished turn strip
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 let cockpitCard = VStack(alignment: .leading, spacing: 0) {
                     // Main Diorama + Telemetry Split (width-driven so long wrapping text stays side-by-side)
                     ChatLiveStageSplitLayout {
@@ -1149,25 +1153,9 @@ struct ChatLiveActivityCardView: View {
                             .padding(.vertical, 9)
                     }
 
-                    // Smart plan deduplication vs. planless step rail
-                    if deduplicatePlanSteps {
-                        if let activePlanStep {
-                            Divider()
-                            HStack(spacing: 6) {
-                                ChatPulsingStatusDot(color: stageTint, size: 5, active: !isStopping)
-                                Text("Current plan step:")
-                                    .font(.system(size: theme.pointSize(.micro), weight: .semibold))
-                                    .foregroundStyle(p.tertiaryText)
-                                Text(activePlanStep.title)
-                                    .font(.system(size: theme.pointSize(.small), weight: .medium))
-                                    .foregroundStyle(p.secondaryText)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                        }
-                    } else if !displaySteps.isEmpty {
+                    // Smart plan deduplication: when ChatPinnedPlanChecklistBar is already visible
+                    // directly above the composer, omit the echoed plan row here and show only planless steps.
+                    if !deduplicatePlanSteps && !displaySteps.isEmpty {
                         Divider()
                         VStack(alignment: .leading, spacing: 5) {
                             if !showAllSteps && folded.earlier > 0 {
@@ -1268,7 +1256,7 @@ struct ChatLiveActivityCardView: View {
             }
 
             if let opening = activity.openingLine, !opening.isEmpty {
-                Text(opening)
+                Text(ChatLightweightMarkdownView.inlineAttributed(opening, theme: theme))
                     .font(.system(size: theme.pointSize(.small)))
                     .foregroundStyle(p.secondaryText)
                     .lineLimit(2)

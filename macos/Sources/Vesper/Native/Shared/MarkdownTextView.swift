@@ -25,6 +25,7 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     private(set) var rendering: MarkdownRendering?
     private var findRanges: [NSRange] = []
     private var cachedHeight: (width: CGFloat, height: CGFloat)?
+    private var cachedHuggedSize: (maxWidth: CGFloat, size: CGSize)?
     private var renderVersion: UInt64 = 0
     private var lastFind: (version: UInt64, query: String, caseSensitive: Bool, isCurrent: Bool)?
 
@@ -60,6 +61,7 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
         self.rendering = rendering
         renderVersion &+= 1
         cachedHeight = nil
+        cachedHuggedSize = nil
         lastFind = nil
         textStorage?.setAttributedString(rendering.text)
         if !findRanges.isEmpty {
@@ -83,6 +85,37 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
         let height = ceil(layoutManager.usageBoundsForTextContainer.height)
         cachedHeight = (rounded, height)
         return height
+    }
+
+    /// Natural text bounds up to `maxWidth`: lets short user chat bubbles hug their text width
+    /// instead of stretching to the maximum bubble column width.
+    func fittingSize(maxWidth: CGFloat) -> CGSize {
+        let rounded = maxWidth.rounded()
+        if let cached = cachedHuggedSize, cached.maxWidth == rounded {
+            return cached.size
+        }
+        guard let layoutManager = textLayoutManager, let container = textContainer else {
+            return CGSize(width: maxWidth, height: 0)
+        }
+        if abs(container.size.width - maxWidth) > 0.5 {
+            container.size = CGSize(width: maxWidth, height: CGFloat.greatestFiniteMagnitude)
+        }
+        layoutManager.ensureLayout(for: layoutManager.documentRange)
+        let height = ceil(layoutManager.usageBoundsForTextContainer.height)
+        var widest: CGFloat = 0
+        layoutManager.enumerateTextLayoutFragments(
+            from: layoutManager.documentRange.location,
+            options: [.ensuresLayout]
+        ) { fragment in
+            for line in fragment.textLineFragments {
+                widest = max(widest, line.typographicBounds.maxX)
+            }
+            return true
+        }
+        let naturalWidth = widest > 0 ? min(maxWidth, ceil(widest) + 2) : maxWidth
+        let size = CGSize(width: naturalWidth, height: height)
+        cachedHuggedSize = (rounded, size)
+        return size
     }
 
     // MARK: Find
@@ -262,18 +295,32 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     // MARK: Decorations
 
     nonisolated func textLayoutManager(_ textLayoutManager: NSTextLayoutManager, textLayoutFragmentFor location: NSTextLocation, in textElement: NSTextElement) -> NSTextLayoutFragment {
-        if let paragraph = textElement as? NSTextParagraph, paragraph.attributedString.length > 0,
-           let decoration = paragraph.attributedString.attribute(.markdownDecoration, at: 0, effectiveRange: nil) as? MarkdownDecoration {
-            let fragment = MarkdownLayoutFragment(textElement: textElement, range: textElement.elementRange)
-            fragment.decoration = decoration
-            return fragment
+        if let paragraph = textElement as? NSTextParagraph, paragraph.attributedString.length > 0 {
+            let decoration = paragraph.attributedString.attribute(.markdownDecoration, at: 0, effectiveRange: nil) as? MarkdownDecoration
+            var hasInlineCode = false
+            paragraph.attributedString.enumerateAttribute(
+                .markdownInlineCode,
+                in: NSRange(location: 0, length: paragraph.attributedString.length),
+                options: []
+            ) { value, _, stop in
+                if value is MarkdownInlineCodeStyle {
+                    hasInlineCode = true
+                    stop.pointee = true
+                }
+            }
+            if decoration != nil || hasInlineCode {
+                let fragment = MarkdownLayoutFragment(textElement: textElement, range: textElement.elementRange)
+                fragment.decoration = decoration
+                return fragment
+            }
         }
         return NSTextLayoutFragment(textElement: textElement, range: textElement.elementRange)
     }
 }
 
-/// A paragraph that draws its `MarkdownDecoration` before its text. Slices of one box meet at the
-/// fragments' edges (fragments tile the text), so a table or code fence reads as one shape.
+/// A paragraph that draws its `MarkdownDecoration` and inline code pills before its text. Slices
+/// of one box meet at the fragments' edges (fragments tile the text), so a table or code fence
+/// reads as one shape.
 final class MarkdownLayoutFragment: NSTextLayoutFragment {
     var decoration: MarkdownDecoration?
 
@@ -283,12 +330,77 @@ final class MarkdownLayoutFragment: NSTextLayoutFragment {
 
     override var renderingSurfaceBounds: CGRect {
         let full = CGRect(x: -layoutFragmentFrame.minX, y: 0, width: containerWidth, height: layoutFragmentFrame.height)
-        return super.renderingSurfaceBounds.union(full)
+        return super.renderingSurfaceBounds.union(full).insetBy(dx: -3, dy: -1)
     }
 
     override func draw(at point: CGPoint, in context: CGContext) {
         if let decoration { draw(decoration, at: point, in: context) }
+        drawInlineCodePills(at: point, in: context)
         super.draw(at: point, in: context)
+    }
+
+    /// Computes rounded pill frames for every `.markdownInlineCode` span inside this paragraph.
+    func inlineCodePillSpecs(at point: CGPoint) -> [(rect: CGRect, style: MarkdownInlineCodeStyle)] {
+        guard let paragraph = textElement as? NSTextParagraph else { return [] }
+        let attr = paragraph.attributedString
+        guard attr.length > 0 else { return [] }
+        let fullRange = NSRange(location: 0, length: attr.length)
+        var runs: [(NSRange, MarkdownInlineCodeStyle)] = []
+        attr.enumerateAttribute(.markdownInlineCode, in: fullRange, options: []) { value, range, _ in
+            if let style = value as? MarkdownInlineCodeStyle {
+                runs.append((range, style))
+            }
+        }
+        guard !runs.isEmpty else { return [] }
+
+        var specs: [(CGRect, MarkdownInlineCodeStyle)] = []
+        for (runRange, style) in runs {
+            for line in textLineFragments {
+                let lineRange = line.characterRange
+                let inter = NSIntersectionRange(runRange, lineRange)
+                guard inter.length > 0 else { continue }
+                let localStart = inter.location - lineRange.location
+                let localEnd = localStart + inter.length
+                let x1 = line.locationForCharacter(at: localStart).x
+                let x2 = line.locationForCharacter(at: localEnd).x
+                let minX = min(x1, x2)
+                let maxX = max(x1, x2)
+                guard maxX > minX else { continue }
+                let lineOrigin = line.typographicBounds.origin
+                let lineHeight = line.typographicBounds.height
+                let rect = CGRect(
+                    x: point.x + lineOrigin.x + minX - 2.5,
+                    y: point.y + lineOrigin.y + 0.5,
+                    width: (maxX - minX) + 5.0,
+                    height: max(4, lineHeight - 1.0)
+                )
+                specs.append((rect, style))
+            }
+        }
+        return specs
+    }
+
+    private func drawInlineCodePills(at point: CGPoint, in context: CGContext) {
+        let specs = inlineCodePillSpecs(at: point)
+        guard !specs.isEmpty else { return }
+        context.saveGState()
+        defer { context.restoreGState() }
+        for (rect, style) in specs {
+            let radius = min(4.0, rect.height * 0.45)
+            let fillPath = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+            context.setFillColor(style.fill.cgColor)
+            context.addPath(fillPath)
+            context.fillPath()
+
+            let strokeRect = rect.insetBy(dx: 0.375, dy: 0.375)
+            if strokeRect.width > 0 && strokeRect.height > 0 {
+                let strokePath = CGPath(roundedRect: strokeRect, cornerWidth: radius, cornerHeight: radius, transform: nil)
+                context.setStrokeColor(style.border.cgColor)
+                context.setLineWidth(0.75)
+                context.addPath(strokePath)
+                context.strokePath()
+            }
+        }
     }
 
     private func draw(_ decoration: MarkdownDecoration, at point: CGPoint, in context: CGContext) {

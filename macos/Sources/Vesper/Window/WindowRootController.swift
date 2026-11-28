@@ -67,14 +67,14 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         if isViewLoaded {
             attachRail(bar, to: view)
         }
-        track({ [weak tabs] () -> RailModel? in
+        track({ [weak tabs] () -> (RailModel?, ThemeTokens?) in
             let poppedOut = isInspectorPoppedOut()
             let active = tabs?.list.active
-            if active?.state.railHidden == true { return nil }
-            return services()?.nativeRail.model(for: active, poppedOut: poppedOut)
-        }) { [weak self] model in
+            if active?.state.railHidden == true { return (nil, active?.state.theme) }
+            return (services()?.nativeRail.model(for: active, poppedOut: poppedOut), active?.state.theme)
+        }) { [weak self] model, theme in
             self?.railWidth?.constant = model == nil ? 0 : RailBarView.width
-            self?.rail?.apply(model)
+            self?.rail?.apply(model, theme: theme)
         }
     }
 

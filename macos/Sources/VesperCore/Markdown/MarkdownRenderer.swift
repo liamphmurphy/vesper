@@ -69,6 +69,31 @@ public struct MarkdownRendering {
 extension NSAttributedString.Key {
     /// A paragraph's `MarkdownDecoration`: the boxes, rules and quote bars drawn behind its text.
     public static let markdownDecoration = NSAttributedString.Key("VesperMarkdownDecoration")
+    /// An inline code span's rounded pill chrome drawn behind the monospace run by `MarkdownLayoutFragment`.
+    public static let markdownInlineCode = NSAttributedString.Key("VesperMarkdownInlineCode")
+}
+
+/// Visual tokens for a rounded inline `` `code` `` pill drawn behind monospace runs.
+public final class MarkdownInlineCodeStyle: NSObject, @unchecked Sendable {
+    public let fill: NSColor
+    public let border: NSColor
+
+    public init(fill: NSColor, border: NSColor) {
+        self.fill = fill
+        self.border = border
+    }
+
+    public override func isEqual(_ object: Any?) -> Bool {
+        guard let other = object as? MarkdownInlineCodeStyle else { return false }
+        return fill == other.fill && border == other.border
+    }
+
+    public override var hash: Int {
+        var hasher = Hasher()
+        hasher.combine(fill)
+        hasher.combine(border)
+        return hasher.finalize()
+    }
 }
 
 /// What a paragraph's layout fragment draws behind its text. Consecutive paragraphs of one box
@@ -500,10 +525,13 @@ private struct Builder {
             s.addAttribute(.strikethroughStyle, value: NSUnderlineStyle.single.rawValue, range: NSRange(location: 0, length: s.length))
             return s
         case .code(let code):
-            // `.prose-code code`: 12px mono on `--selected`, in `--text-2`.
+            // Rounded neutral pill painted by `MarkdownLayoutFragment` instead of a sharp selection-blue `.backgroundColor`.
             attributes[.font] = NSFont.monospacedSystemFont(ofSize: theme.contentPointSize(.mono), weight: .regular)
-            attributes[.backgroundColor] = self.color("selected", NSColor.controlAccentColor.withAlphaComponent(0.14))
-            attributes[.foregroundColor] = self.color("text-2", .labelColor)
+            attributes[.foregroundColor] = self.color("text", .labelColor)
+            attributes[.markdownInlineCode] = MarkdownInlineCodeStyle(
+                fill: self.color("surface-raised", self.color("surface", NSColor.labelColor.withAlphaComponent(0.08))),
+                border: self.color("border-subtle", self.color("border", NSColor.separatorColor.withAlphaComponent(0.45)))
+            )
             return NSAttributedString(string: code, attributes: attributes)
         case .math(let tex):
             if let drawn = options.math[MarkdownMath(tex: tex, display: false)] {

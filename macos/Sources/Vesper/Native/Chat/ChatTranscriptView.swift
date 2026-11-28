@@ -546,6 +546,7 @@ private struct ChatMessageRowView: View {
     @State private var editSubmitting = false
     @State private var editError: String?
     @State private var regenerating = false
+    @State private var isRowHovered = false
 
     private var isFoldableReply: Bool {
         message.role == .assistant && ChatReplyFoldingLogic.isFoldableReply(displayedBodyMd)
@@ -599,72 +600,78 @@ private struct ChatMessageRowView: View {
         let citationNumbers = parsed.sources.compactMap(\.number)
 
         if message.role == .user {
+            let showUserActions = isRowHovered || isEditingUserMessage
             VStack(alignment: .leading, spacing: 14) {
                 VStack(alignment: .trailing, spacing: 6) {
                     HStack(spacing: 6) {
                         if message.bookmarked == true {
                             TonePill(label: "Pinned", tone: "review")
                         }
-                        Button {
-                            toggleBookmark()
-                        } label: {
-                            Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
-                                .imageScale(.small)
-                                .foregroundStyle(message.bookmarked == true ? p.accent : p.tertiaryText)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(togglingBookmark)
-                        .help(message.bookmarked == true ? "Remove bookmark" : "Bookmark message")
-
-                        if let onQuoteMessage {
+                        HStack(spacing: 6) {
                             Button {
-                                onQuoteMessage(parsed.typedBody, nil)
+                                toggleBookmark()
                             } label: {
-                                Image(systemName: "arrowshape.turn.up.left")
+                                Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
                                     .imageScale(.small)
-                                    .foregroundStyle(p.tertiaryText)
+                                    .foregroundStyle(message.bookmarked == true ? p.accent : p.tertiaryText)
                             }
                             .buttonStyle(.plain)
-                            .help("Quote in composer")
-                        }
+                            .disabled(togglingBookmark)
+                            .help(message.bookmarked == true ? "Remove bookmark" : "Bookmark message")
 
-                        if isLastUserMessage, onEditLastUserMessage != nil, !isEditingUserMessage {
-                            Button {
-                                editDraft = parsed.typedBody
-                                editError = nil
-                                isEditingUserMessage = true
-                            } label: {
-                                Image(systemName: "pencil")
-                                    .imageScale(.small)
-                                    .foregroundStyle(p.tertiaryText)
+                            if let onQuoteMessage {
+                                Button {
+                                    onQuoteMessage(parsed.typedBody, nil)
+                                } label: {
+                                    Image(systemName: "arrowshape.turn.up.left")
+                                        .imageScale(.small)
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Quote in composer")
                             }
-                            .buttonStyle(.plain)
-                            .help("Edit message and re-send")
-                        }
 
-                        if let onSaveAsTemplate, !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            Button {
-                                onSaveAsTemplate(parsed.typedBody)
-                            } label: {
-                                Image(systemName: "text.badge.star")
-                                    .imageScale(.small)
-                                    .foregroundStyle(p.tertiaryText)
+                            if isLastUserMessage, onEditLastUserMessage != nil, !isEditingUserMessage {
+                                Button {
+                                    editDraft = parsed.typedBody
+                                    editError = nil
+                                    isEditingUserMessage = true
+                                } label: {
+                                    Image(systemName: "pencil")
+                                        .imageScale(.small)
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Edit message and re-send")
                             }
-                            .buttonStyle(.plain)
-                            .help("Save as reusable prompt template")
-                        }
 
-                        if let onForkMessage {
-                            Button {
-                                onForkMessage(message)
-                            } label: {
-                                Image(systemName: "arrow.triangle.branch")
-                                    .imageScale(.small)
-                                    .foregroundStyle(p.tertiaryText)
+                            if let onSaveAsTemplate, !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                                Button {
+                                    onSaveAsTemplate(parsed.typedBody)
+                                } label: {
+                                    Image(systemName: "text.badge.star")
+                                        .imageScale(.small)
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Save as reusable prompt template")
                             }
-                            .buttonStyle(.plain)
-                            .help("Fork conversation from here")
+
+                            if let onForkMessage {
+                                Button {
+                                    onForkMessage(message)
+                                } label: {
+                                    Image(systemName: "arrow.triangle.branch")
+                                        .imageScale(.small)
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                                .buttonStyle(.plain)
+                                .help("Fork conversation from here")
+                            }
                         }
+                        .opacity(showUserActions ? 1 : 0)
+                        .allowsHitTesting(showUserActions)
+                        .animation(.easeOut(duration: 0.14), value: showUserActions)
                     }
                     ChatContextChipsView(stripped: parsed.context, refs: message.contextRefs ?? [])
                     VStack(alignment: .leading, spacing: 8) {
@@ -702,7 +709,7 @@ private struct ChatMessageRowView: View {
                             }
                             .frame(minWidth: 340, maxWidth: 620)
                         } else if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-                            MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true, findRow: findRow)
+                            MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true, hugWidth: true, findRow: findRow)
                         }
                         if let attachments = message.attachments, !attachments.isEmpty {
                             VStack(alignment: .leading, spacing: 6) {
@@ -712,13 +719,25 @@ private struct ChatMessageRowView: View {
                             }
                         }
                     }
-                    .padding(.horizontal, 14)
+                    .padding(.horizontal, 15)
                     .padding(.vertical, 10)
-                    .background(p.surface, in: RoundedRectangle(cornerRadius: 12))
-                    .overlay(RoundedRectangle(cornerRadius: 12).stroke(p.border))
+                    .background {
+                        RoundedRectangle(cornerRadius: 16)
+                            .fill(theme.swiftUIColor("surface-raised", fallback: p.surface))
+                            .overlay(
+                                RoundedRectangle(cornerRadius: 16)
+                                    .fill(p.accent.opacity(theme.mode == .dark ? 0.10 : 0.07))
+                            )
+                    }
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 16)
+                            .stroke(p.accent.opacity(theme.mode == .dark ? 0.22 : 0.18), lineWidth: 1)
+                    )
                     .frame(maxWidth: 640, alignment: .trailing)
                 }
                 .frame(maxWidth: .infinity, alignment: .trailing)
+                .contentShape(Rectangle())
+                .onHover { isRowHovered = $0 }
 
                 if let endedTurn, let runId = message.runId, !runId.isEmpty {
                     ChatEndedTurnSectionView(
@@ -811,7 +830,11 @@ private struct ChatMessageRowView: View {
                         .help("Switch between regenerated reply variants")
                     }
                     Spacer(minLength: 8)
+                    let showAssistantActions = isRowHovered || isLastAssistantMessage || isReadingAloud
                     assistantActionBar
+                        .opacity(showAssistantActions ? 1 : 0)
+                        .allowsHitTesting(showAssistantActions)
+                        .animation(.easeOut(duration: 0.14), value: showAssistantActions)
                 }
 
                 VStack(alignment: .leading, spacing: 10) {
@@ -900,6 +923,8 @@ private struct ChatMessageRowView: View {
                 }
                 .padding(.leading, 32)
             }
+            .contentShape(Rectangle())
+            .onHover { isRowHovered = $0 }
         }
     }
 

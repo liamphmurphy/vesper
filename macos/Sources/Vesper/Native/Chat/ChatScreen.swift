@@ -215,11 +215,12 @@ struct ChatScreen: View {
                     session: session,
                     personas: personas,
                     activePersona: activePersona,
-                    harnessModels: harnessModels,
                     messages: messages,
                     pinnedCount: messages.filter { $0.bookmarked == true }.count
                 )
-                Divider()
+                Rectangle()
+                    .fill(theme.swiftUIColor("border-subtle", fallback: theme.palette.border).opacity(0.65))
+                    .frame(height: 1)
 
                 if messageReader.isActive {
                     ChatReadAloudMiniBarView(reader: messageReader) { msgId in
@@ -247,71 +248,72 @@ struct ChatScreen: View {
                         )
                     }
                 }
-                // The host persona's loop stands bottom-right just above the composer for the whole chat.
+                // The host persona's loop stands bottom-right just above the floating composer.
                 .overlay(alignment: .bottomTrailing) {
                     if let persona = activePersona, let loops = persona.playableLoops {
                         PersonaCompanionDock(companion: companion, persona: persona, loops: loops) { companionOpen = true }
                     }
                 }
-
-                ChatComposerSlot(
-                    chatId: chatId,
-                    session: session,
-                    personas: personas,
-                    activePersona: activePersona,
-                    harnessModels: harnessModels,
-                    harnesses: harnesses,
-                    workflows: workflows,
-                    repositories: repositories,
-                    promptTemplates: promptTemplates,
-                    spaces: spaces,
-                    selectedHarness: $model.selectedHarness,
-                    selectedModel: $model.selectedModel,
-                    selectedEffort: $model.selectedEffort,
-                    selectedRepoUrl: $model.selectedRepoUrl,
-                    onSelectNewChatPersona: { id in model.newChatPersonaId = id },
-                    onSend: { submission in
-                        await submitFromComposer(submission, activePersona: activePersona)
-                    },
-                    onCancel: {
-                        await cancelActiveTurn()
-                    },
-                    onSetRepository: { repoUrl in
-                        await setChatRepository(repoUrl)
-                    },
-                    onCompact: { focus in
-                        await compactChat(focus: focus)
-                    },
-                    onStartWorkflow: { workflowId, input in
-                        await startChatWorkflow(workflowId: workflowId, input: input)
-                    },
-                    onStartMusic: { prompt in
-                        await startChatMusic(prompt: prompt)
-                    },
-                    onCompare: { option, question in
-                        await startCompareAside(option: option, question: question)
-                    },
-                    onStartLiveVoice: {
-                        companionOpen = false
-                        liveVoiceOpen = true
-                    },
-                    onOpenOutline: {
-                        model.inspectorTabId = ChatInspectorLogic.outlineTabId
-                        model.inspectorOpen = true
-                    },
-                    onStartTemporaryChat: {
-                        model.temporaryMode = true
-                        context.navigate("/chat?temporary=1")
-                    },
-                    prefill: model.composerPrefill,
-                    onPrefillApplied: { token in
-                        if model.composerPrefill?.token == token {
-                            model.composerPrefill = nil
-                        }
-                    },
-                    livePlanProgress: livePlanProgress,
-                    livePlanTurnKey: livePlanTurnKey
-                )
+                .safeAreaInset(edge: .bottom, spacing: 0) {
+                    ChatComposerSlot(
+                        chatId: chatId,
+                        session: session,
+                        personas: personas,
+                        activePersona: activePersona,
+                        harnessModels: harnessModels,
+                        harnesses: harnesses,
+                        workflows: workflows,
+                        repositories: repositories,
+                        promptTemplates: promptTemplates,
+                        spaces: spaces,
+                        selectedHarness: $model.selectedHarness,
+                        selectedModel: $model.selectedModel,
+                        selectedEffort: $model.selectedEffort,
+                        selectedRepoUrl: $model.selectedRepoUrl,
+                        onSelectNewChatPersona: { id in model.newChatPersonaId = id },
+                        onSend: { submission in
+                            await submitFromComposer(submission, activePersona: activePersona)
+                        },
+                        onCancel: {
+                            await cancelActiveTurn()
+                        },
+                        onSetRepository: { repoUrl in
+                            await setChatRepository(repoUrl)
+                        },
+                        onCompact: { focus in
+                            await compactChat(focus: focus)
+                        },
+                        onStartWorkflow: { workflowId, input in
+                            await startChatWorkflow(workflowId: workflowId, input: input)
+                        },
+                        onStartMusic: { prompt in
+                            await startChatMusic(prompt: prompt)
+                        },
+                        onCompare: { option, question in
+                            await startCompareAside(option: option, question: question)
+                        },
+                        onStartLiveVoice: {
+                            companionOpen = false
+                            liveVoiceOpen = true
+                        },
+                        onOpenOutline: {
+                            model.inspectorTabId = ChatInspectorLogic.outlineTabId
+                            model.inspectorOpen = true
+                        },
+                        onStartTemporaryChat: {
+                            model.temporaryMode = true
+                            context.navigate("/chat?temporary=1")
+                        },
+                        prefill: model.composerPrefill,
+                        onPrefillApplied: { token in
+                            if model.composerPrefill?.token == token {
+                                model.composerPrefill = nil
+                            }
+                        },
+                        livePlanProgress: livePlanProgress,
+                        livePlanTurnKey: livePlanTurnKey
+                    )
+                }
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -688,7 +690,6 @@ struct ChatScreen: View {
         session: API.ChatSession?,
         personas: [API.Persona],
         activePersona: API.Persona?,
-        harnessModels: [API.ChatHarnessModels],
         messages: [API.ChatMessage],
         pinnedCount: Int
     ) -> some View {
@@ -800,74 +801,21 @@ struct ChatScreen: View {
                 .foregroundStyle(showLiveThinking ? p.accent : p.secondaryText)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 4)
-                .background(showLiveThinking ? p.selected : p.surface, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(showLiveThinking ? p.accent.opacity(0.6) : p.border))
+                .background(showLiveThinking ? p.selected : Color.clear, in: Capsule())
+                .overlay(Capsule().stroke(showLiveThinking ? p.accent.opacity(0.45) : Color.clear))
+                .contentShape(Capsule())
             }
             .buttonStyle(.plain)
             .help(showLiveThinking ? "Hide live thinking blocks (/thinking off)" : "Stream live thinking blocks inline (/thinking on)")
             .accessibilityLabel(showLiveThinking ? "Hide live thinking" : "Show live thinking")
 
-            modelMenu(session: session, harnessModels: harnessModels)
-
             if let session, !messages.isEmpty {
                 exportChatMenu(session: session, activePersona: activePersona, messages: messages)
             }
-
-            Button {
-                context.navigate("/chat")
-            } label: {
-                Label("New Chat", systemImage: "square.and.pencil")
-            }
-            .buttonStyle(.vesper())
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 10)
+        .padding(.vertical, 8)
         .background(p.background)
-    }
-
-    @ViewBuilder
-    private func modelMenu(session: API.ChatSession?, harnessModels: [API.ChatHarnessModels]) -> some View {
-        let available = harnessModels.filter { $0.available && !$0.models.isEmpty }
-        if !available.isEmpty {
-            let currentLabel = model.selectedModel ?? session?.model ?? "Default model"
-            Menu {
-                Button("Default model") {
-                    model.selectedHarness = nil
-                    model.selectedModel = nil
-                }
-                Divider()
-                ForEach(available, id: \.harness.rawValue) { group in
-                    Section(group.label) {
-                        ForEach(group.models, id: \.id) { item in
-                            Button(item.label) {
-                                model.selectedHarness = group.harness
-                                model.selectedModel = item.id
-                            }
-                        }
-                    }
-                }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "cpu")
-                        .imageScale(.small)
-                    Text(currentLabel)
-                        .lineLimit(1)
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 8, weight: .semibold))
-                        .foregroundStyle(theme.palette.tertiaryText)
-                }
-                .font(.system(size: theme.pointSize(.small)))
-                .foregroundStyle(theme.palette.secondaryText)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.border))
-            }
-            .menuStyle(.button)
-            .buttonStyle(.plain)
-            .menuIndicator(.hidden)
-            .fixedSize()
-        }
     }
 
     // MARK: - Empty / Start State
@@ -1694,8 +1642,7 @@ struct ChatScreen: View {
                 .foregroundStyle(p.secondaryText)
                 .padding(.horizontal, 7)
                 .padding(.vertical, 5)
-                .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
-                .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+                .contentShape(Capsule())
         }
         .menuStyle(.borderlessButton)
         .menuIndicator(.hidden)

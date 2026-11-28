@@ -17,6 +17,7 @@ final class RailBarView: NSVisualEffectView {
     private var buttons: [String: RailButton] = [:]
     private var needsYou: NeedsYouPopover?
     private let menuPopover = RailMenuPopover()
+    private var currentTheme: ThemeTokens = ThemeTokens(mode: .dark)
 
     init(send: @escaping (NativeCommand) -> Void, services: @escaping () -> SystemServices?) {
         self.send = send
@@ -76,20 +77,22 @@ final class RailBarView: NSVisualEffectView {
     }
 
     /// Shows the page's rail, or nothing when it has none.
-    func apply(_ model: RailModel?) {
+    func apply(_ model: RailModel?, theme: ThemeTokens? = nil) {
+        if let theme { currentTheme = theme }
         guard let model else {
             needsYou?.close()
             isHidden = true
             return
         }
         isHidden = false
+        let resolvedTheme = currentTheme
         var used = Set<String>()
         func sync(_ items: [RailItem], into stack: NSStackView) {
             let views = items.map { item -> RailButton in
                 let button = buttons[item.id] ?? RailButton { [weak self] button in self?.clicked(button) }
                 buttons[item.id] = button
                 used.insert(item.id)
-                button.configure(item)
+                button.configure(item, theme: resolvedTheme)
                 return button
             }
             stack.setViews(views, in: .top)
@@ -129,9 +132,11 @@ final class RailBarView: NSVisualEffectView {
 final class RailButton: NSButton {
     private(set) var item: RailItem?
     private let onClick: (RailButton) -> Void
+    private let activeBar = NSView()
     private let badgeView = RailBadgeView()
     private let statusView = RailStatusDot()
     private var hovering = false
+    private var theme: ThemeTokens = ThemeTokens(mode: .dark)
     private var avatarKey: String?
     private var avatarTask: Task<Void, Never>?
 
@@ -150,15 +155,24 @@ final class RailButton: NSButton {
         target = self
         action = #selector(fire)
         translatesAutoresizingMaskIntoConstraints = false
-        for sub in [badgeView, statusView] {
+
+        activeBar.wantsLayer = true
+        activeBar.layer?.cornerRadius = 1.25
+        activeBar.isHidden = true
+
+        for sub in [activeBar, badgeView, statusView] {
             sub.translatesAutoresizingMaskIntoConstraints = false
             addSubview(sub)
         }
         NSLayoutConstraint.activate([
             widthAnchor.constraint(equalToConstant: Self.size),
             heightAnchor.constraint(equalToConstant: Self.size),
-            badgeView.topAnchor.constraint(equalTo: topAnchor, constant: -3),
-            badgeView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 1),
+            activeBar.widthAnchor.constraint(equalToConstant: 2.5),
+            activeBar.heightAnchor.constraint(equalToConstant: 16),
+            activeBar.centerYAnchor.constraint(equalTo: centerYAnchor),
+            activeBar.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 4.5),
+            badgeView.topAnchor.constraint(equalTo: topAnchor, constant: -2),
+            badgeView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: 3),
             statusView.bottomAnchor.constraint(equalTo: bottomAnchor, constant: -2),
             statusView.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -2),
         ])
@@ -169,20 +183,21 @@ final class RailButton: NSButton {
 
     @objc private func fire() { onClick(self) }
 
-    func configure(_ item: RailItem) {
+    func configure(_ item: RailItem, theme: ThemeTokens = ThemeTokens(mode: .dark)) {
         self.item = item
+        self.theme = theme
         toolTip = item.label
         setAccessibilityLabel(item.label)
         isEnabled = item.disabled != true
         alphaValue = isEnabled ? 1 : 0.4
-        badgeView.configure(item.badge)
-        statusView.configure(item.status)
+        badgeView.configure(item.badge, theme: theme)
+        statusView.configure(item.status, theme: theme, pulse: item.status == .accent)
         if let avatar = item.avatar {
             showAvatar(avatar)
         } else {
             avatarTask?.cancel()
             avatarKey = nil
-            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: .regular)
+            let config = NSImage.SymbolConfiguration(pointSize: 15, weight: item.active == true ? .medium : .regular)
             image = SidebarIcons.image(item.icon ?? "circle").withSymbolConfiguration(config)
             image?.isTemplate = true
         }
@@ -227,15 +242,21 @@ final class RailButton: NSButton {
         return image
     }
 
+    var isActiveBarVisible: Bool { !activeBar.isHidden }
+
     private func updateAppearance() {
-        contentTintColor = item?.active == true ? .labelColor : .secondaryLabelColor
+        let isActive = item?.active == true
+        let accent = theme.nsColor("accent", fallback: .controlAccentColor)
+        contentTintColor = isActive ? accent : (hovering ? .labelColor : .secondaryLabelColor)
+        activeBar.isHidden = !isActive
         effectiveAppearance.performAsCurrentDrawingAppearance {
-            let fill: NSColor = item?.active == true
-                ? NSColor.labelColor.withAlphaComponent(0.14)
+            activeBar.layer?.backgroundColor = accent.cgColor
+            let fill: NSColor = isActive
+                ? accent.withAlphaComponent(0.14)
                 : hovering && isEnabled ? NSColor.labelColor.withAlphaComponent(0.08) : .clear
             layer?.backgroundColor = fill.cgColor
         }
-        setAccessibilitySelected(item?.active == true)
+        setAccessibilitySelected(isActive)
     }
 
     override func viewDidChangeEffectiveAppearance() {
@@ -271,42 +292,66 @@ private final class RailBadgeView: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func configure(_ badge: AreaBadge?) {
+    func configure(_ badge: AreaBadge?, theme: ThemeTokens) {
         guard let badge else { isHidden = true; return }
         isHidden = false
         text = badge.text.flatMap { $0.isEmpty ? nil : $0 }
         let tone = badge.tone ?? .neutral
-        color = tone == .neutral ? .secondaryLabelColor : NSColor(tone.color)
+        color = Self.resolvedColor(for: tone, theme: theme)
         if let text {
             let width = (text as NSString).size(withAttributes: [.font: Self.font]).width
-            widthConstraint?.constant = max(15, ceil(width) + 9)
-            heightConstraint?.constant = 15
+            widthConstraint?.constant = max(17, ceil(width) + 11)
+            heightConstraint?.constant = 17
         } else {
-            widthConstraint?.constant = 8
-            heightConstraint?.constant = 8
+            widthConstraint?.constant = 9
+            heightConstraint?.constant = 9
         }
         needsDisplay = true
     }
 
-    private static let font = NSFont.systemFont(ofSize: 10, weight: .semibold)
+    private static func resolvedColor(for tone: Tone, theme: ThemeTokens) -> NSColor {
+        switch tone {
+        case .neutral:
+            return .secondaryLabelColor
+        case .accent:
+            return theme.nsColor("accent", fallback: .controlAccentColor)
+        case .human:
+            return theme.nsColor("state-human", fallback: theme.nsColor("accent", fallback: .systemOrange))
+        case .done:
+            return theme.nsColor("state-done", fallback: .systemGreen)
+        case .blocked, .danger:
+            return theme.nsColor("pill-blocked-fg", fallback: .systemRed)
+        case .warning:
+            return theme.nsColor("state-progress", fallback: .systemOrange)
+        }
+    }
+
+    private static let font = NSFont.systemFont(ofSize: 9.5, weight: .bold)
 
     override func draw(_ dirtyRect: NSRect) {
-        color.setFill()
+        // Cutout ring separates the badge cleanly from the underlying rail glyph.
+        NSColor.windowBackgroundColor.setFill()
         NSBezierPath(roundedRect: bounds, xRadius: bounds.height / 2, yRadius: bounds.height / 2).fill()
+
+        let inner = bounds.insetBy(dx: 1.5, dy: 1.5)
+        color.setFill()
+        NSBezierPath(roundedRect: inner, xRadius: inner.height / 2, yRadius: inner.height / 2).fill()
         guard let text else { return }
         let attrs: [NSAttributedString.Key: Any] = [.font: Self.font, .foregroundColor: NSColor.white]
         let size = (text as NSString).size(withAttributes: attrs)
-        (text as NSString).draw(at: NSPoint(x: bounds.midX - size.width / 2, y: bounds.midY - size.height / 2), withAttributes: attrs)
+        (text as NSString).draw(at: NSPoint(x: inner.midX - size.width / 2, y: inner.midY - size.height / 2), withAttributes: attrs)
     }
 }
 
-/// A small status dot on the icon's corner (a harness's health).
+/// A small status dot on the icon's corner (a harness's health or live running activity).
 @MainActor
 private final class RailStatusDot: NSView {
     private var color: NSColor?
+    private static let pulseKey = "vesper.rail.status.pulse"
 
     override init(frame: NSRect) {
         super.init(frame: frame)
+        wantsLayer = true
         widthAnchor.constraint(equalToConstant: 9).isActive = true
         heightAnchor.constraint(equalToConstant: 9).isActive = true
         isHidden = true
@@ -316,10 +361,39 @@ private final class RailStatusDot: NSView {
 
     override func hitTest(_ point: NSPoint) -> NSView? { nil }
 
-    func configure(_ tone: Tone?) {
+    func configure(_ tone: Tone?, theme: ThemeTokens, pulse: Bool = false) {
         isHidden = tone == nil
-        color = tone.map { NSColor($0.color) }
+        switch tone {
+        case .accent:
+            color = theme.nsColor("accent", fallback: .controlAccentColor)
+        case .done:
+            color = theme.nsColor("state-done", fallback: .systemGreen)
+        case .blocked, .danger:
+            color = theme.nsColor("pill-blocked-fg", fallback: .systemRed)
+        case .human, .warning:
+            color = theme.nsColor("state-human", fallback: .systemOrange)
+        case .neutral:
+            color = .secondaryLabelColor
+        case nil:
+            color = nil
+        }
         needsDisplay = true
+
+        let shouldPulse = pulse && tone != nil && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+        if shouldPulse {
+            if layer?.animation(forKey: Self.pulseKey) == nil {
+                let anim = CABasicAnimation(keyPath: "opacity")
+                anim.fromValue = 1.0
+                anim.toValue = 0.38
+                anim.duration = 0.95
+                anim.autoreverses = true
+                anim.repeatCount = .infinity
+                anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+                layer?.add(anim, forKey: Self.pulseKey)
+            }
+        } else {
+            layer?.removeAnimation(forKey: Self.pulseKey)
+        }
     }
 
     override func draw(_ dirtyRect: NSRect) {
