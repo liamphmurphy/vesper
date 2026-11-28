@@ -901,6 +901,103 @@ struct ChatTurnStepRowView: View {
     }
 }
 
+// MARK: - Responsive Diorama / Telemetry Split Layout
+
+/// Width-threshold split layout for `[stage, divider, telemetry]` inside `ChatLiveActivityCardView`.
+///
+/// Unlike `ViewThatFits(in: .horizontal)`—which queries ideal unwrapped text width and falsely
+/// stacks whenever a multi-line opening sentence or narration is wider than the card—this layout
+/// decides solely from the container's proposed width, keeping a single `ActivitySceneView` identity
+/// across resizes and stretching the diorama backdrop edge-to-edge in narrow Docked Chat panes.
+struct ChatLiveStageSplitLayout: Layout {
+    var breakpoint: CGFloat = 400
+    var sideStageWidth: CGFloat = 136
+    var minSideHeight: CGFloat = 76
+    var stackedStageHeight: CGFloat = 64
+    var dividerThickness: CGFloat = 1
+
+    func isStacked(forWidth width: CGFloat?) -> Bool {
+        guard let width, width.isFinite else { return false }
+        return width < breakpoint
+    }
+
+    func sizeThatFits(
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) -> CGSize {
+        guard subviews.count == 3 else { return .zero }
+        let telemetry = subviews[2]
+
+        if isStacked(forWidth: proposal.width), let width = proposal.width {
+            let telemetrySize = telemetry.sizeThatFits(ProposedViewSize(width: width, height: nil))
+            return CGSize(
+                width: width,
+                height: stackedStageHeight + dividerThickness + telemetrySize.height
+            )
+        }
+
+        let finiteWidth: CGFloat? = proposal.width.flatMap { $0.isFinite ? $0 : nil }
+        let telemetryProposedWidth = finiteWidth.map { max(1, $0 - sideStageWidth - dividerThickness) }
+        let telemetrySize = telemetry.sizeThatFits(ProposedViewSize(width: telemetryProposedWidth, height: nil))
+        let totalWidth = finiteWidth ?? (sideStageWidth + dividerThickness + telemetrySize.width)
+        let totalHeight = max(minSideHeight, telemetrySize.height)
+        return CGSize(width: totalWidth, height: totalHeight)
+    }
+
+    func placeSubviews(
+        in bounds: CGRect,
+        proposal: ProposedViewSize,
+        subviews: Subviews,
+        cache: inout ()
+    ) {
+        guard subviews.count == 3 else { return }
+        let stage = subviews[0]
+        let divider = subviews[1]
+        let telemetry = subviews[2]
+
+        if isStacked(forWidth: bounds.width) {
+            stage.place(
+                at: CGPoint(x: bounds.minX, y: bounds.minY),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: stackedStageHeight)
+            )
+            divider.place(
+                at: CGPoint(x: bounds.minX, y: bounds.minY + stackedStageHeight),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: dividerThickness)
+            )
+            let telemetryHeight = max(0, bounds.height - stackedStageHeight - dividerThickness)
+            telemetry.place(
+                at: CGPoint(x: bounds.minX, y: bounds.minY + stackedStageHeight + dividerThickness),
+                anchor: .topLeading,
+                proposal: ProposedViewSize(width: bounds.width, height: telemetryHeight)
+            )
+            return
+        }
+
+        stage.place(
+            at: CGPoint(x: bounds.minX, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: sideStageWidth, height: bounds.height)
+        )
+        divider.place(
+            at: CGPoint(x: bounds.minX + sideStageWidth, y: bounds.minY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: dividerThickness, height: bounds.height)
+        )
+        let telemetryWidth = max(1, bounds.width - sideStageWidth - dividerThickness)
+        let telemetrySize = telemetry.sizeThatFits(ProposedViewSize(width: telemetryWidth, height: nil))
+        let telemetryHeight = min(bounds.height, telemetrySize.height)
+        let telemetryY = bounds.minY + max(0, (bounds.height - telemetryHeight) * 0.5)
+        telemetry.place(
+            at: CGPoint(x: bounds.minX + sideStageWidth + dividerThickness, y: telemetryY),
+            anchor: .topLeading,
+            proposal: ProposedViewSize(width: telemetryWidth, height: telemetryHeight)
+        )
+    }
+}
+
 // MARK: - Isolated Live Work / Thinking Cockpit Card
 
 /// Redesigned live working visualization card:
@@ -1030,35 +1127,18 @@ struct ChatLiveActivityCardView: View {
             // Indented to align cleanly with assistant reply content & finished turn strip
             VStack(alignment: .leading, spacing: 8) {
                 let cockpitCard = VStack(alignment: .leading, spacing: 0) {
-                    // Main Diorama + Telemetry Split (adapts cleanly to narrow Docked Chat widths)
-                    ViewThatFits(in: .horizontal) {
-                        HStack(alignment: .center, spacing: 0) {
-                            ActivitySceneView(
-                                kind: activity.status.kind,
-                                stopping: isStopping,
-                                width: 136,
-                                height: 76,
-                                stageStyle: .diorama(tint: stageTint, ambientPulse: !isStopping)
-                            )
-                            Rectangle()
-                                .fill(theme.swiftUIColor("border-subtle", fallback: p.border))
-                                .frame(width: 1)
-                            telemetryPane(activity: activity, stageTint: stageTint, palette: p)
-                        }
-                        .fixedSize(horizontal: false, vertical: true)
-
-                        VStack(alignment: .leading, spacing: 0) {
-                            ActivitySceneView(
-                                kind: activity.status.kind,
-                                stopping: isStopping,
-                                width: 180,
-                                height: 60,
-                                stageStyle: .diorama(tint: stageTint, ambientPulse: !isStopping)
-                            )
-                            .frame(maxWidth: .infinity)
-                            Divider()
-                            telemetryPane(activity: activity, stageTint: stageTint, palette: p)
-                        }
+                    // Main Diorama + Telemetry Split (width-driven so long wrapping text stays side-by-side)
+                    ChatLiveStageSplitLayout {
+                        ActivitySceneView(
+                            kind: activity.status.kind,
+                            stopping: isStopping,
+                            width: 136,
+                            height: 76,
+                            stageStyle: .diorama(tint: stageTint, ambientPulse: !isStopping, fillWidth: true)
+                        )
+                        Rectangle()
+                            .fill(theme.swiftUIColor("border-subtle", fallback: p.border))
+                        telemetryPane(activity: activity, stageTint: stageTint, palette: p)
                     }
 
                     // Inline parallel subagent swimlanes
