@@ -351,3 +351,205 @@ struct ChatHarnessUsageButton: View {
         .frame(width: 276)
     }
 }
+
+// MARK: - Model & Reasoning Effort Two-Column Popover
+
+struct ChatModelEffortPickerPopover: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let state: ChatModelEffortState
+    @Binding var selectedHarness: API.Harness?
+    @Binding var selectedModel: String?
+    @Binding var selectedEffort: API.ChatEffort?
+    let onDismiss: () -> Void
+
+    private static let modelColumnWidth: CGFloat = 224
+    private static let effortColumnWidth: CGFloat = 160
+    private static let maxModelListHeight: CGFloat = 320
+
+    private var estimatedModelListHeight: CGFloat {
+        // Auto row + optional divider + each group header and model row.
+        let modelCount = state.availableGroups.reduce(0) { $0 + $1.models.count }
+        let groupCount = state.availableGroups.count
+        let dividerOverhead: CGFloat = groupCount > 0 ? 9 : 0
+        let contentHeight = CGFloat(1 + modelCount) * 26 + CGFloat(groupCount) * 24 + dividerOverhead + 12
+        return min(contentHeight, Self.maxModelListHeight)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        HStack(alignment: .top, spacing: 0) {
+            modelColumn(palette: p)
+                .frame(width: Self.modelColumnWidth)
+
+            Divider()
+
+            effortColumn(palette: p)
+                .frame(width: Self.effortColumnWidth)
+        }
+        .fixedSize(horizontal: true, vertical: false)
+    }
+
+    private func modelColumn(palette p: NativePalette) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            Text("Model")
+                .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                .foregroundStyle(p.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 2) {
+                    ChatPickerOptionRow(
+                        title: "Auto (default)",
+                        trailing: nil,
+                        isSelected: state.currentModelId == nil
+                    ) {
+                        selectedHarness = nil
+                        selectedModel = nil
+                        selectedEffort = nil
+                    }
+
+                    if !state.availableGroups.isEmpty {
+                        Divider()
+                            .padding(.vertical, 3)
+                            .padding(.horizontal, 4)
+                    }
+
+                    ForEach(state.availableGroups, id: \.harness.rawValue) { group in
+                        Text(group.label)
+                            .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                            .foregroundStyle(p.tertiaryText)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 5)
+                            .padding(.bottom, 2)
+
+                        ForEach(group.models, id: \.id) { item in
+                            ChatPickerOptionRow(
+                                title: item.label,
+                                trailing: nil,
+                                isSelected: item.id == state.currentModelId
+                            ) {
+                                let result = ChatModelEffortPickerLogic.selectModel(
+                                    item,
+                                    harness: group.harness,
+                                    currentEffort: selectedEffort
+                                )
+                                selectedHarness = result.harness
+                                selectedModel = result.model
+                                selectedEffort = result.effort
+                                if result.shouldDismiss {
+                                    onDismiss()
+                                }
+                            }
+                        }
+                    }
+                }
+                .padding(5)
+            }
+            .frame(height: estimatedModelListHeight)
+        }
+    }
+
+    private func effortColumn(palette p: NativePalette) -> some View {
+        let defaultHint = state.currentModel?.defaultEffort.map(ChatModelEffortPickerLogic.effortLabel)
+        return VStack(alignment: .leading, spacing: 0) {
+            Text("Reasoning effort")
+                .font(.system(size: theme.pointSize(.micro), weight: .semibold))
+                .foregroundStyle(p.secondaryText)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+
+            Divider()
+
+            if state.availableEfforts.isEmpty {
+                Text("Not configurable for this model")
+                    .font(.system(size: theme.pointSize(.micro)))
+                    .foregroundStyle(p.tertiaryText)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            } else {
+                VStack(alignment: .leading, spacing: 2) {
+                    ChatPickerOptionRow(
+                        title: "Default",
+                        trailing: defaultHint,
+                        isSelected: state.currentEffort == nil
+                    ) {
+                        selectedEffort = nil
+                        onDismiss()
+                    }
+
+                    Divider()
+                        .padding(.vertical, 3)
+                        .padding(.horizontal, 4)
+
+                    ForEach(state.availableEfforts, id: \.rawValue) { eff in
+                        ChatPickerOptionRow(
+                            title: ChatModelEffortPickerLogic.effortLabel(eff),
+                            trailing: nil,
+                            isSelected: eff == state.currentEffort
+                        ) {
+                            selectedEffort = eff
+                            onDismiss()
+                        }
+                    }
+                }
+                .padding(5)
+            }
+
+            Spacer(minLength: 0)
+        }
+    }
+}
+
+private struct ChatPickerOptionRow: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let title: String
+    let trailing: String?
+    let isSelected: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let p = theme.palette
+        Button(action: action) {
+            HStack(spacing: 6) {
+                Image(systemName: "checkmark")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(p.accent)
+                    .opacity(isSelected ? 1 : 0)
+                    .frame(width: 12)
+
+                Text(title)
+                    .font(.system(size: theme.pointSize(.small), weight: isSelected ? .medium : .regular))
+                    .foregroundStyle(p.text)
+                    .lineLimit(1)
+
+                Spacer(minLength: 4)
+
+                if let trailing, !trailing.isEmpty {
+                    Text(trailing)
+                        .font(.system(size: theme.pointSize(.micro)))
+                        .foregroundStyle(p.tertiaryText)
+                        .lineLimit(1)
+                }
+            }
+            .padding(.horizontal, 7)
+            .padding(.vertical, 4)
+            .background(
+                (isSelected ? p.selected : (isHovered ? p.hover : Color.clear)),
+                in: RoundedRectangle(cornerRadius: 5)
+            )
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .accessibilityAddTraits(isSelected ? [.isSelected] : [])
+    }
+}

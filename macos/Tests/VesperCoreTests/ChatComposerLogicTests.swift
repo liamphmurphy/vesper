@@ -391,4 +391,75 @@ final class ChatComposerLogicTests: XCTestCase {
             XCTFail("Expected error when fewer than 2 personas are targeted")
         }
     }
+
+    // MARK: - Model & Reasoning Effort Picker
+
+    func testModelEffortPickerResolvesGroupsEffortsAndLabels() {
+        let claudeOpus = API.ChatModel(default: true, defaultEffort: .medium, efforts: [.low, .medium, .high, .max], id: "opus", label: "Claude Opus")
+        let fastModel = API.ChatModel(default: false, defaultEffort: nil, efforts: [], id: "haiku", label: "Claude Haiku")
+        let codexGpt = API.ChatModel(default: true, defaultEffort: .high, efforts: [.low, .medium, .high, .xhigh], id: "gpt-5", label: "GPT-5")
+        let catalog = [
+            API.ChatHarnessModels(available: true, harness: .claudeCode, label: "Claude Code", models: [claudeOpus, fastModel]),
+            API.ChatHarnessModels(available: false, harness: .antigravity, label: "Offline", models: [fastModel]),
+            API.ChatHarnessModels(available: true, harness: .codex, label: "Codex", models: [codexGpt]),
+        ]
+
+        let autoState = ChatModelEffortPickerLogic.resolve(
+            harnessModels: catalog,
+            selectedHarness: nil,
+            selectedModel: nil,
+            selectedEffort: nil,
+            sessionHarness: nil,
+            sessionModel: nil,
+            sessionEffort: nil
+        )
+        XCTAssertEqual(autoState.availableGroups.map(\.harness), [.claudeCode, .codex])
+        XCTAssertNil(autoState.currentModelId)
+        XCTAssertEqual(autoState.availableEfforts, API.ChatEffort.allKnown)
+        XCTAssertEqual(autoState.pillLabel, "Auto")
+
+        let codexState = ChatModelEffortPickerLogic.resolve(
+            harnessModels: catalog,
+            selectedHarness: .codex,
+            selectedModel: "gpt-5",
+            selectedEffort: .xhigh,
+            sessionHarness: .claudeCode,
+            sessionModel: "opus",
+            sessionEffort: .low
+        )
+        XCTAssertEqual(codexState.currentModel?.id, "gpt-5")
+        XCTAssertEqual(codexState.availableEfforts, [.low, .medium, .high, .xhigh])
+        XCTAssertEqual(codexState.pillLabel, "GPT-5 · Extra high")
+
+        let noEffortState = ChatModelEffortPickerLogic.resolve(
+            harnessModels: catalog,
+            selectedHarness: .claudeCode,
+            selectedModel: "haiku",
+            selectedEffort: nil,
+            sessionHarness: nil,
+            sessionModel: nil,
+            sessionEffort: nil
+        )
+        XCTAssertTrue(noEffortState.availableEfforts.isEmpty)
+        XCTAssertEqual(noEffortState.pillLabel, "Claude Haiku")
+    }
+
+    func testModelEffortPickerSelectModelPreservesOrClearsEffortAndDismissBehavior() {
+        let opus = API.ChatModel(default: true, defaultEffort: .medium, efforts: [.low, .medium, .high], id: "opus", label: "Opus")
+        let haiku = API.ChatModel(default: false, defaultEffort: nil, efforts: [], id: "haiku", label: "Haiku")
+
+        let kept = ChatModelEffortPickerLogic.selectModel(opus, harness: .claudeCode, currentEffort: .high)
+        XCTAssertEqual(kept.harness, .claudeCode)
+        XCTAssertEqual(kept.model, "opus")
+        XCTAssertEqual(kept.effort, .high)
+        XCTAssertFalse(kept.shouldDismiss)
+
+        let cleared = ChatModelEffortPickerLogic.selectModel(opus, harness: .claudeCode, currentEffort: .xhigh)
+        XCTAssertNil(cleared.effort)
+        XCTAssertFalse(cleared.shouldDismiss)
+
+        let noEfforts = ChatModelEffortPickerLogic.selectModel(haiku, harness: .claudeCode, currentEffort: .medium)
+        XCTAssertNil(noEfforts.effort)
+        XCTAssertTrue(noEfforts.shouldDismiss)
+    }
 }
