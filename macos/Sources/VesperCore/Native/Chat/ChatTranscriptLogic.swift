@@ -1043,3 +1043,53 @@ public enum ChatTranscriptWindow {
         return "Show \(batch) earlier \(unit)"
     }
 }
+
+// MARK: - Smart Scroll-Lock & Jump-to-Bottom Policy
+
+/// Pure scroll-pinning rules for `ChatTranscriptView` so streaming turns and arriving replies
+/// follow along when pinned at the bottom without yanking the person while reading earlier turns.
+public enum ChatScrollLockLogic: Sendable {
+    public static let bottomThreshold: Double = 72
+
+    public static func distanceFromBottom(
+        contentHeight: Double,
+        containerHeight: Double,
+        contentOffsetY: Double,
+        contentInsetBottom: Double = 0
+    ) -> Double {
+        let totalBottom = max(0, contentHeight + contentInsetBottom)
+        let visibleBottom = contentOffsetY + max(0, containerHeight)
+        return max(0, totalBottom - visibleBottom)
+    }
+
+    public static func isNearBottom(
+        distanceFromBottom: Double,
+        threshold: Double = bottomThreshold
+    ) -> Bool {
+        distanceFromBottom <= max(0, threshold)
+    }
+
+    public static func shouldAutoScrollOnNewMessage(
+        isNearBottom: Bool,
+        isUserMessage: Bool
+    ) -> Bool {
+        isUserMessage || isNearBottom
+    }
+
+    public static func shouldAutoScrollOnRunningStart(
+        isNearBottom: Bool,
+        lastMessageIsUser: Bool
+    ) -> Bool {
+        isNearBottom || lastMessageIsUser
+    }
+
+    public static func jumpPillLabel(unreadReplies: Int, isRunning: Bool) -> String {
+        if unreadReplies > 1 {
+            return "\(unreadReplies) new replies"
+        }
+        if unreadReplies == 1 {
+            return "New reply"
+        }
+        return isRunning ? "Follow reply" : "Latest"
+    }
+}

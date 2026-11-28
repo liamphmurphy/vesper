@@ -19,6 +19,7 @@ struct ChatTranscriptView: View {
     var personas: [API.Persona] = []
     var harnessModels: [API.ChatHarnessModels] = []
     var scrollToMessageRequest: ChatScrollMessageRequest?
+    var editLastUserMessageToken: Int = 0
     var isStopping: Bool = false
     var hasPinnedPlanBar: Bool = false
     let onSendReply: @MainActor (String) -> Void
@@ -41,6 +42,8 @@ struct ChatTranscriptView: View {
     @State private var parseCache = ChatParsedMessageCache()
     @State private var windowState = (chatId: "", limit: ChatTranscriptWindow.initialLimit)
     @State private var pendingPrependAnchor: String?
+    @State private var isNearBottom = true
+    @State private var unreadWhileScrolledUp = 0
 
     private var messagesRequest: APIRequest<API.ListChatMessagesResponse> {
         API.listChatMessages(id: chatId, limit: 200)
@@ -245,6 +248,7 @@ struct ChatTranscriptView: View {
                                     onSecondOpinion: onSecondOpinion,
                                     onSelectReplyVariant: onSelectReplyVariant,
                                     onEditLastUserMessage: onEditLastUserMessage,
+                                    editRequestToken: isLastUser ? editLastUserMessageToken : 0,
                                     onRegenerateMessage: onRegenerateMessage,
                                     isReadingAloud: readingMessageId == message.id,
                                     onToggleReadAloud: onToggleReadAloud,
@@ -325,6 +329,43 @@ struct ChatTranscriptView: View {
                         .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86), value: isRunning)
                     }
                     .defaultScrollAnchor(.bottom)
+                    .onScrollGeometryChange(for: Bool.self) { geo in
+                        let distance = ChatScrollLockLogic.distanceFromBottom(
+                            contentHeight: geo.contentSize.height,
+                            containerHeight: geo.containerSize.height,
+                            contentOffsetY: geo.contentOffset.y,
+                            contentInsetBottom: geo.contentInsets.bottom
+                        )
+                        return ChatScrollLockLogic.isNearBottom(distanceFromBottom: distance)
+                    } action: { _, near in
+                        if isNearBottom != near {
+                            isNearBottom = near
+                        }
+                        if near && unreadWhileScrolledUp > 0 {
+                            unreadWhileScrolledUp = 0
+                        }
+                    }
+                    .overlay(alignment: .bottom) {
+                        if !isNearBottom && !messages.isEmpty {
+                            ChatJumpToBottomPill(
+                                label: ChatScrollLockLogic.jumpPillLabel(
+                                    unreadReplies: unreadWhileScrolledUp,
+                                    isRunning: isRunning
+                                ),
+                                hasUnread: unreadWhileScrolledUp > 0,
+                                isRunning: isRunning
+                            ) {
+                                unreadWhileScrolledUp = 0
+                                isNearBottom = true
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                                }
+                            }
+                            .padding(.bottom, 12)
+                            .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
+                        }
+                    }
+                    .animation(reduceMotion ? nil : .easeOut(duration: 0.16), value: isNearBottom)
                     .onChange(of: effectiveLimit) { _, _ in
                         guard let anchorId = pendingPrependAnchor else { return }
                         pendingPrependAnchor = nil
@@ -347,14 +388,30 @@ struct ChatTranscriptView: View {
                     }
                     .onChange(of: messages.last?.id) { oldId, lastId in
                         guard oldId != nil, lastId != nil else { return }
-                        withAnimation(.easeOut(duration: 0.2)) {
-                            proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                        let lastRole = messages.last?.role
+                        let isUser = lastRole == .user
+                        if ChatScrollLockLogic.shouldAutoScrollOnNewMessage(
+                            isNearBottom: isNearBottom,
+                            isUserMessage: isUser
+                        ) {
+                            unreadWhileScrolledUp = 0
+                            withAnimation(.easeOut(duration: 0.2)) {
+                                proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                            }
+                        } else if lastRole == .assistant {
+                            unreadWhileScrolledUp += 1
                         }
                     }
                     .onChange(of: isRunning) { wasRunning, running in
                         if running {
-                            withAnimation(.easeOut(duration: 0.2)) {
-                                proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                            let lastIsUser = messages.last?.role == .user
+                            if ChatScrollLockLogic.shouldAutoScrollOnRunningStart(
+                                isNearBottom: isNearBottom,
+                                lastMessageIsUser: lastIsUser
+                            ) {
+                                withAnimation(.easeOut(duration: 0.2)) {
+                                    proxy.scrollTo("transcript-bottom", anchor: .bottom)
+                                }
                             }
                         } else if wasRunning {
                             let finishedRunId = session?.currentRunId ?? messages.last(where: { $0.runId != nil })?.runId
@@ -400,6 +457,8 @@ struct ChatTranscriptView: View {
         .onChange(of: chatId) { _, _ in
             parseCache.removeAll()
             pendingPrependAnchor = nil
+            isNearBottom = true
+            unreadWhileScrolledUp = 0
         }
         .task(id: chatId) { watch() }
         .task(id: pollId) { await pollWhileActive() }
@@ -532,6 +591,7 @@ private struct ChatMessageRowView: View {
     let onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)?
     let onSelectReplyVariant: (@MainActor (String, Int) -> Void)?
     let onEditLastUserMessage: (@MainActor (String) async -> String?)?
+    var editRequestToken: Int = 0
     let onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)?
     let isReadingAloud: Bool
     let onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)?
@@ -547,6 +607,7 @@ private struct ChatMessageRowView: View {
     @State private var editError: String?
     @State private var regenerating = false
     @State private var hoverState = ChatRowHoverState()
+    @FocusState private var editFieldFocused: Bool
 
     private var isFoldableReply: Bool {
         message.role == .assistant && ChatReplyFoldingLogic.isFoldableReply(displayedBodyMd)
@@ -633,16 +694,14 @@ private struct ChatMessageRowView: View {
 
                                 if isLastUserMessage, onEditLastUserMessage != nil, !isEditingUserMessage {
                                     Button {
-                                        editDraft = parsed.typedBody
-                                        editError = nil
-                                        isEditingUserMessage = true
+                                        beginInlineUserEdit()
                                     } label: {
                                         Image(systemName: "pencil")
                                             .imageScale(.small)
                                             .foregroundStyle(p.tertiaryText)
                                     }
                                     .buttonStyle(.plain)
-                                    .help("Edit message and re-send")
+                                    .help("Edit message and re-send (↑ in empty composer)")
                                 }
 
                                 if let onSaveAsTemplate, !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
@@ -678,6 +737,7 @@ private struct ChatMessageRowView: View {
                                 TextEditor(text: $editDraft)
                                     .font(.system(size: theme.pointSize(.body)))
                                     .scrollContentBackground(.hidden)
+                                    .focused($editFieldFocused)
                                     .frame(minHeight: 64, maxHeight: 220)
                                     .padding(6)
                                     .background(p.background, in: RoundedRectangle(cornerRadius: 8))
@@ -745,6 +805,11 @@ private struct ChatMessageRowView: View {
                         speakerName: speakerName
                     )
                 }
+            }
+            .onChange(of: editRequestToken) { _, token in
+                guard token > 0, isLastUserMessage, onEditLastUserMessage != nil, !isEditingUserMessage else { return }
+                beginInlineUserEdit()
+                onScrollToSelf()
             }
         } else if message.role == .system {
             VStack(alignment: .leading, spacing: 10) {
@@ -1097,6 +1162,15 @@ private struct ChatMessageRowView: View {
         }
     }
 
+    private func beginInlineUserEdit() {
+        editDraft = parsed.typedBody
+        editError = nil
+        isEditingUserMessage = true
+        DispatchQueue.main.async {
+            editFieldFocused = true
+        }
+    }
+
     private func submitUserEdit() {
         guard !editSubmitting, let onEditLastUserMessage else { return }
         let trimmed = editDraft.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -1216,6 +1290,69 @@ private struct ChatMessageRowView: View {
         case .invalidBlock(let kind, let error, let source):
             ChatInvalidBlockView(kind: kind, error: error, source: source)
         }
+    }
+}
+
+// MARK: - Floating Jump-to-Bottom Pill
+
+/// Opaque elevated pill floating above the composer when the person scrolls up in a conversation.
+/// Keeps scrolling silky at 120 Hz (no live backdrop blur) while flagging arriving replies.
+private struct ChatJumpToBottomPill: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let label: String
+    let hasUnread: Bool
+    let isRunning: Bool
+    let action: () -> Void
+
+    @State private var isHovered = false
+
+    var body: some View {
+        let p = theme.palette
+        Button(action: action) {
+            HStack(spacing: 6) {
+                if hasUnread || isRunning {
+                    Circle()
+                        .fill(p.accent)
+                        .frame(width: 6, height: 6)
+                }
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 10.5, weight: .semibold))
+                    .foregroundStyle(hasUnread ? p.accent : p.secondaryText)
+                Text(label)
+                    .font(.system(size: theme.pointSize(.small), weight: .medium))
+                    .foregroundStyle(p.text)
+            }
+            .padding(.horizontal, 12)
+            .padding(.vertical, 6)
+            .background {
+                Capsule()
+                    .fill(
+                        isHovered
+                            ? theme.swiftUIColor("surface-raised", fallback: p.hover)
+                            : theme.swiftUIColor("surface-raised", fallback: p.surface)
+                    )
+                    .shadow(
+                        color: Color.black.opacity(theme.mode == .dark ? 0.34 : 0.14),
+                        radius: isHovered ? 10 : 8,
+                        y: 3
+                    )
+            }
+            .overlay(
+                Capsule()
+                    .stroke(
+                        hasUnread
+                            ? p.accent.opacity(isHovered ? 0.8 : 0.55)
+                            : (isHovered ? p.accent.opacity(0.45) : p.border),
+                        lineWidth: 1
+                    )
+            )
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.12), value: isHovered)
+        .accessibilityLabel("Jump to bottom: \(label)")
     }
 }
 

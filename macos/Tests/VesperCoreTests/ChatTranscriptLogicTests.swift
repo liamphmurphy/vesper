@@ -1133,4 +1133,48 @@ final class ChatTranscriptLogicTests: XCTestCase {
             "Show 30 earlier messages (70 hidden)"
         )
     }
+
+    func testChatScrollLockLogicTracksPinningAndAutoScrollRules() {
+        // Content shorter than container is always pinned at bottom.
+        XCTAssertEqual(
+            ChatScrollLockLogic.distanceFromBottom(contentHeight: 300, containerHeight: 600, contentOffsetY: 0),
+            0
+        )
+        XCTAssertTrue(ChatScrollLockLogic.isNearBottom(distanceFromBottom: 0))
+        XCTAssertTrue(ChatScrollLockLogic.isNearBottom(distanceFromBottom: 72))
+        XCTAssertFalse(ChatScrollLockLogic.isNearBottom(distanceFromBottom: 73))
+
+        // Mid-scroll distance includes bottom inset.
+        let dist = ChatScrollLockLogic.distanceFromBottom(
+            contentHeight: 2000,
+            containerHeight: 600,
+            contentOffsetY: 900,
+            contentInsetBottom: 40
+        )
+        XCTAssertEqual(dist, 540)
+        XCTAssertFalse(ChatScrollLockLogic.isNearBottom(distanceFromBottom: dist))
+
+        // Auto-scroll rules: user messages always scroll; arriving replies only scroll when pinned.
+        XCTAssertTrue(ChatScrollLockLogic.shouldAutoScrollOnNewMessage(isNearBottom: false, isUserMessage: true))
+        XCTAssertTrue(ChatScrollLockLogic.shouldAutoScrollOnNewMessage(isNearBottom: true, isUserMessage: false))
+        XCTAssertFalse(ChatScrollLockLogic.shouldAutoScrollOnNewMessage(isNearBottom: false, isUserMessage: false))
+
+        XCTAssertTrue(ChatScrollLockLogic.shouldAutoScrollOnRunningStart(isNearBottom: true, lastMessageIsUser: false))
+        XCTAssertTrue(ChatScrollLockLogic.shouldAutoScrollOnRunningStart(isNearBottom: false, lastMessageIsUser: true))
+        XCTAssertFalse(ChatScrollLockLogic.shouldAutoScrollOnRunningStart(isNearBottom: false, lastMessageIsUser: false))
+
+        // Jump pill labels reflect unread count and live running state.
+        XCTAssertEqual(ChatScrollLockLogic.jumpPillLabel(unreadReplies: 0, isRunning: false), "Latest")
+        XCTAssertEqual(ChatScrollLockLogic.jumpPillLabel(unreadReplies: 0, isRunning: true), "Follow reply")
+        XCTAssertEqual(ChatScrollLockLogic.jumpPillLabel(unreadReplies: 1, isRunning: false), "New reply")
+        XCTAssertEqual(ChatScrollLockLogic.jumpPillLabel(unreadReplies: 3, isRunning: true), "3 new replies")
+
+        // Image attachment detection for composer thumbnail rendering.
+        let png = ChatComposerAttachment(filename: "shot.png", contentType: "image/png", sizeBytes: 1024)
+        let webp = ChatComposerAttachment(filename: "shot.webp", contentType: "IMAGE/WEBP", sizeBytes: 1024)
+        let pdf = ChatComposerAttachment(filename: "spec.pdf", contentType: "application/pdf", sizeBytes: 1024)
+        XCTAssertTrue(png.isImage)
+        XCTAssertTrue(webp.isImage)
+        XCTAssertFalse(pdf.isImage)
+    }
 }

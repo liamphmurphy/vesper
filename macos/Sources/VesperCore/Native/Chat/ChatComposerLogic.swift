@@ -502,6 +502,8 @@ public struct ChatComposerAttachment: Sendable, Equatable, Identifiable {
 
     public var badge: String { ChatAttachmentRules.badge(for: filename) }
 
+    public var isImage: Bool { contentType.lowercased().hasPrefix("image/") }
+
     public init(
         id: String = UUID().uuidString,
         filename: String,

@@ -68,6 +68,7 @@ struct ChatComposerTextView: NSViewRepresentable {
     let onAttachFiles: @MainActor ([ChatComposerIncomingFile]) -> Void
     var onFocusChange: (@MainActor (Bool) -> Void)? = nil
     var onDragHoverChange: (@MainActor (Bool) -> Void)? = nil
+    var onEditLastUserMessage: (@MainActor () -> Bool)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -246,6 +247,14 @@ struct ChatComposerTextView: NSViewRepresentable {
                     return true
                 default:
                     break
+                }
+            }
+
+            if commandSelector == #selector(NSResponder.moveUp(_:)),
+               textView.string.isEmpty {
+                let flags = (NSApp.currentEvent?.modifierFlags ?? []).intersection(.deviceIndependentFlagsMask)
+                if flags.isEmpty, parent.onEditLastUserMessage?() == true {
+                    return true
                 }
             }
 
