@@ -56,6 +56,7 @@ struct DockedChatView<ContextChips: View>: View {
     @State private var selectedRepoUrl: String?
     @State private var watchedKeys: [QueryKey] = []
     @State private var wasRunning = false
+    @State private var stoppingChatId: String? = nil
     @State private var lastDockFetch = Date()
 
     private var sessionRequest: APIRequest<API.ChatSession>? {
@@ -112,6 +113,9 @@ struct DockedChatView<ContextChips: View>: View {
                         chatId: chatId,
                         session: session,
                         knownPersonaNames: personas.map(\.name),
+                        personas: personas,
+                        isStopping: stoppingChatId == chatId,
+                        hasPinnedPlanBar: livePlanProgress != nil,
                         onSendReply: { reply in
                             Task {
                                 _ = await sendDirectMessage(reply, chatId: chatId)
@@ -203,6 +207,7 @@ struct DockedChatView<ContextChips: View>: View {
         }
         .onChange(of: session?.state == .running) { _, isRunning in
             if wasRunning && !isRunning {
+                if stoppingChatId == chatId { stoppingChatId = nil }
                 onTurnCompleted?()
             }
             wasRunning = isRunning
@@ -502,10 +507,15 @@ struct DockedChatView<ContextChips: View>: View {
     }
 
     private func cancelTurn(chatId: String) async {
-        _ = try? await context.store.mutate(
-            API.cancelChatTurn(id: chatId),
-            invalidating: QueryInvalidation(resources: ["chats"])
-        )
+        stoppingChatId = chatId
+        do {
+            _ = try await context.store.mutate(
+                API.cancelChatTurn(id: chatId),
+                invalidating: QueryInvalidation(resources: ["chats"])
+            )
+        } catch {
+            if stoppingChatId == chatId { stoppingChatId = nil }
+        }
     }
 
     private func setRepository(_ repoUrl: String, chatId: String) async -> String? {

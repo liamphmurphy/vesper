@@ -37,6 +37,7 @@ final class ChatScreenModel {
     var threadMessageId: String?
     var forceShowCode = false
     var startingPlayground = false
+    var stoppingChatId: String? = nil
     var scrollToMessageRequest: ChatScrollMessageRequest?
     @ObservationIgnored var scrollToken = 0
     var theme: ThemeTokens = ThemeTokens(mode: .light)
@@ -212,7 +213,8 @@ struct ChatScreen: View {
                             session: session,
                             personas: personas,
                             activePersona: activePersona,
-                            harnessModels: harnessModels
+                            harnessModels: harnessModels,
+                            hasPinnedPlanBar: livePlanProgress != nil
                         )
                     } else {
                         emptyChatView(
@@ -352,7 +354,13 @@ struct ChatScreen: View {
         .onChange(of: chatId) { oldId, newId in
             if oldId != newId {
                 model.resetInspectorForChatSwitch()
+                if model.stoppingChatId == oldId { model.stoppingChatId = nil }
                 applyInspectorQuery(context.match.query, canvases: canvases)
+            }
+        }
+        .onChange(of: session?.state) { _, state in
+            if state != .running, model.stoppingChatId == chatId {
+                model.stoppingChatId = nil
             }
         }
         .onChange(of: context.match.query, initial: true) { _, query in
@@ -481,7 +489,8 @@ struct ChatScreen: View {
         session: API.ChatSession?,
         personas: [API.Persona],
         activePersona: API.Persona?,
-        harnessModels: [API.ChatHarnessModels]
+        harnessModels: [API.ChatHarnessModels],
+        hasPinnedPlanBar: Bool
     ) -> some View {
         ChatTranscriptView(
             chatId: chatId,
@@ -490,6 +499,8 @@ struct ChatScreen: View {
             personas: personas,
             harnessModels: harnessModels,
             scrollToMessageRequest: model.scrollToMessageRequest,
+            isStopping: model.stoppingChatId == chatId,
+            hasPinnedPlanBar: hasPinnedPlanBar,
             onSendReply: { body in
                 Task { _ = await sendMessage(body, activePersona: activePersona) }
             },
@@ -1355,10 +1366,17 @@ struct ChatScreen: View {
 
     private func cancelActiveTurn() async {
         guard let chatId else { return }
-        _ = try? await context.store.mutate(
-            API.cancelChatTurn(id: chatId),
-            invalidating: QueryInvalidation(resources: ["chats"])
-        )
+        model.stoppingChatId = chatId
+        do {
+            _ = try await context.store.mutate(
+                API.cancelChatTurn(id: chatId),
+                invalidating: QueryInvalidation(resources: ["chats"])
+            )
+        } catch {
+            if model.stoppingChatId == chatId {
+                model.stoppingChatId = nil
+            }
+        }
     }
 
     private func archiveChat(id: String, archived: Bool) {

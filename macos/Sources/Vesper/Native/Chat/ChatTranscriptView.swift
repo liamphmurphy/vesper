@@ -11,6 +11,7 @@ struct ChatScrollMessageRequest: Equatable {
 struct ChatTranscriptView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     let chatId: String
     let session: API.ChatSession?
@@ -18,6 +19,8 @@ struct ChatTranscriptView: View {
     var personas: [API.Persona] = []
     var harnessModels: [API.ChatHarnessModels] = []
     var scrollToMessageRequest: ChatScrollMessageRequest?
+    var isStopping: Bool = false
+    var hasPinnedPlanBar: Bool = false
     let onSendReply: @MainActor (String) -> Void
     var onQuoteMessage: (@MainActor (String, String?) -> Void)? = nil
     var onOpenThread: (@MainActor (String) -> Void)? = nil
@@ -25,6 +28,7 @@ struct ChatTranscriptView: View {
     var onSaveWiki: (@MainActor (API.ChatMessage) -> Void)? = nil
     var onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)? = nil
 
+    @Namespace private var activityMorphNamespace
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
     @State private var windowState = (chatId: "", limit: ChatTranscriptWindow.initialLimit)
@@ -174,6 +178,7 @@ struct ChatTranscriptView: View {
                                 let persona = message.persona ?? session?.persona
                                 let speakerName = persona?.name ?? session?.agent.name ?? "Assistant"
                                 let isFindCurrent = !context.find.query.isEmpty && context.find.current == rowOffset
+                                let isLastMessage = idx == messages.count - 1
                                 ChatMessageRowView(
                                     chatId: chatId,
                                     message: message,
@@ -191,6 +196,7 @@ struct ChatTranscriptView: View {
                                     personas: personas,
                                     harnessModels: harnessModels,
                                     findRow: rowOffset,
+                                    morphNamespace: isLastMessage ? activityMorphNamespace : nil,
                                     onSendReply: onSendReply,
                                     onQuoteMessage: onQuoteMessage,
                                     onOpenThread: onOpenThread,
@@ -240,8 +246,14 @@ struct ChatTranscriptView: View {
                                     since: liveSince,
                                     waitingForMessages: waitingForMessages,
                                     speaker: session?.speaker ?? session?.persona,
-                                    fallbackSpeakerName: session?.agent.name ?? "Assistant"
+                                    personas: personas,
+                                    fallbackSpeakerName: session?.agent.name ?? "Assistant",
+                                    isStopping: isStopping,
+                                    hasPinnedPlanBar: hasPinnedPlanBar,
+                                    morphId: liveSince.map { "turn-card-\($0)" },
+                                    morphNamespace: activityMorphNamespace
                                 )
+                                .transition(reduceMotion ? .opacity : .opacity.combined(with: .scale(scale: 0.985, anchor: .top)))
                                 .id("live-activity")
                                 ChatLiveAsidesView(parentChatId: chatId, asides: liveAsides)
                             }
@@ -263,6 +275,7 @@ struct ChatTranscriptView: View {
                         .padding(.vertical, 20)
                         .frame(maxWidth: 860, alignment: .leading)
                         .frame(maxWidth: .infinity)
+                        .animation(reduceMotion ? nil : .spring(response: 0.34, dampingFraction: 0.86), value: isRunning)
                     }
                     .defaultScrollAnchor(.bottom)
                     .onChange(of: effectiveLimit) { _, _ in
@@ -456,6 +469,7 @@ private struct ChatMessageRowView: View {
     let personas: [API.Persona]
     let harnessModels: [API.ChatHarnessModels]
     let findRow: Int
+    var morphNamespace: Namespace.ID? = nil
     let onSendReply: @MainActor (String) -> Void
     let onQuoteMessage: (@MainActor (String, String?) -> Void)?
     let onOpenThread: (@MainActor (String) -> Void)?
@@ -652,7 +666,9 @@ private struct ChatMessageRowView: View {
                             outcome: .done,
                             since: turnWindow.since,
                             until: message.createdAt,
-                            end: APIDate.epoch(message.createdAt)
+                            end: APIDate.epoch(message.createdAt),
+                            morphId: turnWindow.since.map { "turn-card-\($0)" },
+                            morphNamespace: morphNamespace
                         )
                     }
 
@@ -921,616 +937,6 @@ private struct ChatMessageRowView: View {
             )
         case .invalidBlock(let kind, let error, let source):
             ChatInvalidBlockView(kind: kind, error: error, source: source)
-        }
-    }
-}
-
-// MARK: - Finished Working Card in History
-
-/// What the live working card leaves behind in chat history once a turn finishes (or stops/fails):
-/// a compact one-line strip ("Worked for 2m 14s · Thought for 32s · 7 steps") that expands in place to show the
-/// turn's steps, plus an inline collapsible thinking disclosure block when `showLiveThinking` is enabled.
-/// Plain replies with no tool work render no working strip (though they still show finished thinking blocks
-/// when `showLiveThinking` is on).
-private struct ChatTurnStepsCardView: View {
-    @Environment(NativeScreenContext.self) private var context
-    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
-
-    let runId: String
-    let outcome: ChatTurnOutcome
-    let since: String?
-    let until: String?
-    let end: TimeInterval?
-
-    var body: some View {
-        let events = context.store.entry(API.listRunEvents(id: runId)).data?.events ?? []
-        let turn = ChatTurnActivity.finishedTurn(
-            events: events.map(ChatRunEvent.init),
-            outcome: outcome,
-            since: since,
-            until: until,
-            end: end
-        )
-        let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
-        if showThinking || !turn.steps.isEmpty {
-            VStack(alignment: .leading, spacing: 6) {
-                if showThinking {
-                    ChatFinishedThinkingDisclosureView(
-                        blocks: turn.thinkingBlocks,
-                        thinkingDurationMs: turn.thinkingDurationMs
-                    )
-                }
-                if !turn.steps.isEmpty {
-                    ChatFinishedTurnCardView(turn: turn, outcome: outcome)
-                }
-            }
-        }
-    }
-}
-
-/// Renders a finished working card with persona identity for turns that ended without a reply
-/// (failed or stopped/interrupted). Renders nothing if the turn did no tool work and has no visible thinking.
-private struct ChatEndedTurnSectionView: View {
-    @Environment(NativeScreenContext.self) private var context
-    @Environment(\.vesperTheme) private var theme
-    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
-
-    let runId: String
-    let ended: ChatEndedTurn
-    let personaId: String?
-    let speakerName: String
-
-    var body: some View {
-        let events = context.store.entry(API.listRunEvents(id: runId)).data?.events ?? []
-        let turn = ChatTurnActivity.finishedTurn(
-            events: events.map(ChatRunEvent.init),
-            outcome: ended.outcome,
-            since: ended.since,
-            until: ended.until,
-            end: ended.end
-        )
-        let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
-
-        if showThinking || !turn.steps.isEmpty {
-            VStack(alignment: .leading, spacing: 8) {
-                HStack(spacing: 8) {
-                    WorkPersonaAvatarView(
-                        id: personaId,
-                        handle: nil,
-                        name: speakerName,
-                        size: 24,
-                        preferCharacter: true
-                    )
-                    Text(speakerName)
-                        .font(.system(size: theme.pointSize(.body), weight: .semibold))
-                        .foregroundStyle(theme.palette.text)
-                }
-                VStack(alignment: .leading, spacing: 6) {
-                    if showThinking {
-                        ChatFinishedThinkingDisclosureView(
-                            blocks: turn.thinkingBlocks,
-                            thinkingDurationMs: turn.thinkingDurationMs
-                        )
-                    }
-                    if !turn.steps.isEmpty {
-                        ChatFinishedTurnCardView(turn: turn, outcome: ended.outcome)
-                    }
-                }
-                .padding(.leading, 32)
-            }
-        }
-    }
-}
-
-/// Clean collapsible disclosure block for a finished turn's reasoning blocks when `showLiveThinking` is on.
-private struct ChatFinishedThinkingDisclosureView: View {
-    @Environment(\.vesperTheme) private var theme
-
-    let blocks: [ChatThinkingBlock]
-    let thinkingDurationMs: Int?
-
-    @State private var isExpanded = false
-
-    var body: some View {
-        let p = theme.palette
-        let title: String = {
-            if let ms = thinkingDurationMs, ms >= 1000 {
-                return "Thought for \(ChatTurnActivity.formatSpan(ms: ms))"
-            }
-            return "Thinking"
-        }()
-
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "brain.head.profile")
-                        .imageScale(.small)
-                        .foregroundStyle(p.tertiaryText)
-                    Text(title)
-                        .font(.system(size: theme.pointSize(.small), weight: .medium))
-                        .foregroundStyle(p.secondaryText)
-                        .lineLimit(1)
-                    if blocks.count > 1 {
-                        Text("· \(blocks.count) blocks")
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(p.tertiaryText)
-                    }
-                    Spacer(minLength: 12)
-                    HStack(spacing: 4) {
-                        Text(isExpanded ? "Hide" : "Show")
-                        Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                            .font(.system(size: 9, weight: .semibold))
-                    }
-                    .font(.system(size: theme.pointSize(.micro)))
-                    .foregroundStyle(p.tertiaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                Divider()
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 10) {
-                        ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
-                            if idx > 0 {
-                                Divider()
-                            }
-                            Text(block.text)
-                                .font(.system(size: theme.pointSize(.small)))
-                                .foregroundStyle(p.secondaryText)
-                                .textSelection(.enabled)
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                                .fixedSize(horizontal: false, vertical: true)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 10)
-                }
-                .frame(maxHeight: 280)
-            }
-        }
-        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-    }
-}
-
-/// Live inline reasoning panel shown inside the running turn when `showLiveThinking` is enabled.
-private struct ChatLiveThinkingStreamView: View {
-    @Environment(\.vesperTheme) private var theme
-
-    let blocks: [ChatThinkingBlock]
-    let activeDetail: String?
-    let isActivelyThinking: Bool
-    let thinkingDurationMs: Int
-
-    @State private var isExpanded = true
-
-    var body: some View {
-        let p = theme.palette
-        let headerTitle = isActivelyThinking ? "Thinking…" : "Thought"
-
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                withAnimation(.easeInOut(duration: 0.15)) {
-                    isExpanded.toggle()
-                }
-            } label: {
-                HStack(spacing: 7) {
-                    Image(systemName: "brain.head.profile")
-                        .imageScale(.small)
-                        .foregroundStyle(isActivelyThinking ? p.accent : p.tertiaryText)
-                    Text(headerTitle)
-                        .font(.system(size: theme.pointSize(.small), weight: .semibold))
-                        .foregroundStyle(isActivelyThinking ? p.text : p.secondaryText)
-                    if thinkingDurationMs >= 1000 {
-                        Text(ChatTurnActivity.formatSpan(ms: thinkingDurationMs))
-                            .font(.system(size: theme.pointSize(.micro), design: .monospaced))
-                            .foregroundStyle(p.tertiaryText)
-                    }
-                    if !isExpanded, let activeDetail, !activeDetail.isEmpty {
-                        Text("· \(activeDetail)")
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(p.tertiaryText)
-                            .lineLimit(1)
-                    }
-                    Spacer(minLength: 8)
-                    Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(p.tertiaryText)
-                }
-                .padding(.horizontal, 12)
-                .padding(.vertical, 7)
-                .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-
-            if isExpanded {
-                Divider()
-                ScrollViewReader { proxy in
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 8) {
-                            ForEach(Array(blocks.enumerated()), id: \.element.id) { idx, block in
-                                if idx > 0 {
-                                    Divider()
-                                }
-                                Text(block.text)
-                                    .font(.system(size: theme.pointSize(.small)))
-                                    .foregroundStyle(p.secondaryText)
-                                    .textSelection(.enabled)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                    .fixedSize(horizontal: false, vertical: true)
-                            }
-                            if isActivelyThinking {
-                                HStack(spacing: 6) {
-                                    Circle()
-                                        .fill(p.accent)
-                                        .frame(width: 5, height: 5)
-                                    Text(activeDetail?.isEmpty == false ? activeDetail! : "Reasoning…")
-                                        .font(.system(size: theme.pointSize(.small)))
-                                        .italic()
-                                        .foregroundStyle(p.tertiaryText)
-                                        .lineLimit(2)
-                                }
-                                .id("live-thinking-tail")
-                            }
-                        }
-                        .padding(.horizontal, 12)
-                        .padding(.vertical, 8)
-                    }
-                    .frame(maxHeight: 220)
-                    .onChange(of: blocks.count) { _, _ in
-                        if let last = blocks.last {
-                            proxy.scrollTo(last.id, anchor: .bottom)
-                        }
-                    }
-                }
-            }
-        }
-        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface).opacity(0.85), in: RoundedRectangle(cornerRadius: 10))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10)
-                .stroke(isActivelyThinking ? p.accent.opacity(0.35) : p.border)
-        )
-    }
-}
-
-private struct ChatFinishedTurnCardView: View {
-    @Environment(\.vesperTheme) private var theme
-
-    let turn: ChatFinishedTurn
-    let outcome: ChatTurnOutcome
-
-    @State private var isExpanded: Bool
-    @State private var showAllEarlier = false
-
-    init(turn: ChatFinishedTurn, outcome: ChatTurnOutcome) {
-        self.turn = turn
-        self.outcome = outcome
-        self._isExpanded = State(initialValue: outcome == .failed)
-    }
-
-    var body: some View {
-        let p = theme.palette
-        let failureFold = outcome == .failed && !showAllEarlier
-            ? ChatTurnActivity.foldStepsFromFailure(turn.steps)
-            : (earlier: 0, shown: turn.steps)
-        let summary = ChatTurnActivity.finishedSummary(
-            outcome: outcome,
-            stepCount: turn.steps.count,
-            durationMs: turn.durationMs,
-            thinkingDurationMs: turn.thinkingDurationMs
-        )
-
-        VStack(alignment: .leading, spacing: 6) {
-            VStack(alignment: .leading, spacing: 0) {
-                Button {
-                    withAnimation(.easeInOut(duration: 0.15)) {
-                        isExpanded.toggle()
-                    }
-                } label: {
-                    HStack(spacing: 8) {
-                        Image(systemName: outcomeIcon)
-                            .imageScale(.small)
-                            .foregroundStyle(outcomeColor(palette: p))
-                        Text(summary)
-                            .font(.system(size: theme.pointSize(.small)))
-                            .foregroundStyle(p.secondaryText)
-                            .lineLimit(1)
-                        Spacer(minLength: 12)
-                        HStack(spacing: 4) {
-                            Text(isExpanded ? "Hide steps" : "Show steps")
-                            Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                                .font(.system(size: 9, weight: .semibold))
-                        }
-                        .font(.system(size: theme.pointSize(.micro)))
-                        .foregroundStyle(p.tertiaryText)
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                    .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-
-                if isExpanded {
-                    Divider()
-                    VStack(alignment: .leading, spacing: 4) {
-                        if failureFold.earlier > 0 {
-                            Button("Show \(failureFold.earlier) earlier step\(failureFold.earlier == 1 ? "" : "s")") {
-                                showAllEarlier = true
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(p.accent)
-                        }
-                        ForEach(failureFold.shown, id: \.key) { step in
-                            ChatTurnStepRowView(step: step)
-                        }
-                    }
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 8)
-                }
-            }
-            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(
-                RoundedRectangle(cornerRadius: 10)
-                    .stroke(outcome == .failed ? theme.swiftUIColor("pill-blocked-fg", fallback: .red).opacity(0.4) : p.border)
-            )
-
-            if outcome == .stopped {
-                Text("Stopped before it replied.")
-                    .font(.system(size: theme.pointSize(.micro)))
-                    .italic()
-                    .foregroundStyle(p.tertiaryText)
-            }
-        }
-    }
-
-    private var outcomeIcon: String {
-        switch outcome {
-        case .done: "checkmark.circle.fill"
-        case .failed: "xmark.circle.fill"
-        case .stopped: "pause.circle.fill"
-        }
-    }
-
-    private func outcomeColor(palette p: NativePalette) -> Color {
-        switch outcome {
-        case .done: .green
-        case .failed: .red
-        case .stopped: p.tertiaryText
-        }
-    }
-}
-
-private struct ChatTurnStepRowView: View {
-    @Environment(\.vesperTheme) private var theme
-
-    let step: ChatTurnStep
-
-    var body: some View {
-        let p = theme.palette
-        HStack(spacing: 6) {
-            Image(systemName: stepIcon(step.state))
-                .imageScale(.small)
-                .foregroundStyle(stepColor(step.state, palette: p))
-            Text(step.title)
-                .font(.system(size: theme.pointSize(.small)))
-                .foregroundStyle(step.state == .planned ? p.tertiaryText : p.secondaryText)
-            if let detail = step.detail, !detail.isEmpty {
-                Text("· \(detail)")
-                    .font(.system(size: theme.pointSize(.micro)))
-                    .foregroundStyle(p.tertiaryText)
-                    .lineLimit(1)
-            }
-            if step.state != .active, let started = step.startedAt, let ended = step.endedAt {
-                let ms = Int((ended - started) * 1000)
-                if ms >= 1000 {
-                    Spacer(minLength: 6)
-                    Text(ChatTurnActivity.formatSpan(ms: ms))
-                        .font(.system(size: theme.pointSize(.micro), design: .monospaced))
-                        .foregroundStyle(p.tertiaryText)
-                }
-            }
-        }
-    }
-
-    private func stepIcon(_ state: ChatStepState) -> String {
-        switch state {
-        case .done: "checkmark.circle.fill"
-        case .active: "circle.dotted"
-        case .failed: "xmark.circle.fill"
-        case .planned: "circle"
-        }
-    }
-
-    private func stepColor(_ state: ChatStepState, palette p: NativePalette) -> Color {
-        switch state {
-        case .done: .green
-        case .active: p.accent
-        case .failed: .red
-        case .planned: p.tertiaryText
-        }
-    }
-}
-
-// MARK: - Isolated Live Work / Thinking Card
-
-/// Owns the live run-event observation and 1.5s timer so polling ticks only re-render this card
-/// instead of every message row in the transcript above it.
-private struct ChatLiveActivityCardView: View {
-    @Environment(NativeScreenContext.self) private var context
-    @Environment(\.vesperTheme) private var theme
-    @AppStorage(ChatLiveThinkingPreference.defaultsKey) private var showLiveThinking = false
-
-    let chatId: String
-    let runId: String?
-    let since: String?
-    let waitingForMessages: Bool
-    let speaker: API.PersonaSummary?
-    let fallbackSpeakerName: String
-
-    @State private var watchedKey: QueryKey?
-    @State private var now = Date()
-    @State private var showAllSteps = false
-
-    private var runEventsRequest: APIRequest<API.RunEventList>? {
-        guard let runId, !runId.isEmpty else { return nil }
-        return ChatTurnActivity.liveEventsRequest(runId: runId, since: since)
-    }
-
-    var body: some View {
-        let p = theme.palette
-        let events = waitingForMessages ? [] : (runEventsRequest.flatMap { context.store.entry($0).data?.events } ?? [])
-        let activity = ChatTurnActivity.fold(events: events.map(ChatRunEvent.init), since: since, now: now)
-        let speakerName = speaker?.name ?? fallbackSpeakerName
-        let folded = ChatTurnActivity.foldSteps(activity.steps)
-        let displaySteps = showAllSteps ? activity.steps : folded.shown
-        // Observed by `ChatTranscriptProposalsSlot`; the API lists only pending approvals.
-        let awaiting = !(context.store.entry(API.listChatToolApprovals(id: chatId)).data?.approvals.isEmpty ?? true)
-        let characterState = CharacterState.forActivity(activity.status.kind, awaiting: awaiting)
-        let liveTimerMs = activity.phaseElapsedMs ?? activity.elapsedMs
-        let secondaryTimingLine: String? = {
-            var parts: [String] = []
-            if let total = activity.elapsedMs, let phase = activity.phaseElapsedMs, total - phase >= 1000 {
-                parts.append("Total \(ChatTurnActivity.formatSpan(ms: total))")
-            }
-            if activity.thinkingDurationMs >= 1000 {
-                let isSameAsLiveTimer = activity.timingPhase == .thinking
-                    && activity.phaseElapsedMs.map { abs(activity.thinkingDurationMs - $0) < 1000 } == true
-                if !isSameAsLiveTimer {
-                    parts.append("Thought for \(ChatTurnActivity.formatSpan(ms: activity.thinkingDurationMs))")
-                }
-            }
-            return parts.isEmpty ? nil : parts.joined(separator: " · ")
-        }()
-        let activeThinkingDetail: String? = {
-            if case .thinking(let detail) = activity.activePhase { return detail }
-            return nil
-        }()
-        let shouldShowLiveThinking = showLiveThinking && (!activity.thinkingBlocks.isEmpty || activity.timingPhase == .thinking)
-
-        VStack(alignment: .leading, spacing: 8) {
-            VStack(alignment: .leading, spacing: 10) {
-                HStack(alignment: .center, spacing: 12) {
-                    WorkPersonaAvatarView(
-                        id: speaker?.id,
-                        handle: nil,
-                        name: speakerName,
-                        size: 32,
-                        state: characterState,
-                        active: true,
-                        preferCharacter: true
-                    )
-                    ActivitySceneView(kind: activity.status.kind, width: 112, height: 54)
-                    VStack(alignment: .leading, spacing: 3) {
-                        HStack(spacing: 6) {
-                            Text("\(speakerName) is \(activity.status.phrase)…")
-                                .font(.system(size: theme.pointSize(.body), weight: .semibold))
-                                .foregroundStyle(p.text)
-                            if let liveTimerMs {
-                                Text(ChatTurnActivity.formatSpan(ms: liveTimerMs))
-                                    .font(.system(size: theme.pointSize(.small), design: .monospaced))
-                                    .foregroundStyle(p.tertiaryText)
-                            }
-                        }
-                        if let secondaryTimingLine {
-                            Text(secondaryTimingLine)
-                                .font(.system(size: theme.pointSize(.micro), design: .monospaced))
-                                .foregroundStyle(p.tertiaryText)
-                                .lineLimit(1)
-                        }
-                        if let opening = activity.openingLine, !opening.isEmpty {
-                            Text(opening)
-                                .font(.system(size: theme.pointSize(.small)))
-                                .foregroundStyle(p.secondaryText)
-                                .lineLimit(2)
-                        }
-                        if activity.quiet {
-                            Text("Still working — no new events for a bit.")
-                                .font(.system(size: theme.pointSize(.micro)))
-                                .foregroundStyle(theme.swiftUIColor("state-human", fallback: .orange))
-                        }
-                    }
-                    Spacer(minLength: 8)
-                }
-
-                if !displaySteps.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
-                        if !showAllSteps && folded.earlier > 0 {
-                            Button("Show \(folded.earlier) earlier step\(folded.earlier == 1 ? "" : "s")") {
-                                showAllSteps = true
-                            }
-                            .buttonStyle(.plain)
-                            .font(.system(size: theme.pointSize(.micro)))
-                            .foregroundStyle(p.accent)
-                        }
-                        ForEach(displaySteps, id: \.key) { step in
-                            ChatTurnStepRowView(step: step)
-                        }
-                    }
-                    .padding(.leading, 4)
-                }
-            }
-            .padding(12)
-            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-
-            if shouldShowLiveThinking {
-                ChatLiveThinkingStreamView(
-                    blocks: activity.thinkingBlocks,
-                    activeDetail: activeThinkingDetail,
-                    isActivelyThinking: activity.timingPhase == .thinking,
-                    thinkingDurationMs: activity.thinkingDurationMs
-                )
-            }
-        }
-        // The chat's persona companion acts out what this card shows, and idles once it's gone.
-        .onChange(of: characterState, initial: true) { _, next in
-            ChatCompanions.companion(for: chatId).work = next
-        }
-        .onDisappear { ChatCompanions.companion(for: chatId).work = nil }
-        .onChange(of: since) { _, _ in
-            showAllSteps = false
-            now = Date()
-        }
-        .task(id: "\(runId ?? "")|\(since ?? "")") {
-            watchRunEvents()
-            await pollRunEvents()
-        }
-        .onDisappear {
-            if let watchedKey {
-                context.store.stopObserving(watchedKey)
-                self.watchedKey = nil
-            }
-        }
-    }
-
-    private func watchRunEvents() {
-        if let watchedKey {
-            context.store.stopObserving(watchedKey)
-            self.watchedKey = nil
-        }
-        guard let req = runEventsRequest else { return }
-        context.store.observe(req)
-        context.store.load(req)
-        watchedKey = req.key
-    }
-
-    private func pollRunEvents() async {
-        while !Task.isCancelled {
-            try? await Task.sleep(for: .milliseconds(1500))
-            guard !Task.isCancelled else { return }
-            now = Date()
-            if let req = runEventsRequest {
-                _ = await context.store.refetch(req)
-            }
         }
     }
 }

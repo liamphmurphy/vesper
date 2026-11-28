@@ -10,6 +10,7 @@ struct ScenesDebugScreen: View {
 
     @State private var selectedKind: ActivitySceneKind = .thinking
     @State private var isStopping = false
+    @State private var useDioramaStage = true
     @State private var characterState: CharacterState = .idle
     @State private var characterColor = "#A3A6FF"
 
@@ -70,11 +71,11 @@ struct ScenesDebugScreen: View {
 
             ViewThatFits(in: .horizontal) {
                 HStack(spacing: 16) {
-                    ActivitySceneView(kind: selectedKind, stopping: isStopping)
+                    labStagePreview
                     transitionLabDetails
                 }
                 VStack(alignment: .leading, spacing: 12) {
-                    ActivitySceneView(kind: selectedKind, stopping: isStopping)
+                    labStagePreview
                     transitionLabDetails
                 }
             }
@@ -84,18 +85,40 @@ struct ScenesDebugScreen: View {
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(theme.palette.border))
     }
 
+    @ViewBuilder
+    private var labStagePreview: some View {
+        let tint = Color(cssHex: characterColor) ?? theme.palette.accent
+        if useDioramaStage {
+            ActivitySceneView(
+                kind: selectedKind,
+                stopping: isStopping,
+                width: 136,
+                height: 76,
+                stageStyle: .diorama(tint: tint, ambientPulse: !isStopping)
+            )
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(tint.opacity(0.3), lineWidth: 1))
+        } else {
+            ActivitySceneView(kind: selectedKind, stopping: isStopping)
+        }
+    }
+
     private var transitionLabHeaderText: some View {
         VStack(alignment: .leading, spacing: 2) {
             Text("Stage transitions & wind-down").vesperText(.heading, theme)
-            Text("800ms hold, rapid-click transient skip, 240ms crossfade, 600ms linear coast to stop")
+            Text("60fps diorama stage, 800ms hold, rapid-click transient skip, 240ms crossfade + scale settle, 600ms wind-down")
                 .vesperText(.small, theme)
                 .foregroundStyle(theme.palette.secondaryText)
         }
     }
 
     private var stoppingToggle: some View {
-        Toggle("Stopping (600ms wind-down)", isOn: $isStopping)
-            .toggleStyle(.switch)
+        HStack(spacing: 14) {
+            Toggle("Diorama stage", isOn: $useDioramaStage)
+                .toggleStyle(.switch)
+            Toggle("Stopping (600ms wind-down)", isOn: $isStopping)
+                .toggleStyle(.switch)
+        }
     }
 
     private var transitionLabDetails: some View {
