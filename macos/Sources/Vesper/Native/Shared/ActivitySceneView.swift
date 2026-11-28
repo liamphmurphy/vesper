@@ -9,7 +9,9 @@ enum ActivitySceneStageStyle: Equatable {
     case bare
     /// Flush full-height lit mini-diorama stage embedded inside a live activity card:
     /// subtle architectural dot grid, radial ambient bloom tinted by `tint`, and top specular hairline.
-    case diorama(tint: Color, ambientPulse: Bool = true)
+    /// Set `fillWidth: true` when an enclosing layout proposes the stage's exact width so both
+    /// side-by-side columns and stacked narrow banners fill edge-to-edge.
+    case diorama(tint: Color, ambientPulse: Bool = true, fillWidth: Bool = false)
 }
 
 /// Native SwiftUI Canvas / CoreGraphics stage rendering any `ActivitySceneKind` with
@@ -49,14 +51,35 @@ struct ActivitySceneView: View {
         let tickInterval = AnimationPolicy.activitySceneTickInterval(lowPowerMode: power.isLowPowerMode)
 
         Group {
-            if animate {
-                TimelineView(.periodic(from: start, by: tickInterval)) { timeline in
-                    let _ = staticTick
-                    stagedScene(at: timeline.date.timeIntervalSinceReferenceDate, palette: palette)
-                }
-            } else {
-                let _ = staticTick
-                stagedScene(at: Date.timeIntervalSinceReferenceDate, palette: palette)
+            switch resolvedStageStyle {
+            case .boxed:
+                timedCanvas(animate: animate, tickInterval: tickInterval, palette: palette)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 3)
+                    .frame(width: width, height: height)
+                    .background(
+                        RoundedRectangle(cornerRadius: 9)
+                            .fill(theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface))
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 9)
+                            .stroke(theme.swiftUIColor("border-subtle", fallback: theme.palette.border), lineWidth: 1)
+                    )
+                    .clipShape(RoundedRectangle(cornerRadius: 9))
+
+            case .bare:
+                timedCanvas(animate: animate, tickInterval: tickInterval, palette: palette)
+                    .frame(width: width, height: height)
+
+            case .diorama(let tint, let ambientPulse, let fillWidth):
+                dioramaStage(
+                    tint: tint,
+                    ambientPulse: ambientPulse,
+                    fillWidth: fillWidth,
+                    animate: animate,
+                    tickInterval: tickInterval,
+                    palette: palette
+                )
             }
         }
         .opacity(stopping ? 0.55 : 1)
@@ -95,77 +118,119 @@ struct ActivitySceneView: View {
     }
 
     @ViewBuilder
-    private func stagedScene(at now: Double, palette: ActivityScenePalette) -> some View {
-        switch resolvedStageStyle {
-        case .boxed:
-            sceneCanvas(at: now, palette: palette)
-                .padding(.horizontal, 4)
-                .padding(.vertical, 3)
-                .frame(width: width, height: height)
-                .background(
-                    RoundedRectangle(cornerRadius: 9)
-                        .fill(theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 9)
-                        .stroke(theme.swiftUIColor("border-subtle", fallback: theme.palette.border), lineWidth: 1)
-                )
-                .clipShape(RoundedRectangle(cornerRadius: 9))
+    private func timedCanvas(
+        animate: Bool,
+        tickInterval: TimeInterval,
+        palette: ActivityScenePalette
+    ) -> some View {
+        if animate {
+            TimelineView(.periodic(from: start, by: tickInterval)) { timeline in
+                let _ = staticTick
+                sceneCanvas(at: timeline.date.timeIntervalSinceReferenceDate, palette: palette)
+            }
+        } else {
+            let _ = staticTick
+            sceneCanvas(at: Date.timeIntervalSinceReferenceDate, palette: palette)
+        }
+    }
 
-        case .bare:
-            sceneCanvas(at: now, palette: palette)
-                .frame(width: width, height: height)
+    /// Static diorama layers (sunken fill, architectural dot grid, top hairline) stay outside
+    /// `TimelineView` so only the breathing bloom and scene canvas repaint at 60 fps.
+    private func dioramaStage(
+        tint: Color,
+        ambientPulse: Bool,
+        fillWidth: Bool,
+        animate: Bool,
+        tickInterval: TimeInterval,
+        palette: ActivityScenePalette
+    ) -> some View {
+        let isDark = theme.mode == .dark
+        return ZStack {
+            theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface)
 
-        case .diorama(let tint, let ambientPulse):
-            let isDark = theme.mode == .dark
-            let pulseWave: Double = (ambientPulse && !reduceMotion && !stopping)
-                ? (0.5 + 0.5 * sin(now * 1.45))
-                : 0.35
-            let bloomPeak = (isDark ? 0.18 : 0.11) + (isDark ? 0.08 : 0.05) * pulseWave
-
-            ZStack {
-                theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface)
-
-                // Architectural micro dot-grid backdrop
-                Canvas { ctx, size in
-                    let step: CGFloat = 10
-                    let dotColor = (isDark ? Color.white : Color.black).opacity(isDark ? 0.045 : 0.04)
-                    let cols = Int(size.width / step)
-                    let rows = Int(size.height / step)
-                    let offsetX = (size.width - CGFloat(cols) * step) * 0.5
-                    let offsetY = (size.height - CGFloat(rows) * step) * 0.5
-                    for row in 0...rows {
-                        for col in 0...cols {
-                            let x = offsetX + CGFloat(col) * step
-                            let y = offsetY + CGFloat(row) * step
-                            ctx.fill(Path(ellipseIn: CGRect(x: x - 0.5, y: y - 0.5, width: 1, height: 1)), with: .color(dotColor))
-                        }
+            // Static architectural micro dot-grid backdrop
+            Canvas { ctx, size in
+                let step: CGFloat = 10
+                let dotColor = (isDark ? Color.white : Color.black).opacity(isDark ? 0.045 : 0.04)
+                let cols = Int(size.width / step)
+                let rows = Int(size.height / step)
+                let offsetX = (size.width - CGFloat(cols) * step) * 0.5
+                let offsetY = (size.height - CGFloat(rows) * step) * 0.5
+                for row in 0...rows {
+                    for col in 0...cols {
+                        let x = offsetX + CGFloat(col) * step
+                        let y = offsetY + CGFloat(row) * step
+                        ctx.fill(Path(ellipseIn: CGRect(x: x - 0.5, y: y - 0.5, width: 1, height: 1)), with: .color(dotColor))
                     }
                 }
+            }
 
-                // Soft semantic / persona radial ambient bloom
-                RadialGradient(
-                    colors: [
-                        tint.opacity(bloomPeak),
-                        tint.opacity(bloomPeak * 0.32),
-                        .clear,
-                    ],
-                    center: .center,
-                    startRadius: 2,
-                    endRadius: max(width, height) * 0.72
+            if animate {
+                TimelineView(.periodic(from: start, by: tickInterval)) { timeline in
+                    let _ = staticTick
+                    dioramaAnimatedLayers(
+                        at: timeline.date.timeIntervalSinceReferenceDate,
+                        tint: tint,
+                        ambientPulse: ambientPulse,
+                        isDark: isDark,
+                        palette: palette
+                    )
+                }
+            } else {
+                let _ = staticTick
+                dioramaAnimatedLayers(
+                    at: Date.timeIntervalSinceReferenceDate,
+                    tint: tint,
+                    ambientPulse: false,
+                    isDark: isDark,
+                    palette: palette
                 )
+            }
+        }
+        .frame(
+            minWidth: fillWidth ? 0 : width,
+            maxWidth: fillWidth ? .infinity : width,
+            minHeight: fillWidth ? 0 : height,
+            maxHeight: .infinity
+        )
+        .overlay(alignment: .top) {
+            Rectangle()
+                .fill(Color.white.opacity(isDark ? 0.06 : 0.5))
+                .frame(height: 1)
+        }
+    }
 
-                sceneCanvas(at: now, palette: palette)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 6)
+    private func dioramaAnimatedLayers(
+        at now: Double,
+        tint: Color,
+        ambientPulse: Bool,
+        isDark: Bool,
+        palette: ActivityScenePalette
+    ) -> some View {
+        let pulseWave: Double = (ambientPulse && !reduceMotion && !stopping)
+            ? (0.5 + 0.5 * sin(now * 1.45))
+            : 0.35
+        let bloomPeak = (isDark ? 0.18 : 0.11) + (isDark ? 0.08 : 0.05) * pulseWave
+
+        return ZStack {
+            // Soft semantic / persona radial ambient bloom sized to actual rendered bounds
+            Canvas { ctx, size in
+                let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
+                let radius = max(1, max(size.width, size.height) * 0.68)
+                let gradient = Gradient(colors: [
+                    tint.opacity(bloomPeak),
+                    tint.opacity(bloomPeak * 0.32),
+                    .clear,
+                ])
+                ctx.fill(
+                    Path(CGRect(origin: .zero, size: size)),
+                    with: .radialGradient(gradient, center: center, startRadius: 2, endRadius: radius)
+                )
             }
-            .frame(width: width)
-            .frame(minHeight: height, maxHeight: .infinity)
-            .overlay(alignment: .top) {
-                Rectangle()
-                    .fill(Color.white.opacity(isDark ? 0.06 : 0.5))
-                    .frame(height: 1)
-            }
+
+            sceneCanvas(at: now, palette: palette)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
         }
     }
 
