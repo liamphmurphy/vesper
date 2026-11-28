@@ -208,17 +208,15 @@ struct ChatComposerView: View {
             .padding(.horizontal, 12)
             .padding(.vertical, 10)
             .background {
-                // Shadow belongs on the backdrop shape, not the VStack: shadowing the container
-                // forces Core Animation to re-rasterize the text view and animated harness canvas.
+                // Shadow belongs on the static opaque backdrop shape, not the VStack (which holds
+                // the text view and animated harness canvas) and not `.ultraThinMaterial` (whose
+                // live CABackdropLayer forces WindowServer to re-blur the scrolling transcript on
+                // every scroll, diorama animation, and split-view resize frame).
                 let focusGlow = isDragTargeted
                     ? p.accent.opacity(0.24)
                     : (isEditorFocused ? p.accent.opacity(theme.mode == .dark ? 0.14 : 0.10) : Color.black.opacity(theme.mode == .dark ? 0.24 : 0.10))
                 RoundedRectangle(cornerRadius: 15)
-                    .fill(.ultraThinMaterial)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 15)
-                            .fill(p.surface.opacity(theme.mode == .dark ? 0.68 : 0.78))
-                    )
+                    .fill(theme.swiftUIColor("surface-raised", fallback: p.surface))
                     .shadow(color: focusGlow, radius: isEditorFocused || isDragTargeted ? 14 : 12, y: 4)
             }
             .overlay(
@@ -240,7 +238,7 @@ struct ChatComposerView: View {
         .padding(.bottom, inline ? 0 : 14)
         .background {
             if !inline {
-                // Soft fade scrim so transcript content glides behind the floating glass composer.
+                // Soft fade scrim so transcript content glides behind the floating composer.
                 LinearGradient(
                     stops: [
                         .init(color: p.background.opacity(0), location: 0),
