@@ -360,9 +360,7 @@ struct DockedChatView<ContextChips: View>: View {
                                 }
                                 .padding(.horizontal, 10)
                                 .padding(.vertical, 8)
-                                .background(p.surface, in: RoundedRectangle(cornerRadius: 8))
-                                .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.border))
-                                .contentShape(Rectangle())
+                                .modifier(VesperHoverCardModifier(cornerRadius: 8))
                             }
                             .buttonStyle(.plain)
                         }

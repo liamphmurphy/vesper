@@ -25,6 +25,9 @@ final class ChatScreenModel {
 
     var renameTargetId: String?
     var renameDraft = ""
+    var inlineRenamingChatId: String?
+    var inlineRenameDraft = ""
+    var inlineRenameSaving = false
     var deleteTargetId: String?
     var forkTarget: API.ChatMessage?
     var saveWikiTarget: API.ChatMessage?
@@ -32,6 +35,7 @@ final class ChatScreenModel {
     var saveTemplateBody: String?
     var composerPrefill: ChatComposerPrefill?
     @ObservationIgnored var prefillToken = 0
+    var editLastUserMessageToken = 0
 
     var inspectorOpen = false
     var inspectorTabId = ChatInspectorLogic.activityTabId
@@ -279,6 +283,16 @@ struct ChatScreen: View {
                             model.temporaryMode = true
                             context.navigate("/chat?temporary=1")
                         },
+                        onEditLastUserMessage: {
+                            guard chatId != nil,
+                                  session?.state != .running,
+                                  session?.archived != true,
+                                  messages.contains(where: { $0.role == .user }) else {
+                                return false
+                            }
+                            model.editLastUserMessageToken += 1
+                            return true
+                        },
                         prefill: model.composerPrefill,
                         onPrefillApplied: { token in
                             if model.composerPrefill?.token == token {
@@ -358,6 +372,8 @@ struct ChatScreen: View {
         .onChange(of: chatId) { oldId, newId in
             if oldId != newId {
                 model.resetInspectorForChatSwitch()
+                model.inlineRenamingChatId = nil
+                model.inlineRenameDraft = ""
                 if model.stoppingChatId == oldId { model.stoppingChatId = nil }
                 applyInspectorQuery(context.match.query, canvases: currentCanvases())
             }
@@ -422,7 +438,7 @@ struct ChatScreen: View {
                 try? await Task.sleep(for: .milliseconds(Self.longTurnUsageRefreshIntervalMs))
             }
         }
-        .task(id: "\(chatId ?? "")|\(session?.unread ?? 0)|\(session?.messageCount ?? 0)") {
+        .task(id: "\(chatId ?? "")|\(session?.unread ?? 0)|\(session?.messageCount ?? 0)|\(context.isActiveTab)|\(windowVisible)") {
             await markReadIfNeeded(session: session)
         }
         .onAppear {
@@ -523,6 +539,7 @@ struct ChatScreen: View {
             personas: personas,
             harnessModels: harnessModels,
             scrollToMessageRequest: model.scrollToMessageRequest,
+            editLastUserMessageToken: model.editLastUserMessageToken,
             isStopping: model.stoppingChatId == chatId,
             hasPinnedPlanBar: hasPinnedPlanBar,
             onSendReply: { body in
@@ -675,9 +692,21 @@ struct ChatScreen: View {
                     active: session.state == .running,
                     preferCharacter: true
                 )
-                Text(ChatNav.chatTitle(session.title))
-                    .font(.system(size: theme.pointSize(.body), weight: .semibold))
-                    .lineLimit(1)
+                ChatHeaderTitleView(
+                    session: session,
+                    isEditing: model.inlineRenamingChatId == session.id,
+                    isSaving: model.inlineRenameSaving,
+                    draft: $model.inlineRenameDraft,
+                    onBeginEdit: {
+                        model.inlineRenameDraft = session.title
+                        model.inlineRenamingChatId = session.id
+                    },
+                    onCommit: { commitInlineRename(session: session) },
+                    onCancel: {
+                        model.inlineRenamingChatId = nil
+                        model.inlineRenameDraft = ""
+                    }
+                )
 
                 if session.temporary == true {
                     HStack(spacing: 4) {
@@ -836,8 +865,7 @@ struct ChatScreen: View {
                                 }
                                 .padding(.horizontal, 12)
                                 .padding(.vertical, 10)
-                                .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
-                                .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                                .modifier(VesperHoverCardModifier(cornerRadius: 10))
                             }
                             .buttonStyle(.plain)
                         }
@@ -873,8 +901,7 @@ struct ChatScreen: View {
                             }
                             .padding(.horizontal, 12)
                             .padding(.vertical, 10)
-                            .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
-                            .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                            .modifier(VesperHoverCardModifier(cornerRadius: 10))
                         }
                         .buttonStyle(.plain)
                     } else {
@@ -911,8 +938,7 @@ struct ChatScreen: View {
                                         }
                                         .padding(.horizontal, 12)
                                         .padding(.vertical, 8)
-                                        .background(p.surface, in: RoundedRectangle(cornerRadius: 10))
-                                        .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
+                                        .modifier(VesperHoverCardModifier(cornerRadius: 10))
                                     }
                                     .buttonStyle(.plain)
                                 }
@@ -1428,6 +1454,30 @@ struct ChatScreen: View {
         }
     }
 
+    private func commitInlineRename(session: API.ChatSession) {
+        guard model.inlineRenamingChatId == session.id, !model.inlineRenameSaving else { return }
+        let trimmed = model.inlineRenameDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        model.inlineRenamingChatId = nil
+        model.inlineRenameDraft = ""
+        guard !trimmed.isEmpty, trimmed != session.title else { return }
+        model.inlineRenameSaving = true
+        let chatId = session.id
+        let revision = session.revision
+        Task {
+            defer { model.inlineRenameSaving = false }
+            do {
+                let updated = try await context.store.mutate(
+                    API.updateChat(id: chatId, body: API.ChatPatch(revision: revision, title: trimmed)),
+                    invalidating: QueryInvalidation(resources: ["chats"])
+                )
+                context.store.setData(updated, for: API.getChat(id: chatId))
+            } catch {
+                let msg = (error as? APIError)?.userMessage ?? error.localizedDescription
+                context.showToast(ToastItemModel(id: "chat.rename.err", title: "Couldn’t rename conversation", description: msg, tone: .error))
+            }
+        }
+    }
+
     private func renameSheet() -> some View {
         let chats = context.store.entry(chatsRequest).data?.chats ?? []
         return VStack(alignment: .leading, spacing: 12) {
@@ -1460,6 +1510,7 @@ struct ChatScreen: View {
     }
 
     private func markReadIfNeeded(session: API.ChatSession?) async {
+        guard context.isActiveTab, windowVisible else { return }
         guard let chatId, let session, session.unread > 0, session.messageCount > 0 else { return }
         _ = try? await context.store.mutate(
             API.markChatRead(id: chatId, body: API.MarkChatReadBody(seq: session.messageCount)),
@@ -1574,6 +1625,7 @@ struct ChatScreen: View {
                   window.isKeyWindow,
                   window.attachedSheet == nil,
                   model.renameTargetId == nil,
+                  model.inlineRenamingChatId == nil,
                   model.forkTarget == nil,
                   model.saveWikiTarget == nil,
                   model.saveTemplateBody == nil else {
@@ -1866,11 +1918,22 @@ private struct ChatChromeBridge: View {
             areaOverride = nil
         }
 
+        let hasPendingApprovals = chatId.map { id in
+            context.store.entry(API.listChatToolApprovals(id: id)).data?.approvals.contains(where: { $0.state == .pending }) == true
+        } ?? false
+        let tabActivity = TabStripLogic.chatTabActivity(
+            state: session?.state,
+            unread: session?.unread ?? 0,
+            hasPendingAttention: hasPendingApprovals,
+            isActiveTab: context.isActiveTab
+        )
+
         return NativeChrome(
             title: session.map { ChatNav.chatTitle($0.title) } ?? "Chat",
             inspector: inspector,
             navigator: navigator,
-            areaOverride: areaOverride
+            areaOverride: areaOverride,
+            tabActivity: tabActivity
         )
     }
 
@@ -1895,5 +1958,96 @@ private struct ChatChromeBridge: View {
         if let costsRequest { track(costsRequest) }
         if let searchRequest { track(searchRequest) }
         watched = keys
+    }
+}
+
+/// Interactive conversation title in `ChatScreen.headerBar`: double-click to rename inline,
+/// Return to save, Escape to cancel.
+private struct ChatHeaderTitleView: View {
+    @Environment(\.vesperTheme) private var theme
+
+    let session: API.ChatSession
+    let isEditing: Bool
+    let isSaving: Bool
+    @Binding var draft: String
+    let onBeginEdit: () -> Void
+    let onCommit: () -> Void
+    let onCancel: () -> Void
+
+    @State private var isHovered = false
+    @FocusState private var fieldFocused: Bool
+
+    var body: some View {
+        let p = theme.palette
+        if isEditing {
+            TextField("Conversation title", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: theme.pointSize(.body), weight: .semibold))
+                .foregroundStyle(p.text)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 3)
+                .frame(minWidth: 140, maxWidth: 360)
+                .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.accent.opacity(0.65), lineWidth: 1))
+                .focused($fieldFocused)
+                .onSubmit { onCommit() }
+                .onExitCommand { onCancel() }
+                .onAppear {
+                    DispatchQueue.main.async { fieldFocused = true }
+                }
+                .onChange(of: fieldFocused) { wasFocused, nowFocused in
+                    if wasFocused && !nowFocused && isEditing {
+                        onCommit()
+                    }
+                }
+        } else {
+            HStack(spacing: 5) {
+                Text(ChatNav.chatTitle(session.title))
+                    .font(.system(size: theme.pointSize(.body), weight: .semibold))
+                    .foregroundStyle(p.text)
+                    .lineLimit(1)
+                if isSaving {
+                    ProgressView()
+                        .controlSize(.mini)
+                } else if isHovered {
+                    Image(systemName: "pencil")
+                        .font(.system(size: 10, weight: .medium))
+                        .foregroundStyle(p.tertiaryText)
+                }
+            }
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
+            .background(isHovered ? p.hover : .clear, in: RoundedRectangle(cornerRadius: 6))
+            .contentShape(RoundedRectangle(cornerRadius: 6))
+            .onHover { isHovered = $0 }
+            .onTapGesture(count: 2) {
+                guard !isSaving else { return }
+                onBeginEdit()
+            }
+            .help("Double-click to rename conversation")
+        }
+    }
+}
+
+/// Tactile hover surface + accent border lift for interactive cards (suggestions, spaces, starters).
+struct VesperHoverCardModifier: ViewModifier {
+    @Environment(\.vesperTheme) private var theme
+    var cornerRadius: CGFloat = 10
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        let p = theme.palette
+        content
+            .background(
+                isHovered ? theme.swiftUIColor("surface-raised", fallback: p.hover) : p.surface,
+                in: RoundedRectangle(cornerRadius: cornerRadius)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: cornerRadius)
+                    .stroke(isHovered ? p.accent.opacity(0.45) : p.border, lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: cornerRadius))
+            .onHover { isHovered = $0 }
+            .animation(.easeOut(duration: 0.14), value: isHovered)
     }
 }

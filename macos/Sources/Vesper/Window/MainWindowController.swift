@@ -175,6 +175,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
                 navigate: { [weak self] path, newTab in self?.openInMain(path: path, newTab: newTab) },
                 openPlayground: { [weak self] url in self?.app.openPlayground(url: url, nextTo: self?.window) },
                 onPopOutChanged: { [weak self] poppedOut in self?.inspectorPopOutChanged(poppedOut) },
+                onClose: { [weak self] in self?.closeInspector() },
                 onPanelEvent: { [weak self] tabId, event, payloadJson in self?.handlePanelEvent(tabId: tabId, event: event, payloadJson: payloadJson) }
             )
             if let conn = app.connection { inspector.connect(conn) }
@@ -289,6 +290,21 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             if !targetCollapsed {
                 app.browser.scheduleAutoFollowSync()
             }
+        } else {
+            send(.command(.toggleCompanion))
+        }
+    }
+
+    func closeInspector() {
+        guard hasInspector, kind == .vesper else { return }
+        if inspectorController?.isPoppedOut == true {
+            inspectorController?.togglePopOut()
+            return
+        }
+        guard !isInspectorCollapsed else { return }
+        if InspectorLogic.handlesToggleNatively(model: state.inspector, poppedOut: false) {
+            animateInspector(collapsed: true)
+            send(.inspectorVisibility(open: false))
         } else {
             send(.command(.toggleCompanion))
         }

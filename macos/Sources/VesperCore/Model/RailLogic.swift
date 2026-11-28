@@ -384,6 +384,21 @@ public enum RailLogic {
 
     // MARK: - Formatting helpers
 
+    /// Keyboard shortcut hint shown beside a right-rail hover tooltip when a global shortcut exists.
+    public static func tooltipHint(for item: RailItem) -> String? {
+        if item.id == settingsItemId {
+            return "⌘,"
+        }
+        if item.id == dockTabPrefix + ChatInspectorLogic.outlineTabId {
+            return "⌘⇧O"
+        }
+        if item.id.hasPrefix(dockTabPrefix),
+           item.active == true || item.id == dockTabPrefix + InspectorLogic.defaultCompanionTabId {
+            return "⌘\\"
+        }
+        return nil
+    }
+
     private static func badgeCount(_ n: Int) -> String {
         n > 99 ? "99+" : String(n)
     }

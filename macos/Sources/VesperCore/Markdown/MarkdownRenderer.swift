@@ -483,9 +483,8 @@ private struct Builder {
             }
         }
         var widths = (0..<columns).map { c in rendered.map { ceil($0[c].size().width) }.max() ?? 0 }.map { $0 + 24 }
-        let available = options.width - context.indent
-        let natural = widths.reduce(0, +)
-        if natural < available, natural > 0 { widths = widths.map { $0 * available / natural } }
+        let available = max(0, options.width - context.indent)
+        widths = MarkdownTableLayout.columnWidths(natural: widths, available: available)
         var starts: [CGFloat] = []
         var x = context.indent
         for w in widths { starts.append(x); x += w }
@@ -744,4 +743,34 @@ private extension NSFont {
         return NSFont(descriptor: descriptor, size: pointSize) ?? self
     }
 }
+
+/// Column width allocation for Markdown tables: stretches narrow tables to fill `available` and
+/// proportionally clamps overflowing tables with a readable per-column floor so tab stops never
+/// overflow the container width.
+public enum MarkdownTableLayout: Sendable {
+    public static func columnWidths(
+        natural: [CGFloat],
+        available: CGFloat,
+        minColumnWidth: CGFloat = 56
+    ) -> [CGFloat] {
+        guard !natural.isEmpty else { return [] }
+        guard available > 0 else { return natural }
+        let total = natural.reduce(0, +)
+        guard total > 0 else {
+            return Array(repeating: available / CGFloat(natural.count), count: natural.count)
+        }
+        if total <= available {
+            return natural.map { $0 * available / total }
+        }
+        let floorWidth = min(minColumnWidth, available / CGFloat(natural.count))
+        let remaining = max(0, available - floorWidth * CGFloat(natural.count))
+        let excesses = natural.map { max(0, $0 - floorWidth) }
+        let totalExcess = excesses.reduce(0, +)
+        if totalExcess <= 0 {
+            return Array(repeating: available / CGFloat(natural.count), count: natural.count)
+        }
+        return excesses.map { floorWidth + remaining * ($0 / totalExcess) }
+    }
+}
+
 #endif

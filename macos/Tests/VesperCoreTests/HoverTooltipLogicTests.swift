@@ -53,4 +53,29 @@ struct HoverTooltipLogicTests {
         #expect(HoverTooltipLogic.delayMs(isCurrentlyVisible: false, elapsedSinceDismissMs: 120) == HoverTooltipLogic.warmDelayMs)
         #expect(HoverTooltipLogic.delayMs(isCurrentlyVisible: false, elapsedSinceDismissMs: HoverTooltipLogic.warmWindowMs + 1) == HoverTooltipLogic.coldDelayMs)
     }
+
+    @Test("places leading tooltips to the left of right-rail anchors and flips near left screen edge")
+    func leadingPlacementForRightRail() {
+        let railButton = TooltipRect(x: 1400, y: 500, width: 32, height: 32)
+        let origin = HoverTooltipLogic.origin(
+            anchor: railButton,
+            tooltipSize: TooltipSize(width: 110, height: 24),
+            visibleFrame: screen,
+            gap: 8,
+            placement: .leading
+        )
+        #expect(origin == TooltipPoint(x: 1282, y: 504))
+
+        // Near left screen edge flips to trailing side and clamps vertically.
+        let nearLeft = TooltipRect(x: 4, y: 2, width: 32, height: 32)
+        let flipped = HoverTooltipLogic.origin(
+            anchor: nearLeft,
+            tooltipSize: TooltipSize(width: 110, height: 24),
+            visibleFrame: screen,
+            gap: 8,
+            placement: .leading
+        )
+        #expect(flipped.x == 44)
+        #expect(flipped.y == 6)
+    }
 }

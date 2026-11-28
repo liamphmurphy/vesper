@@ -16,4 +16,6 @@ struct NativeChrome: Equatable {
     var navigator: NavModel?
     /// Optional AreaBar override (e.g., Space-scoped chats stay highlighted under `.spaces`).
     var areaOverride: AreaId?
+    /// Optional live activity badge (running / needs attention / unread) for the compact tab strip.
+    var tabActivity: TabActivityStatus?
 }
