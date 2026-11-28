@@ -12,6 +12,8 @@ struct ChatComposerSlot: View {
     let harnesses: [API.HarnessActivity]
     let workflows: [API.Workflow]
     let repositories: [API.RepositoryEntry]
+    var promptTemplates: [API.PromptTemplate] = []
+    var spaces: [API.ChatSpace] = []
 
     @Binding var selectedHarness: API.Harness?
     @Binding var selectedModel: String?
@@ -47,6 +49,8 @@ struct ChatComposerSlot: View {
             harnesses: harnesses,
             workflows: workflows,
             repositories: repositories,
+            promptTemplates: promptTemplates,
+            spaces: spaces,
             selectedHarness: $selectedHarness,
             selectedModel: $selectedModel,
             selectedEffort: $selectedEffort,

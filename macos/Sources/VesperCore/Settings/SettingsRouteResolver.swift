@@ -6,6 +6,7 @@ public enum SettingsPane: String, CaseIterable, Sendable, Hashable, Codable {
     case you
     case appearance
     case memory
+    case promptTemplates = "prompt-templates"
     // Personas
     case personas
     // Integrations
@@ -69,6 +70,8 @@ public enum SettingsRouteResolver {
     private static let simpleWebSections: [String: SettingsPane] = [
         "you": .you,
         "appearance": .appearance,
+        "prompt-templates": .promptTemplates,
+        "templates": .promptTemplates,
         "connectors": .connectors,
         "repositories": .repositories,
         "runners": .runners,
@@ -96,6 +99,7 @@ public enum SettingsRouteResolver {
         .you: "profile account name email avatar bio about",
         .appearance: "theme dark light mode font text size palette colors harness activity",
         .memory: "memories facts import export forget everything",
+        .promptTemplates: "prompt templates slash commands macros snippets clipboard variables",
         .personas: "personas agents models roles permissions tickets",
         .secrets: "provider credentials api secrets keys tokens oauth anthropic openai google github ssh pat",
         .connectors: "mcp servers tools oauth integration",

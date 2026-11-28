@@ -28,6 +28,7 @@ final class ChatScreenModel {
     var forkTarget: API.ChatMessage?
     var saveWikiTarget: API.ChatMessage?
     var saveWikiBodyOverride: String?
+    var saveTemplateBody: String?
     var composerPrefill: ChatComposerPrefill?
     @ObservationIgnored var prefillToken = 0
 
@@ -96,6 +97,7 @@ struct ChatScreen: View {
     private static let longTurnUsageRefreshIntervalMs = ChatTurnActivity.longTurnUsageRefreshIntervalMs
     private static let workflowsRequest = API.listWorkflows()
     private static let repositoriesRequest = API.searchRepositories()
+    private static let promptTemplatesRequest = API.listPromptTemplates()
 
     private var chatId: String? {
         context.match.params["id"]
@@ -153,6 +155,7 @@ struct ChatScreen: View {
         let harnesses = store.entry(Self.dockRequest).data?.harnesses ?? []
         let workflows = store.entry(Self.workflowsRequest).data?.workflows ?? []
         let repositories = store.entry(Self.repositoriesRequest).data ?? []
+        let promptTemplates = store.entry(Self.promptTemplatesRequest).data?.templates ?? []
         let chatsEntry = store.entry(chatsRequest)
         let chats = chatsEntry.data?.chats ?? []
         let session = sessionRequest.flatMap { store.entry($0).data }
@@ -230,6 +233,8 @@ struct ChatScreen: View {
                 harnesses: harnesses,
                 workflows: workflows,
                 repositories: repositories,
+                promptTemplates: promptTemplates,
+                spaces: spaces,
                 selectedHarness: $model.selectedHarness,
                 selectedModel: $model.selectedModel,
                 selectedEffort: $model.selectedEffort,
@@ -439,6 +444,21 @@ struct ChatScreen: View {
         )) { item in
             saveWikiSheet(session: session, message: item.message)
         }
+        .sheet(isPresented: Binding(
+            get: { model.saveTemplateBody != nil },
+            set: { if !$0 { model.saveTemplateBody = nil } }
+        )) {
+            if let templateBody = model.saveTemplateBody {
+                ChatSaveTemplateSheetView(
+                    initialBody: templateBody,
+                    activePersonaId: activePersona?.id ?? session?.persona?.id,
+                    activePersonaName: activePersona?.name ?? session?.persona?.name,
+                    activeSpaceId: session?.space?.id,
+                    activeSpaceName: session?.space?.name,
+                    onClose: { model.saveTemplateBody = nil }
+                )
+            }
+        }
         .alert(
             "Delete conversation?",
             isPresented: Binding(
@@ -572,6 +592,9 @@ struct ChatScreen: View {
                     model.saveWikiBodyOverride = excerpt
                     model.saveWikiTarget = msg
                 }
+            },
+            onSaveAsTemplate: { body in
+                model.saveTemplateBody = body
             }
         )
     }
@@ -1569,6 +1592,7 @@ struct ChatScreen: View {
         track(Self.dockRequest)
         track(Self.workflowsRequest)
         track(Self.repositoriesRequest)
+        track(Self.promptTemplatesRequest)
         track(chatsRequest)
         if let spaceId = session?.space?.id {
             track(SpacesLogic.spaceChatsRequest(spaceId: spaceId))

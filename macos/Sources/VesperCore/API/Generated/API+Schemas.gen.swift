@@ -16553,6 +16553,60 @@ extension API {
         }
     }
 
+    public struct NewPromptTemplate: Codable, Sendable, Equatable {
+        public var body: Swift.String
+        public var description: Swift.String?
+        public var personaId: APINullable<Swift.String>?
+        public var slug: Swift.String
+        public var spaceId: APINullable<Swift.String>?
+        public var title: Swift.String
+
+        public init(
+            body: Swift.String,
+            description: Swift.String? = nil,
+            personaId: APINullable<Swift.String>? = nil,
+            slug: Swift.String,
+            spaceId: APINullable<Swift.String>? = nil,
+            title: Swift.String
+        ) {
+            self.body = body
+            self.description = description
+            self.personaId = personaId
+            self.slug = slug
+            self.spaceId = spaceId
+            self.title = title
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case body
+            case description
+            case personaId = "persona_id"
+            case slug
+            case spaceId = "space_id"
+            case title
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.body = try c.decode(Swift.String.self, forKey: .body)
+            self.description = try c.decodeIfPresent(Swift.String.self, forKey: .description)
+            self.personaId = try c.decodeNullable(Swift.String.self, forKey: .personaId)
+            self.slug = try c.decode(Swift.String.self, forKey: .slug)
+            self.spaceId = try c.decodeNullable(Swift.String.self, forKey: .spaceId)
+            self.title = try c.decode(Swift.String.self, forKey: .title)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(body, forKey: .body)
+            try c.encodeIfPresent(description, forKey: .description)
+            try c.encodeIfPresent(personaId, forKey: .personaId)
+            try c.encode(slug, forKey: .slug)
+            try c.encodeIfPresent(spaceId, forKey: .spaceId)
+            try c.encode(title, forKey: .title)
+        }
+    }
+
     public struct NewTicket: Codable, Sendable, Equatable {
         public var assigneeAgentId: Swift.String?
         public var criteria: [Swift.String]?
@@ -19421,6 +19475,158 @@ extension API {
             try c.encode(name, forKey: .name)
             try c.encode(repoUrl, forKey: .repoUrl)
             try c.encode(revision, forKey: .revision)
+        }
+    }
+
+    public struct PromptTemplate: Codable, Sendable, Equatable {
+        /// Template text supporting {{input}} and {{clipboard}} placeholders
+        public var body: Swift.String
+        public var createdAt: Swift.String
+        public var description: Swift.String
+        public var id: Swift.String
+        public var personaId: APINullable<Swift.String>?
+        /// Lowercase command trigger without leading slash (e.g. standup, code-review)
+        public var slug: Swift.String
+        public var spaceId: APINullable<Swift.String>?
+        public var title: Swift.String
+        public var updatedAt: Swift.String
+
+        public init(
+            body: Swift.String,
+            createdAt: Swift.String,
+            description: Swift.String,
+            id: Swift.String,
+            personaId: APINullable<Swift.String>? = nil,
+            slug: Swift.String,
+            spaceId: APINullable<Swift.String>? = nil,
+            title: Swift.String,
+            updatedAt: Swift.String
+        ) {
+            self.body = body
+            self.createdAt = createdAt
+            self.description = description
+            self.id = id
+            self.personaId = personaId
+            self.slug = slug
+            self.spaceId = spaceId
+            self.title = title
+            self.updatedAt = updatedAt
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case body
+            case createdAt = "created_at"
+            case description
+            case id
+            case personaId = "persona_id"
+            case slug
+            case spaceId = "space_id"
+            case title
+            case updatedAt = "updated_at"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.body = try c.decode(Swift.String.self, forKey: .body)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.description = try c.decode(Swift.String.self, forKey: .description)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.personaId = try c.decodeNullable(Swift.String.self, forKey: .personaId)
+            self.slug = try c.decode(Swift.String.self, forKey: .slug)
+            self.spaceId = try c.decodeNullable(Swift.String.self, forKey: .spaceId)
+            self.title = try c.decode(Swift.String.self, forKey: .title)
+            self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(body, forKey: .body)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(description, forKey: .description)
+            try c.encode(id, forKey: .id)
+            try c.encodeIfPresent(personaId, forKey: .personaId)
+            try c.encode(slug, forKey: .slug)
+            try c.encodeIfPresent(spaceId, forKey: .spaceId)
+            try c.encode(title, forKey: .title)
+            try c.encode(updatedAt, forKey: .updatedAt)
+        }
+    }
+
+    public struct PromptTemplateList: Codable, Sendable, Equatable {
+        public var templates: [PromptTemplate]
+
+        public init(
+            templates: [PromptTemplate]
+        ) {
+            self.templates = templates
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case templates
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.templates = try c.decodeIfPresent([PromptTemplate].self, forKey: .templates) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(templates, forKey: .templates)
+        }
+    }
+
+    public struct PromptTemplatePatch: Codable, Sendable, Equatable {
+        public var body: Swift.String?
+        public var description: Swift.String?
+        public var personaId: APINullable<Swift.String>?
+        public var slug: Swift.String?
+        public var spaceId: APINullable<Swift.String>?
+        public var title: Swift.String?
+
+        public init(
+            body: Swift.String? = nil,
+            description: Swift.String? = nil,
+            personaId: APINullable<Swift.String>? = nil,
+            slug: Swift.String? = nil,
+            spaceId: APINullable<Swift.String>? = nil,
+            title: Swift.String? = nil
+        ) {
+            self.body = body
+            self.description = description
+            self.personaId = personaId
+            self.slug = slug
+            self.spaceId = spaceId
+            self.title = title
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case body
+            case description
+            case personaId = "persona_id"
+            case slug
+            case spaceId = "space_id"
+            case title
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.body = try c.decodeIfPresent(Swift.String.self, forKey: .body)
+            self.description = try c.decodeIfPresent(Swift.String.self, forKey: .description)
+            self.personaId = try c.decodeNullable(Swift.String.self, forKey: .personaId)
+            self.slug = try c.decodeIfPresent(Swift.String.self, forKey: .slug)
+            self.spaceId = try c.decodeNullable(Swift.String.self, forKey: .spaceId)
+            self.title = try c.decodeIfPresent(Swift.String.self, forKey: .title)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(body, forKey: .body)
+            try c.encodeIfPresent(description, forKey: .description)
+            try c.encodeIfPresent(personaId, forKey: .personaId)
+            try c.encodeIfPresent(slug, forKey: .slug)
+            try c.encodeIfPresent(spaceId, forKey: .spaceId)
+            try c.encodeIfPresent(title, forKey: .title)
         }
     }
 

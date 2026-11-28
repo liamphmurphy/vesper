@@ -3582,6 +3582,75 @@ paths:
               schema: { $ref: "#/components/schemas/ChatSearchResults" }
         default: { $ref: "#/components/responses/Error" }
 
+  /prompt-templates:
+    get:
+      operationId: listPromptTemplates
+      summary: List reusable prompt templates for the signed-in user
+      tags: [chats]
+      parameters:
+        - { name: persona_id, in: query, schema: { type: string, format: uuid } }
+        - { name: space_id, in: query, schema: { type: string, format: uuid } }
+      responses:
+        "200":
+          description: User's prompt templates
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromptTemplateList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createPromptTemplate
+      summary: Create a reusable prompt template / custom slash command
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewPromptTemplate" }
+      responses:
+        "201":
+          description: Created prompt template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromptTemplate" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /prompt-templates/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    patch:
+      operationId: updatePromptTemplate
+      summary: Update a reusable prompt template
+      tags: [chats]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PromptTemplatePatch" }
+      responses:
+        "200":
+          description: Updated prompt template
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PromptTemplate" }
+        "404": { $ref: "#/components/responses/Error" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deletePromptTemplate
+      summary: Delete a reusable prompt template
+      tags: [chats]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/research:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -10266,6 +10335,43 @@ components:
       type: object
       properties:
         persona_id: { type: string, format: uuid, nullable: true }
+    PromptTemplate:
+      type: object
+      required: [id, slug, title, description, body, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        slug: { type: string, description: "Lowercase command trigger without leading slash (e.g. standup, code-review)" }
+        title: { type: string }
+        description: { type: string }
+        body: { type: string, description: "Template text supporting {{input}} and {{clipboard}} placeholders" }
+        persona_id: { type: string, format: uuid, nullable: true }
+        space_id: { type: string, format: uuid, nullable: true }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    PromptTemplateList:
+      type: object
+      required: [templates]
+      properties:
+        templates: { type: array, items: { $ref: "#/components/schemas/PromptTemplate" } }
+    NewPromptTemplate:
+      type: object
+      required: [slug, title, body]
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        body: { type: string }
+        persona_id: { type: string, format: uuid, nullable: true }
+        space_id: { type: string, format: uuid, nullable: true }
+    PromptTemplatePatch:
+      type: object
+      properties:
+        slug: { type: string }
+        title: { type: string }
+        description: { type: string }
+        body: { type: string }
+        persona_id: { type: string, format: uuid, nullable: true }
+        space_id: { type: string, format: uuid, nullable: true }
     ChatAsideStart:
       type: object
       required: [body]

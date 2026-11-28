@@ -12,6 +12,7 @@ extension SettingsPane: Identifiable {
         case .you: return "You"
         case .appearance: return "Appearance"
         case .memory: return "Memory"
+        case .promptTemplates: return "Prompt Templates"
         case .personas: return "Personas"
         case .secrets: return "Credentials & API Secrets"
         case .connectors: return "Connectors"
@@ -39,6 +40,7 @@ extension SettingsPane: Identifiable {
         case .you: return "person.crop.circle"
         case .appearance: return "paintpalette"
         case .memory: return "brain"
+        case .promptTemplates: return "text.badge.star"
         case .personas: return "person.2"
         case .secrets: return "key"
         case .connectors: return "powerplug"
@@ -69,7 +71,7 @@ private struct SettingsSidebarGroup: Identifiable {
 }
 
 private let settingsSidebarGroups: [SettingsSidebarGroup] = [
-    SettingsSidebarGroup(id: "personal", title: "Personal", panes: [.you, .appearance, .memory]),
+    SettingsSidebarGroup(id: "personal", title: "Personal", panes: [.you, .appearance, .memory, .promptTemplates]),
     SettingsSidebarGroup(id: "personas", title: "Personas", panes: [.personas]),
     SettingsSidebarGroup(id: "integrations", title: "Integrations", panes: [.secrets, .connectors, .repositories]),
     SettingsSidebarGroup(id: "workspace", title: "Workspace", panes: [.workspace, .runners, .devWorkspace, .spaces]),
@@ -202,6 +204,8 @@ struct SettingsView: View {
             SettingsAppearancePane(aux: aux)
         case .memory:
             SettingsMemoryPane(aux: aux, navigation: navigation)
+        case .promptTemplates:
+            SettingsPromptTemplatesPane(aux: aux)
         case .personas:
             SettingsPersonasPane(aux: aux, navigation: navigation)
         case .secrets:

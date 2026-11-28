@@ -207,3 +207,170 @@ struct ChatSaveWikiSheetView: View {
         }
     }
 }
+
+// MARK: - Save User Message as Prompt Template Sheet
+
+struct ChatSaveTemplateSheetView: View {
+    @Environment(NativeScreenContext.self) private var context
+    @Environment(\.vesperTheme) private var theme
+
+    let initialBody: String
+    let activePersonaId: String?
+    let activePersonaName: String?
+    let activeSpaceId: String?
+    let activeSpaceName: String?
+    let onClose: () -> Void
+
+    @State private var slug: String
+    @State private var title: String
+    @State private var description = ""
+    @State private var bodyText: String
+    @State private var scopePersona: Bool = false
+    @State private var scopeSpace: Bool = false
+    @State private var isSubmitting = false
+    @State private var errorMessage: String?
+
+    init(
+        initialBody: String,
+        activePersonaId: String?,
+        activePersonaName: String?,
+        activeSpaceId: String?,
+        activeSpaceName: String?,
+        onClose: @escaping () -> Void
+    ) {
+        self.initialBody = initialBody
+        self.activePersonaId = activePersonaId
+        self.activePersonaName = activePersonaName
+        self.activeSpaceId = activeSpaceId
+        self.activeSpaceName = activeSpaceName
+        self.onClose = onClose
+        let suggested = ChatPromptTemplateLogic.suggestFromMessage(initialBody)
+        _slug = State(initialValue: suggested.slug)
+        _title = State(initialValue: suggested.title)
+        _bodyText = State(initialValue: initialBody)
+    }
+
+    var body: some View {
+        let p = theme.palette
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 8) {
+                Image(systemName: "text.badge.star")
+                    .foregroundStyle(p.accent)
+                Text("Save as Prompt Template")
+                    .font(.headline)
+            }
+
+            HStack(spacing: 10) {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Slash command")
+                        .font(.system(size: theme.pointSize(.small), weight: .medium))
+                        .foregroundStyle(p.secondaryText)
+                    HStack(spacing: 4) {
+                        Text("/").font(.body.monospaced()).foregroundStyle(p.secondaryText)
+                        TextField("my-template", text: $slug)
+                            .textFieldStyle(.roundedBorder)
+                            .font(.body.monospaced())
+                    }
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Title")
+                        .font(.system(size: theme.pointSize(.small), weight: .medium))
+                        .foregroundStyle(p.secondaryText)
+                    TextField("Template title", text: $title)
+                        .textFieldStyle(.roundedBorder)
+                }
+            }
+
+            TextField("Short hint (optional)", text: $description)
+                .textFieldStyle(.roundedBorder)
+
+            if activePersonaId != nil || activeSpaceId != nil {
+                HStack(spacing: 14) {
+                    if let name = activePersonaName, activePersonaId != nil {
+                        Toggle("Only for \(name)", isOn: $scopePersona)
+                            .toggleStyle(.checkbox)
+                    }
+                    if let sName = activeSpaceName, activeSpaceId != nil {
+                        Toggle("Only in \(sName)", isOn: $scopeSpace)
+                            .toggleStyle(.checkbox)
+                    }
+                }
+                .font(.system(size: theme.pointSize(.small)))
+            }
+
+            VStack(alignment: .leading, spacing: 4) {
+                HStack {
+                    Text("Prompt body")
+                        .font(.system(size: theme.pointSize(.small), weight: .medium))
+                        .foregroundStyle(p.secondaryText)
+                    Spacer()
+                    Button("+ {{input}}") { bodyText += " {{input}}" }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                    Button("+ {{clipboard}}") { bodyText += " {{clipboard}}" }
+                        .buttonStyle(.bordered)
+                        .controlSize(.mini)
+                }
+                TextEditor(text: $bodyText)
+                    .font(.system(size: theme.pointSize(.small), design: .monospaced))
+                    .frame(minHeight: 110)
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+            }
+
+            if let errorMessage {
+                Text(errorMessage)
+                    .font(.system(size: theme.pointSize(.small)))
+                    .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+            }
+
+            HStack {
+                Spacer()
+                Button("Cancel") { onClose() }
+                    .buttonStyle(.vesper())
+                    .disabled(isSubmitting)
+                Button(isSubmitting ? "Saving…" : "Save template") { submit() }
+                    .buttonStyle(.vesper(.primary))
+                    .disabled(
+                        isSubmitting
+                            || ChatPromptTemplateLogic.normalizeSlug(slug).isEmpty
+                            || title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                            || bodyText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+            }
+        }
+        .padding(20)
+        .frame(width: 460)
+    }
+
+    private func submit() {
+        let normSlug = ChatPromptTemplateLogic.normalizeSlug(slug)
+        let cleanTitle = title.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanDesc = description.trimmingCharacters(in: .whitespacesAndNewlines)
+        let cleanBody = bodyText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isSubmitting, !normSlug.isEmpty, !cleanTitle.isEmpty, !cleanBody.isEmpty else { return }
+        isSubmitting = true
+        errorMessage = nil
+        Task {
+            do {
+                _ = try await context.store.mutate(
+                    API.createPromptTemplate(
+                        body: API.NewPromptTemplate(
+                            body: cleanBody,
+                            description: cleanDesc.isEmpty ? nil : cleanDesc,
+                            personaId: scopePersona ? activePersonaId.map { .value($0) } : nil,
+                            slug: normSlug,
+                            spaceId: scopeSpace ? activeSpaceId.map { .value($0) } : nil,
+                            title: cleanTitle
+                        )
+                    ),
+                    invalidating: QueryInvalidation(resources: ["prompt-templates"])
+                )
+                onClose()
+                context.showToast(ToastItemModel(id: "chat.template.saved", title: "Saved /\(normSlug) template", tone: .success))
+            } catch {
+                errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+                isSubmitting = false
+            }
+        }
+    }
+}

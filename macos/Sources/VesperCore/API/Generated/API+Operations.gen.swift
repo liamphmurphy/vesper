@@ -3604,6 +3604,53 @@ extension API {
         )
     }
 
+    /// List reusable prompt templates for the signed-in user
+    ///
+    /// `GET /prompt-templates`
+    public static func listPromptTemplates(personaId: Swift.String? = nil, spaceId: Swift.String? = nil) -> APIRequest<PromptTemplateList> {
+        var _query: [URLQueryItem] = []
+        APIQuery.append(&_query, "persona_id", personaId)
+        APIQuery.append(&_query, "space_id", spaceId)
+        return APIRequest(
+            method: "GET", template: "/prompt-templates",
+            path: "/api/v1/prompt-templates",
+            query: _query, headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Create a reusable prompt template / custom slash command
+    ///
+    /// `POST /prompt-templates`
+    public static func createPromptTemplate(body: NewPromptTemplate) -> APIRequest<PromptTemplate> {
+        return APIRequest(
+            method: "POST", template: "/prompt-templates",
+            path: "/api/v1/prompt-templates",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Update a reusable prompt template
+    ///
+    /// `PATCH /prompt-templates/{id}`
+    public static func updatePromptTemplate(id: Swift.String, body: PromptTemplatePatch) -> APIRequest<PromptTemplate> {
+        return APIRequest(
+            method: "PATCH", template: "/prompt-templates/{id}",
+            path: "/api/v1/prompt-templates/\(APIPath.escape(id))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Delete a reusable prompt template
+    ///
+    /// `DELETE /prompt-templates/{id}`
+    public static func deletePromptTemplate(id: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/prompt-templates/{id}",
+            path: "/api/v1/prompt-templates/\(APIPath.escape(id))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
     /// Push and open the pull request once, always for this repository, or decline
     ///
     /// Approving points the branch at the commit the card showed (staged on

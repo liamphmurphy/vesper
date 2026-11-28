@@ -1514,6 +1514,20 @@ type Project struct {
 	SpaceID       *uuid.UUID
 }
 
+type PromptTemplate struct {
+	ID          uuid.UUID
+	WorkspaceID uuid.UUID
+	UserID      uuid.UUID
+	Slug        string
+	Title       string
+	Description string
+	Body        string
+	PersonaID   *uuid.UUID
+	SpaceID     *uuid.UUID
+	CreatedAt   time.Time
+	UpdatedAt   time.Time
+}
+
 type ProviderLimit struct {
 	WorkspaceID uuid.UUID
 	Harness     string

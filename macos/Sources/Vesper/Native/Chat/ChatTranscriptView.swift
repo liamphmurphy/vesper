@@ -31,6 +31,7 @@ struct ChatTranscriptView: View {
     var readingMessageId: String? = nil
     var onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)? = nil
     var onSelectionAction: (@MainActor (API.ChatMessage, String?, ChatSelectionAction, String) -> Void)? = nil
+    var onSaveAsTemplate: (@MainActor (String) -> Void)? = nil
 
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
@@ -242,6 +243,7 @@ struct ChatTranscriptView: View {
                                     isReadingAloud: readingMessageId == message.id,
                                     onToggleReadAloud: onToggleReadAloud,
                                     onSelectionAction: onSelectionAction,
+                                    onSaveAsTemplate: onSaveAsTemplate,
                                     onScrollToSelf: {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             proxy.scrollTo(message.id, anchor: .top)
@@ -520,6 +522,7 @@ private struct ChatMessageRowView: View {
     let isReadingAloud: Bool
     let onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)?
     let onSelectionAction: (@MainActor (API.ChatMessage, String?, ChatSelectionAction, String) -> Void)?
+    let onSaveAsTemplate: (@MainActor (String) -> Void)?
     let onScrollToSelf: @MainActor () -> Void
 
     @State private var togglingBookmark = false
@@ -623,6 +626,18 @@ private struct ChatMessageRowView: View {
                             }
                             .buttonStyle(.plain)
                             .help("Edit message and re-send")
+                        }
+
+                        if let onSaveAsTemplate, !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button {
+                                onSaveAsTemplate(parsed.typedBody)
+                            } label: {
+                                Image(systemName: "text.badge.star")
+                                    .imageScale(.small)
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Save as reusable prompt template")
                         }
 
                         if let onForkMessage {

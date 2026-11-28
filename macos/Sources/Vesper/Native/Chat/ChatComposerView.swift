@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import UniformTypeIdentifiers
 import VesperCore
@@ -24,6 +25,8 @@ struct ChatComposerView: View {
     let harnesses: [API.HarnessActivity]
     let workflows: [API.Workflow]
     let repositories: [API.RepositoryEntry]
+    var promptTemplates: [API.PromptTemplate] = []
+    var spaces: [API.ChatSpace] = []
 
     @Binding var selectedHarness: API.Harness?
     @Binding var selectedModel: String?
@@ -915,13 +918,39 @@ struct ChatComposerView: View {
 
     private func resolvedCompletion(for text: String, cursorUTF16: Int) -> ResolvedCompletion? {
         if completionDismissedText == text { return nil }
-        guard text.hasPrefix("/") || text.contains("@") else { return nil }
+        guard text.hasPrefix("/") || text.hasPrefix("#") || text.contains("@") else { return nil }
+
+        let currentPersonaId = activePersona?.id ?? session?.persona?.id
+        let currentSpaceId = session?.space?.id
+
+        if let hashQuery = ChatPromptTemplateLogic.hashMenuQuery(for: text) {
+            let tpls = ChatPromptTemplateLogic.matchingTemplates(
+                promptTemplates,
+                query: hashQuery,
+                personaId: currentPersonaId,
+                spaceId: currentSpaceId
+            )
+            guard !tpls.isEmpty else { return nil }
+            let items = tpls.map { tpl in
+                let badge = ChatPromptTemplateLogic.scopeLabel(template: tpl, personas: personas, spaces: spaces)
+                let needsSpace = ChatPromptTemplateLogic.hasInputPlaceholder(tpl.body)
+                return ChatCompletionItem(
+                    id: "tpl-hash:\(tpl.id)",
+                    title: "#\(tpl.slug)",
+                    subtitle: tpl.description.isEmpty ? tpl.title : tpl.description,
+                    badge: badge,
+                    personaId: nil,
+                    applyValue: needsSpace ? "#\(tpl.slug) " : "#\(tpl.slug)"
+                )
+            }
+            return ResolvedCompletion(heading: "Prompt Templates", mode: .slashCommand, items: items)
+        }
 
         if let menu = ChatSlashCommandLogic.commandMenu(for: text) {
             switch menu {
             case .command(let query):
                 let matches = ChatSlashCommandLogic.matchingCommands(query: query, isRunning: isRunning)
-                let items = matches.map { cmd in
+                var items = matches.map { cmd in
                     ChatCompletionItem(
                         id: "cmd:\(cmd.name)",
                         title: "/\(cmd.name)",
@@ -931,6 +960,25 @@ struct ChatComposerView: View {
                         applyValue: ChatSlashCommandLogic.applyCommandCompletion(cmd)
                     )
                 }
+                let tpls = ChatPromptTemplateLogic.matchingTemplates(
+                    promptTemplates,
+                    query: query,
+                    personaId: currentPersonaId,
+                    spaceId: currentSpaceId
+                )
+                for tpl in tpls {
+                    let scope = ChatPromptTemplateLogic.scopeLabel(template: tpl, personas: personas, spaces: spaces)
+                    let needsSpace = ChatPromptTemplateLogic.hasInputPlaceholder(tpl.body)
+                    items.append(ChatCompletionItem(
+                        id: "tpl:\(tpl.id)",
+                        title: "/\(tpl.slug)",
+                        subtitle: tpl.description.isEmpty ? tpl.title : tpl.description,
+                        badge: scope == "Personal" ? "template" : scope,
+                        personaId: nil,
+                        applyValue: needsSpace ? "/\(tpl.slug) " : "/\(tpl.slug)"
+                    ))
+                }
+                guard !items.isEmpty else { return nil }
                 return ResolvedCompletion(heading: "Commands", mode: .slashCommand, items: items)
 
             case .arg(let name, let query):
@@ -1082,6 +1130,18 @@ struct ChatComposerView: View {
             return
         }
 
+        if let hashCmd = ChatPromptTemplateLogic.parseHashTrigger(editor.text),
+           let expanded = expandPromptTemplate(slug: hashCmd.name, input: hashCmd.arg) {
+            let body = ChatComposerContextLogic.serializeBody(expanded, chips: contextChips)
+            let mode = ChatComposerSendLogic.resolveSendMode(
+                isRunning: isRunning,
+                preferredWhileRunning: sendModeWhileRunning,
+                parsedCommand: nil
+            )
+            sendPayload(body: body, mode: mode)
+            return
+        }
+
         let literal = ChatSlashCommandLogic.literalBody(trimmedDraft)
         let body = ChatComposerContextLogic.serializeBody(literal, chips: contextChips)
         let mode = ChatComposerSendLogic.resolveSendMode(
@@ -1215,8 +1275,32 @@ struct ChatComposerView: View {
                 errorMessage = msg
             }
         default:
+            if let expanded = expandPromptTemplate(slug: cmd.name, input: cmd.arg) {
+                let body = ChatComposerContextLogic.serializeBody(expanded, chips: contextChips)
+                let mode = ChatComposerSendLogic.resolveSendMode(
+                    isRunning: isRunning,
+                    preferredWhileRunning: sendModeWhileRunning,
+                    parsedCommand: nil
+                )
+                sendPayload(body: body, mode: mode)
+                return
+            }
             sendPayload(body: ChatComposerContextLogic.serializeBody(trimmedDraft, chips: contextChips), mode: .send)
         }
+    }
+
+    private func expandPromptTemplate(slug: String, input: String) -> String? {
+        let applicable = ChatPromptTemplateLogic.applicableTemplates(
+            promptTemplates,
+            personaId: activePersona?.id ?? session?.persona?.id,
+            spaceId: session?.space?.id
+        )
+        guard let tpl = applicable.first(where: { $0.slug.lowercased() == slug.lowercased() }) else {
+            return nil
+        }
+        let clipboard = NSPasteboard.general.string(forType: .string)
+        let expanded = ChatPromptTemplateLogic.expand(body: tpl.body, input: input, clipboard: clipboard)
+        return expanded.isEmpty ? nil : expanded
     }
 
     private func sendPayload(body: String, mode: ChatSendMode) {
