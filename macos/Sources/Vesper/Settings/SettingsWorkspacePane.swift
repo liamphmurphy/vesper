@@ -21,7 +21,7 @@ struct SettingsWorkspacePane: View {
                     subtitle: "Shared by every space. Secret encryption and workspace defaults live here."
                 ) {
                     Button("Run setup again") {
-                        aux.openInMainWindow("/setup")
+                        aux.openInMainWindow("/chat?new&setup")
                     }
                 }
 
