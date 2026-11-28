@@ -762,6 +762,128 @@ final class ChatTranscriptLogicTests: XCTestCase {
         XCTAssertFalse(inv.matches(ChatTurnActivity.liveEventsRequest(runId: "run-2", since: since).key))
     }
 
+    func testToolTargetsDecisionNarrationsAndSubagentLanes() {
+        // Concrete target extraction across common tool families.
+        XCTAssertEqual(
+            ChatTurnActivity.targetOf(tool: "Read", input: .object(["file_path": .string("/workspace/macos/Sources/Vesper/ActivitySceneView.swift")])),
+            "Vesper/ActivitySceneView.swift"
+        )
+        XCTAssertEqual(
+            ChatTurnActivity.targetOf(tool: "Grep", input: .object(["pattern": .string("ActivitySceneTransitioner")])),
+            "ActivitySceneTransitioner"
+        )
+        XCTAssertEqual(
+            ChatTurnActivity.targetOf(tool: "Bash", input: .object(["command": .string("swift test --filter ActivitySceneTests")])),
+            "swift test --filter ActivitySceneTests"
+        )
+        XCTAssertEqual(
+            ChatTurnActivity.targetOf(tool: "WebFetch", input: .object(["url": .string("https://developer.apple.com/documentation/swiftui")])),
+            "developer.apple.com/documentation/swiftui"
+        )
+        XCTAssertEqual(
+            ChatTurnActivity.targetOf(tool: "mcp__lazyagents__run_subagents", input: .object(["tasks": .array([.object([:]), .object([:]), .object([:])])])),
+            "3 parallel workers"
+        )
+
+        // Decision narration tag parsing.
+        let approach = ChatTurnActivity.parseNarration("New approach: drive live refreshes off SSE instead of 1.5s polling.")
+        XCTAssertEqual(approach?.tag, .approach)
+        XCTAssertEqual(approach?.text, "drive live refreshes off SSE instead of 1.5s polling.")
+        let surprise = ChatTurnActivity.parseNarration("Surprise: LiveUpdates already invalidates run.events.")
+        XCTAssertEqual(surprise?.tag, .surprise)
+        XCTAssertEqual(surprise?.text, "LiveUpdates already invalidates run.events.")
+
+        // Full turn with opening line, tagged narrations, concrete targets, and parallel subagents.
+        let t0 = "2026-11-28T05:00:00Z"
+        let events: [ChatRunEvent] = [
+            ChatRunEvent(seq: 1, type: "message", at: "2026-11-28T05:00:01Z", payload: ["role": .string("assistant"), "text": .string("Checking the renderer and tests.")]),
+            ChatRunEvent(seq: 2, type: "tool_call", at: "2026-11-28T05:00:02Z", payload: [
+                "id": .string("c1"), "tool": .string("Read"),
+                "input": .object(["file_path": .string("/workspace/macos/Sources/Vesper/Native/Shared/ActivitySceneView.swift")]),
+            ]),
+            ChatRunEvent(seq: 3, type: "tool_result", at: "2026-11-28T05:00:03Z", payload: ["id": .string("c1"), "output": .string("ok")]),
+            ChatRunEvent(seq: 4, type: "message", at: "2026-11-28T05:00:04Z", payload: [
+                "role": .string("assistant"),
+                "text": .string("Surprise: ActivitySceneView was capped at 24fps."),
+            ]),
+            ChatRunEvent(seq: 5, type: "tool_call", at: "2026-11-28T05:00:05Z", payload: [
+                "id": .string("c2"), "tool": .string("mcp__lazyagents__run_subagents"),
+                "input": .object(["tasks": .array([.object([:]), .object([:])])]),
+            ]),
+            // Two parallel subagents racing inside c2: sub-a finishes, sub-b is actively grepping.
+            ChatRunEvent(seq: 6, type: "lifecycle", at: "2026-11-28T05:00:05Z", payload: [
+                "state": .string("subagent_queued"), "subagent": .bool(true),
+                "subagent_id": .string("sub-a"), "subagent_type": .string("explorer"),
+                "subagent_role": .string("Scene Auditor"), "subagent_tier": .string("fast"),
+            ]),
+            ChatRunEvent(seq: 7, type: "lifecycle", at: "2026-11-28T05:00:05Z", payload: [
+                "state": .string("subagent_started"), "subagent": .bool(true),
+                "subagent_id": .string("sub-a"), "subagent_type": .string("explorer"),
+                "subagent_role": .string("Scene Auditor"), "subagent_tier": .string("fast"),
+            ]),
+            ChatRunEvent(seq: 8, type: "tool_call", at: "2026-11-28T05:00:06Z", payload: [
+                "id": .string("sa1"), "tool": .string("Read"),
+                "input": .object(["file_path": .string("/workspace/macos/Sources/VesperCore/Native/ActivitySceneRenderer.swift")]),
+                "subagent": .bool(true), "subagent_id": .string("sub-a"), "subagent_type": .string("explorer"),
+            ]),
+            ChatRunEvent(seq: 9, type: "lifecycle", at: "2026-11-28T05:00:07Z", payload: [
+                "state": .string("subagent_finished"), "status": .string("completed"), "duration_ms": .int(2000), "tool_calls": .int(1),
+                "subagent": .bool(true), "subagent_id": .string("sub-a"), "subagent_type": .string("explorer"),
+            ]),
+            ChatRunEvent(seq: 10, type: "lifecycle", at: "2026-11-28T05:00:06Z", payload: [
+                "state": .string("subagent_started"), "subagent": .bool(true),
+                "subagent_id": .string("sub-b"), "subagent_type": .string("helper"),
+                "subagent_role": .string("Test Runner"), "subagent_tier": .string("standard"),
+            ]),
+            ChatRunEvent(seq: 11, type: "tool_call", at: "2026-11-28T05:00:08Z", payload: [
+                "id": .string("sb1"), "tool": .string("Bash"),
+                "input": .object(["command": .string("swift test --filter ActivitySceneTests")]),
+                "subagent": .bool(true), "subagent_id": .string("sub-b"), "subagent_type": .string("helper"),
+            ]),
+        ]
+
+        let live = ChatTurnActivity.fold(events: events, since: t0, now: APIDate.parse("2026-11-28T05:00:10Z")!)
+        XCTAssertEqual(live.openingLine, "Checking the renderer and tests.")
+        XCTAssertEqual(live.status.kind, .subagent)
+        XCTAssertEqual(live.activeTarget, "2 parallel workers")
+        XCTAssertEqual(live.toolCallCount, 2)
+        XCTAssertEqual(live.latestNarration?.tag, .surprise)
+        XCTAssertEqual(live.latestNarration?.text, "ActivitySceneView was capped at 24fps.")
+
+        // Parent steps stay unpolluted by subagent child tools, carry concrete targets + narration tags.
+        XCTAssertEqual(live.steps.count, 2)
+        XCTAssertEqual(live.steps[0].detail, "Shared/ActivitySceneView.swift")
+        XCTAssertEqual(live.steps[1].detail, "2 parallel workers")
+        XCTAssertEqual(live.steps[1].tag, .surprise)
+        XCTAssertEqual(live.steps[1].intent, "ActivitySceneView was capped at 24fps.")
+
+        // Inline subagent lanes capture both completed and live running workers.
+        XCTAssertEqual(live.subagents.count, 2)
+        XCTAssertEqual(live.subagents[0].displayName, "Scene Auditor")
+        XCTAssertEqual(live.subagents[0].tier, "fast")
+        XCTAssertEqual(live.subagents[0].state, .done)
+        XCTAssertEqual(live.subagents[0].durationMs, 2000)
+        XCTAssertEqual(live.subagents[0].toolCallCount, 1)
+
+        XCTAssertEqual(live.subagents[1].displayName, "Test Runner")
+        XCTAssertEqual(live.subagents[1].tier, "standard")
+        XCTAssertEqual(live.subagents[1].state, .running)
+        XCTAssertEqual(live.subagents[1].currentStatus?.kind, .tests)
+        XCTAssertEqual(live.subagents[1].currentTarget, "swift test --filter ActivitySceneTests")
+        XCTAssertEqual(live.subagents[1].toolCallCount, 1)
+
+        // Finished turn preserves subagent lanes and tool count, and ignores trailing final reply as narration.
+        let finishedEvents = events + [
+            ChatRunEvent(seq: 12, type: "tool_result", at: "2026-11-28T05:00:11Z", payload: ["id": .string("c2"), "output": .string("done")]),
+            ChatRunEvent(seq: 13, type: "message", at: "2026-11-28T05:00:12Z", payload: ["role": .string("assistant"), "text": .string("All done!")]),
+        ]
+        let finished = ChatTurnActivity.finishedTurn(events: finishedEvents, outcome: .done, since: t0, until: "2026-11-28T05:00:12Z")
+        XCTAssertEqual(finished.subagents.count, 2)
+        XCTAssertEqual(finished.toolCallCount, 2)
+        let afterReply = ChatTurnActivity.fold(events: finishedEvents, since: t0, now: APIDate.parse("2026-11-28T05:00:13Z")!)
+        XCTAssertEqual(afterReply.latestNarration?.tag, .surprise)
+    }
+
     // MARK: - ChatNav
 
     func testChatNavGroupingIndicatorsFiltersAndActions() {

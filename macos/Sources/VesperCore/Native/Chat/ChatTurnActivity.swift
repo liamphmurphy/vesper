@@ -38,6 +38,79 @@ public enum ChatIntentTag: String, Sendable, Equatable, Hashable {
     case approach, surprise
 }
 
+public enum ChatSubagentState: String, Sendable, Equatable, Hashable {
+    case queued, running, done, failed
+}
+
+/// Live or finished inline worker lane folded from `subagent: true` run events.
+public struct ChatSubagentLane: Sendable, Equatable, Identifiable {
+    public var id: String
+    public var agentType: String
+    public var role: String?
+    public var tier: String?
+    public var model: String?
+    public var state: ChatSubagentState
+    public var currentStatus: ChatStatusInfo?
+    public var currentTarget: String?
+    public var toolCallCount: Int
+    public var startedAt: TimeInterval?
+    public var endedAt: TimeInterval?
+    public var durationMs: Int?
+    public var error: String?
+
+    public init(
+        id: String,
+        agentType: String = "subagent",
+        role: String? = nil,
+        tier: String? = nil,
+        model: String? = nil,
+        state: ChatSubagentState = .queued,
+        currentStatus: ChatStatusInfo? = nil,
+        currentTarget: String? = nil,
+        toolCallCount: Int = 0,
+        startedAt: TimeInterval? = nil,
+        endedAt: TimeInterval? = nil,
+        durationMs: Int? = nil,
+        error: String? = nil
+    ) {
+        self.id = id
+        self.agentType = agentType
+        self.role = role
+        self.tier = tier
+        self.model = model
+        self.state = state
+        self.currentStatus = currentStatus
+        self.currentTarget = currentTarget
+        self.toolCallCount = toolCallCount
+        self.startedAt = startedAt
+        self.endedAt = endedAt
+        self.durationMs = durationMs
+        self.error = error
+    }
+
+    public var displayName: String {
+        if let role, !role.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return role.trimmingCharacters(in: .whitespacesAndNewlines)
+        }
+        let cleaned = agentType.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !cleaned.isEmpty else { return "Worker" }
+        return cleaned.prefix(1).uppercased() + cleaned.dropFirst()
+    }
+}
+
+/// Mid-turn decision narration emitted by a persona before switching approaches or noting a surprise.
+public struct ChatDecisionNarration: Sendable, Equatable {
+    public var text: String
+    public var tag: ChatIntentTag?
+    public var at: TimeInterval
+
+    public init(text: String, tag: ChatIntentTag? = nil, at: TimeInterval = 0) {
+        self.text = text
+        self.tag = tag
+        self.at = at
+    }
+}
+
 public struct ChatStatusInfo: Sendable, Equatable, Hashable {
     public var kind: ActivitySceneKind
     public var phrase: String
@@ -135,23 +208,29 @@ public struct ChatPlanProgress: Sendable, Equatable {
     }
 }
 
-/// A finished turn's folded steps, duration, pure thinking time, and thinking blocks.
+/// A finished turn's folded steps, duration, pure thinking time, thinking blocks, and subagent summary.
 public struct ChatFinishedTurn: Sendable, Equatable {
     public var steps: [ChatTurnStep]
     public var durationMs: Int?
     public var thinkingDurationMs: Int?
     public var thinkingBlocks: [ChatThinkingBlock]
+    public var subagents: [ChatSubagentLane]
+    public var toolCallCount: Int
 
     public init(
         steps: [ChatTurnStep] = [],
         durationMs: Int? = nil,
         thinkingDurationMs: Int? = nil,
-        thinkingBlocks: [ChatThinkingBlock] = []
+        thinkingBlocks: [ChatThinkingBlock] = [],
+        subagents: [ChatSubagentLane] = [],
+        toolCallCount: Int = 0
     ) {
         self.steps = steps
         self.durationMs = durationMs
         self.thinkingDurationMs = thinkingDurationMs
         self.thinkingBlocks = thinkingBlocks
+        self.subagents = subagents
+        self.toolCallCount = toolCallCount
     }
 }
 
@@ -192,8 +271,12 @@ public struct ChatTurnActivity: Sendable, Equatable {
     ]
 
     public var status: ChatStatusInfo
+    public var activeTarget: String?
     public var openingLine: String?
+    public var latestNarration: ChatDecisionNarration?
     public var steps: [ChatTurnStep]
+    public var subagents: [ChatSubagentLane]
+    public var toolCallCount: Int
     public var planned: Bool
     public var elapsedMs: Int?
     public var phaseElapsedMs: Int?
@@ -206,17 +289,41 @@ public struct ChatTurnActivity: Sendable, Equatable {
     public var activePhase: Phase?
 
     public init(
-        status: ChatStatusInfo, openingLine: String? = nil, steps: [ChatTurnStep] = [],
-        planned: Bool = false, elapsedMs: Int? = nil, phaseElapsedMs: Int? = nil,
-        timingPhase: ChatTurnTimingPhase = .thinking, thinkingDurationMs: Int = 0,
-        thinkingBlocks: [ChatThinkingBlock] = [], idleMs: Int? = nil,
-        between: Bool = false, quiet: Bool = false, activePhase: Phase? = nil
+        status: ChatStatusInfo,
+        activeTarget: String? = nil,
+        openingLine: String? = nil,
+        latestNarration: ChatDecisionNarration? = nil,
+        steps: [ChatTurnStep] = [],
+        subagents: [ChatSubagentLane] = [],
+        toolCallCount: Int = 0,
+        planned: Bool = false,
+        elapsedMs: Int? = nil,
+        phaseElapsedMs: Int? = nil,
+        timingPhase: ChatTurnTimingPhase = .thinking,
+        thinkingDurationMs: Int = 0,
+        thinkingBlocks: [ChatThinkingBlock] = [],
+        idleMs: Int? = nil,
+        between: Bool = false,
+        quiet: Bool = false,
+        activePhase: Phase? = nil
     ) {
-        self.status = status; self.openingLine = openingLine; self.steps = steps
-        self.planned = planned; self.elapsedMs = elapsedMs; self.phaseElapsedMs = phaseElapsedMs
-        self.timingPhase = timingPhase; self.thinkingDurationMs = thinkingDurationMs
-        self.thinkingBlocks = thinkingBlocks; self.idleMs = idleMs
-        self.between = between; self.quiet = quiet; self.activePhase = activePhase
+        self.status = status
+        self.activeTarget = activeTarget
+        self.openingLine = openingLine
+        self.latestNarration = latestNarration
+        self.steps = steps
+        self.subagents = subagents
+        self.toolCallCount = toolCallCount
+        self.planned = planned
+        self.elapsedMs = elapsedMs
+        self.phaseElapsedMs = phaseElapsedMs
+        self.timingPhase = timingPhase
+        self.thinkingDurationMs = thinkingDurationMs
+        self.thinkingBlocks = thinkingBlocks
+        self.idleMs = idleMs
+        self.between = between
+        self.quiet = quiet
+        self.activePhase = activePhase
     }
 
     public static func bareTool(_ tool: String) -> String {
@@ -293,8 +400,8 @@ public struct ChatTurnActivity: Sendable, Equatable {
             return ChatStatusInfo(kind: .searchingCode, phrase: "searching the code")
         case "Edit", "edit", "MultiEdit", "Write", "write", "NotebookEdit", "apply_patch", "patch":
             return ChatStatusInfo(kind: .writingCode, phrase: "writing code")
-        case "shell", "Bash", "bash", "exec_command", "shell_command":
-            let cmd = input["command"]?.stringValue ?? input["cmd"]?.stringValue ?? ""
+        case "shell", "Bash", "bash", "exec_command", "shell_command", "run_command":
+            let cmd = input["command"]?.stringValue ?? input["cmd"]?.stringValue ?? input["CommandLine"]?.stringValue ?? ""
             return shellStatus(cmd)
         case replyBlockTool:
             return replyBlockStatus(input["kind"]?.stringValue ?? "")
@@ -303,6 +410,140 @@ public struct ChatTurnActivity: Sendable, Equatable {
             if tool.contains(".") { return ChatStatusInfo(kind: .connector, phrase: "using a connector") }
             return ChatStatusInfo(kind: .thinking, phrase: "working on it")
         }
+    }
+
+    /// Extracts a concise, human-scannable concrete target (filename, search pattern, command, URL,
+    /// page path, or subagent batch summary) from a tool call's input payload.
+    public static func targetOf(tool rawTool: String, input: JSONValue) -> String? {
+        let tool = bareTool(rawTool)
+        switch tool {
+        case "Read", "read", "read_file", "Edit", "edit", "MultiEdit", "Write", "write", "NotebookEdit":
+            let raw = input["file_path"]?.stringValue
+                ?? input["Path"]?.stringValue
+                ?? input["path"]?.stringValue
+            return raw.flatMap(shortPath)
+        case "LS", "list", "list_dir":
+            let raw = input["path"]?.stringValue ?? input["directory"]?.stringValue
+            return raw.flatMap(shortPath)
+        case "Grep", "grep":
+            let pattern = input["pattern"]?.stringValue ?? input["query"]?.stringValue
+            return pattern.flatMap { trimmedSingleLine($0, maxLength: 44) }
+        case "Glob", "glob":
+            return input["pattern"]?.stringValue.flatMap { trimmedSingleLine($0, maxLength: 44) }
+        case "apply_patch", "patch":
+            if case .array(let files) = input["files"], let first = files.first?.stringValue {
+                let stripped = first
+                    .replacingOccurrences(of: #"^(update|add|delete)\s+"#, with: "", options: [.regularExpression, .caseInsensitive])
+                return shortPath(stripped)
+            }
+            let raw = input["file_path"]?.stringValue ?? input["path"]?.stringValue
+            return raw.flatMap(shortPath)
+        case "shell", "Bash", "bash", "exec_command", "shell_command", "run_command":
+            if let summary = input["toolSummary"]?.stringValue,
+               let clean = trimmedSingleLine(summary, maxLength: 52) {
+                return clean
+            }
+            let cmd = input["command"]?.stringValue ?? input["cmd"]?.stringValue ?? input["CommandLine"]?.stringValue ?? ""
+            return trimmedSingleLine(cmd, maxLength: 52)
+        case "WebSearch", "web_search", "websearch":
+            let q = input["query"]?.stringValue ?? input["q"]?.stringValue
+            return q.flatMap { trimmedSingleLine($0, maxLength: 48) }
+        case "WebFetch", "webfetch", "browser_snapshot":
+            guard let raw = input["url"]?.stringValue,
+                  let trimmed = trimmedSingleLine(raw, maxLength: 120) else { return nil }
+            if let url = URL(string: trimmed), let host = url.host, !host.isEmpty {
+                let path = url.path
+                let combined = (path.isEmpty || path == "/") ? host : "\(host)\(path)"
+                return trimmedSingleLine(combined, maxLength: 48)
+            }
+            return trimmedSingleLine(trimmed, maxLength: 48)
+        case "read_page", "patch_page", "create_page", "move_page", "delete_page", "page_outline", "set_properties", "write_note":
+            let p = input["path"]?.stringValue ?? input["title"]?.stringValue
+            return p.flatMap { trimmedSingleLine($0, maxLength: 48) }
+        case "search_knowledge", "search_memory", "search_chats", "search_library", "search_repositories":
+            let q = input["query"]?.stringValue ?? input["q"]?.stringValue
+            return q.flatMap { trimmedSingleLine($0, maxLength: 48) }
+        case "run_subagent":
+            let label = input["role"]?.stringValue ?? input["type"]?.stringValue
+            return label.flatMap { trimmedSingleLine($0, maxLength: 44) }
+        case "run_subagents":
+            if case .array(let tasks) = input["tasks"], !tasks.isEmpty {
+                return "\(tasks.count) parallel \(tasks.count == 1 ? "worker" : "workers")"
+            }
+            return nil
+        case "get_ticket", "update_ticket", "comment_ticket", "claim_ticket":
+            let key = input["key"]?.stringValue ?? input["id"]?.stringValue ?? input["title"]?.stringValue
+            return key.flatMap { trimmedSingleLine($0, maxLength: 44) }
+        case "generate_image", "image_generation", "image_gen", "generate_music":
+            return input["prompt"]?.stringValue.flatMap { trimmedSingleLine($0, maxLength: 48) }
+        case "http_run_request", "http_request":
+            let method = input["method"]?.stringValue?.uppercased() ?? ""
+            let url = input["url"]?.stringValue ?? ""
+            let combined = [method, url].filter { !$0.isEmpty }.joined(separator: " ")
+            return trimmedSingleLine(combined, maxLength: 52)
+        default:
+            return nil
+        }
+    }
+
+    /// Parses a mid-turn assistant narration line, extracting `"New approach:"` / `"Surprise:"` tags
+    /// promised in `AssistantInstructions` (`server/internal/agents/assistant.go`).
+    public static func parseNarration(_ rawText: String) -> (tag: ChatIntentTag?, text: String)? {
+        let trimmed = rawText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !trimmed.contains("```") else { return nil }
+        let firstLine = trimmed
+            .split(separator: "\n", maxSplits: 1, omittingEmptySubsequences: true)
+            .first
+            .map { String($0).trimmingCharacters(in: .whitespacesAndNewlines) } ?? trimmed
+        let lower = firstLine.lowercased()
+        if lower.hasPrefix("new approach:") {
+            let body = String(firstLine.dropFirst("new approach:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { return nil }
+            return (.approach, body.count > 220 ? String(body.prefix(219)) + "…" : body)
+        }
+        if lower.hasPrefix("surprise:") {
+            let body = String(firstLine.dropFirst("surprise:".count)).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !body.isEmpty else { return nil }
+            return (.surprise, body.count > 220 ? String(body.prefix(219)) + "…" : body)
+        }
+        guard trimmed.count <= 220 else { return nil }
+        let collapsed = trimmed.split(whereSeparator: { $0.isNewline || $0.isWhitespace }).joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        return (nil, collapsed)
+    }
+
+    private static func jsonInt(_ value: JSONValue?) -> Int? {
+        switch value {
+        case .int(let n): n
+        case .double(let d) where d.isFinite: Int(d.rounded())
+        default: nil
+        }
+    }
+
+    private static func shortPath(_ raw: String) -> String? {
+        var s = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !s.isEmpty else { return nil }
+        if s.hasPrefix("/workspace/") {
+            s = String(s.dropFirst("/workspace/".count))
+        }
+        let parts = s.split(separator: "/", omittingEmptySubsequences: true)
+        guard let last = parts.last else { return trimmedSingleLine(s, maxLength: 48) }
+        if parts.count >= 2 {
+            let two = "\(parts[parts.count - 2])/\(last)"
+            if two.count <= 46 { return two }
+        }
+        return trimmedSingleLine(String(last), maxLength: 48)
+    }
+
+    private static func trimmedSingleLine(_ raw: String, maxLength: Int) -> String? {
+        let firstLine = raw
+            .split(whereSeparator: { $0.isNewline })
+            .map { $0.trimmingCharacters(in: .whitespaces) }
+            .first(where: { !$0.isEmpty }) ?? ""
+        let collapsed = firstLine.split(whereSeparator: { $0.isWhitespace }).joined(separator: " ")
+        guard !collapsed.isEmpty else { return nil }
+        if collapsed.count <= maxLength { return collapsed }
+        return String(collapsed.prefix(max(1, maxLength - 1))) + "…"
     }
 
     // MARK: Turn Windows & History (`web/lib/chat-ui.ts`)
@@ -445,12 +686,25 @@ public struct ChatTurnActivity: Sendable, Equatable {
         let quiet = idleMs.map { $0 >= quietThreshold } ?? false
 
         let status = computeStatus(calls: parsed.calls, between: between, phase: parsed.activePhase)
-        let (steps, planned) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: between, phase: parsed.activePhase, plans: parsed.plans)
+        let activeTarget = computeActiveTarget(calls: parsed.calls, between: between, phase: parsed.activePhase)
+        let (steps, planned) = buildSteps(
+            calls: parsed.calls,
+            callTimes: parsed.callTimes,
+            callNarrations: parsed.callNarrations,
+            between: between,
+            phase: parsed.activePhase,
+            plans: parsed.plans
+        )
+        let toolCallCount = parsed.calls.filter { $0.tool != replyBlockTool && !bookkeeping.contains(bareTool($0.tool)) }.count
 
         return ChatTurnActivity(
             status: status,
+            activeTarget: activeTarget,
             openingLine: parsed.openingLine,
+            latestNarration: parsed.latestNarration,
             steps: steps,
+            subagents: parsed.subagents,
+            toolCallCount: toolCallCount,
             planned: planned,
             elapsedMs: elapsedMs,
             phaseElapsedMs: phaseElapsedMs,
@@ -464,7 +718,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
         )
     }
 
-    /// A finished turn's steps, duration, pure thinking time, and thinking blocks.
+    /// A finished turn's steps, duration, pure thinking time, thinking blocks, and subagents.
     /// Plain replies with only bookkeeping/reply blocks return empty steps (so no working strip
     /// renders) while still preserving `thinkingDurationMs` and `thinkingBlocks` when events exist.
     public static func finishedTurn(
@@ -489,15 +743,25 @@ public struct ChatTurnActivity: Sendable, Equatable {
             }
             return parsed.closedThinkingMs + trailing
         }()
-        guard parsed.calls.contains(where: { $0.tool != replyBlockTool && !bookkeeping.contains(bareTool($0.tool)) }) else {
+        let toolCallCount = parsed.calls.filter { $0.tool != replyBlockTool && !bookkeeping.contains(bareTool($0.tool)) }.count
+        guard toolCallCount > 0 else {
             return ChatFinishedTurn(
                 steps: [],
                 durationMs: durationMs,
                 thinkingDurationMs: thinkingDurationMs,
-                thinkingBlocks: parsed.thinkingBlocks
+                thinkingBlocks: parsed.thinkingBlocks,
+                subagents: parsed.subagents,
+                toolCallCount: 0
             )
         }
-        var (steps, _) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: false, phase: nil, plans: parsed.plans)
+        var (steps, _) = buildSteps(
+            calls: parsed.calls,
+            callTimes: parsed.callTimes,
+            callNarrations: parsed.callNarrations,
+            between: false,
+            phase: nil,
+            plans: parsed.plans
+        )
         for idx in steps.indices where steps[idx].state == .active {
             steps[idx].state = outcome == .failed ? .failed : .done
         }
@@ -505,7 +769,9 @@ public struct ChatTurnActivity: Sendable, Equatable {
             steps: steps,
             durationMs: durationMs,
             thinkingDurationMs: thinkingDurationMs,
-            thinkingBlocks: parsed.thinkingBlocks
+            thinkingBlocks: parsed.thinkingBlocks,
+            subagents: parsed.subagents,
+            toolCallCount: toolCallCount
         )
     }
 
@@ -644,9 +910,11 @@ public struct ChatTurnActivity: Sendable, Equatable {
     private struct ParsedEventWindow {
         var calls: [ChatToolCall]
         var callTimes: [Int: (at: TimeInterval, doneAt: TimeInterval?)]
+        var callNarrations: [Int: ChatDecisionNarration]
         var firstAt: TimeInterval?
         var lastAt: TimeInterval?
         var openingLine: String?
+        var latestNarration: ChatDecisionNarration?
         var activePhase: Phase?
         var timingPhase: ChatTurnTimingPhase?
         var phaseStart: TimeInterval?
@@ -654,6 +922,8 @@ public struct ChatTurnActivity: Sendable, Equatable {
         var thinkingBlocks: [ChatThinkingBlock]
         /// The server's plan events, oldest first (see `planSnapshot`).
         var plans: [PlanSnapshot]
+        /// Subagent worker lanes spawned during this turn, in spawn order.
+        var subagents: [ChatSubagentLane]
     }
 
     private static func parseEventWindow(events: [ChatRunEvent], since: String?, until: String?) -> ParsedEventWindow {
@@ -664,16 +934,21 @@ public struct ChatTurnActivity: Sendable, Equatable {
         var openCalls: [String: Int] = [:]
         var openToolIds: Set<String> = []
         var callTimes: [Int: (at: TimeInterval, doneAt: TimeInterval?)] = [:]
+        var callNarrations: [Int: ChatDecisionNarration] = [:]
         var firstAt: TimeInterval?
         var lastAt: TimeInterval?
         var firstAssistantText: String?
         var openingLine: String?
+        var pendingNarration: ChatDecisionNarration?
+        var latestNarration: ChatDecisionNarration?
         var activePhase: Phase?
         var timingPhase: ChatTurnTimingPhase? = since != nil ? .thinking : nil
         var phaseStart: TimeInterval? = since != nil ? minEpoch : nil
         var closedThinkingMs = 0
         var thinkingBlocks: [ChatThinkingBlock] = []
         var plans: [PlanSnapshot] = []
+        var subagentOrder: [String] = []
+        var subagentById: [String: ChatSubagentLane] = [:]
 
         func transition(to next: ChatTurnTimingPhase, at: TimeInterval, resetIfSame: Bool = false) {
             guard let current = timingPhase else {
@@ -692,6 +967,79 @@ public struct ChatTurnActivity: Sendable, Equatable {
             phaseStart = at
         }
 
+        func ingestSubagentEvent(_ e: ChatRunEvent, at: TimeInterval) {
+            guard let subId = e.payload["subagent_id"]?.stringValue, !subId.isEmpty else { return }
+            var lane = subagentById[subId] ?? {
+                subagentOrder.append(subId)
+                return ChatSubagentLane(
+                    id: subId,
+                    agentType: e.payload["subagent_type"]?.stringValue ?? "subagent"
+                )
+            }()
+            if let agentType = e.payload["subagent_type"]?.stringValue, !agentType.isEmpty {
+                lane.agentType = agentType
+            }
+            if let role = e.payload["subagent_role"]?.stringValue, !role.isEmpty {
+                lane.role = role
+            }
+            if let tier = e.payload["subagent_tier"]?.stringValue, !tier.isEmpty {
+                lane.tier = tier
+            }
+            if let model = e.payload["subagent_model"]?.stringValue, !model.isEmpty {
+                lane.model = model
+            }
+
+            switch e.type {
+            case "lifecycle":
+                let state = e.payload["state"]?.stringValue ?? ""
+                switch state {
+                case "subagent_queued":
+                    if lane.state != .running && lane.state != .done && lane.state != .failed {
+                        lane.state = .queued
+                    }
+                case "subagent_started":
+                    lane.state = .running
+                    if lane.startedAt == nil { lane.startedAt = at }
+                case "subagent_finished":
+                    let status = e.payload["status"]?.stringValue ?? ""
+                    lane.state = status == "failed" ? .failed : .done
+                    lane.endedAt = at
+                    if let err = e.payload["error"]?.stringValue, !err.isEmpty {
+                        lane.error = err
+                    }
+                    if let count = jsonInt(e.payload["tool_calls"]) {
+                        lane.toolCallCount = max(lane.toolCallCount, count)
+                    }
+                    if let dur = jsonInt(e.payload["duration_ms"]) {
+                        lane.durationMs = dur
+                    } else if let start = lane.startedAt {
+                        lane.durationMs = max(0, Int(((at - start) * 1000).rounded()))
+                    }
+                    lane.currentStatus = nil
+                    lane.currentTarget = nil
+                default:
+                    break
+                }
+
+            case "tool_call":
+                if lane.state == .queued {
+                    lane.state = .running
+                    if lane.startedAt == nil { lane.startedAt = at }
+                }
+                let tool = e.payload["tool"]?.stringValue ?? ""
+                let input = e.payload["input"] ?? .object([:])
+                if !bookkeeping.contains(bareTool(tool)) {
+                    lane.toolCallCount += 1
+                    lane.currentStatus = statusOf(tool: tool, input: input)
+                    lane.currentTarget = targetOf(tool: tool, input: input)
+                }
+
+            default:
+                break
+            }
+            subagentById[subId] = lane
+        }
+
         for e in events {
             let at = APIDate.epoch(e.at)
             if at < minEpoch || at > maxEpoch { continue }
@@ -703,7 +1051,10 @@ public struct ChatTurnActivity: Sendable, Equatable {
                 }
             }
             lastAt = max(lastAt ?? at, at)
-            if case .bool(true) = e.payload["subagent"] { continue }
+            if case .bool(true) = e.payload["subagent"] {
+                ingestSubagentEvent(e, at: at)
+                continue
+            }
 
             switch e.type {
             case "tool_call":
@@ -719,6 +1070,11 @@ public struct ChatTurnActivity: Sendable, Equatable {
                 transition(to: .tool, at: at)
                 calls.append(ChatToolCall(key: e.seq, tool: tool, input: input, done: false))
                 callTimes[e.seq] = (at, nil)
+                if let pending = pendingNarration, !bookkeeping.contains(bareTool(tool)) {
+                    callNarrations[e.seq] = pending
+                    latestNarration = pending
+                    pendingNarration = nil
+                }
 
             case "tool_result":
                 activePhase = nil
@@ -781,8 +1137,18 @@ public struct ChatTurnActivity: Sendable, Equatable {
                     }
                 } else if role == "assistant" && kind.isEmpty {
                     activePhase = nil
-                    if firstAssistantText == nil && !text.isEmpty {
-                        firstAssistantText = text
+                    if !text.isEmpty {
+                        if firstAssistantText == nil && calls.isEmpty {
+                            firstAssistantText = text
+                        } else if let parsed = parseNarration(text) {
+                            let narration = ChatDecisionNarration(text: parsed.text, tag: parsed.tag, at: at)
+                            pendingNarration = narration
+                            // Explicit "New approach:" / "Surprise:" narrations surface immediately;
+                            // untagged lines wait for a subsequent tool_call so final replies never leak.
+                            if parsed.tag != nil {
+                                latestNarration = narration
+                            }
+                        }
                     }
                     if openToolIds.isEmpty {
                         transition(to: .writingReply, at: at)
@@ -794,19 +1160,38 @@ public struct ChatTurnActivity: Sendable, Equatable {
             }
         }
 
+        let subagents = subagentOrder.compactMap { subagentById[$0] }
+
         return ParsedEventWindow(
             calls: calls,
             callTimes: callTimes,
+            callNarrations: callNarrations,
             firstAt: firstAt,
             lastAt: lastAt,
             openingLine: openingLine,
+            latestNarration: latestNarration,
             activePhase: activePhase,
             timingPhase: timingPhase,
             phaseStart: phaseStart,
             closedThinkingMs: closedThinkingMs,
             thinkingBlocks: thinkingBlocks,
-            plans: plans
+            plans: plans,
+            subagents: subagents
         )
+    }
+
+    private static func computeActiveTarget(calls: [ChatToolCall], between: Bool, phase: Phase?) -> String? {
+        if let newest = calls.last, !newest.done, newest.tool != replyBlockTool, !bookkeeping.contains(bareTool(newest.tool)) {
+            return targetOf(tool: newest.tool, input: newest.input)
+        }
+        if case .writingReply = phase { return nil }
+        if case .thinking(let detail) = phase, let detail, !detail.isEmpty {
+            return detail
+        }
+        guard !between, let newest = calls.last, newest.tool != replyBlockTool, !bookkeeping.contains(bareTool(newest.tool)) else {
+            return nil
+        }
+        return targetOf(tool: newest.tool, input: newest.input)
     }
 
     private static func computeStatus(calls: [ChatToolCall], between: Bool, phase: Phase?) -> ChatStatusInfo {
@@ -932,8 +1317,19 @@ public struct ChatTurnActivity: Sendable, Equatable {
         return versions
     }
 
-    private static func planWork(calls: [ChatToolCall], versions: [PlanVersion]) -> [String: (kind: ActivitySceneKind, failed: Bool)] {
-        var work: [String: (kind: ActivitySceneKind, failed: Bool)] = [:]
+    private struct PlanStepWork {
+        var kind: ActivitySceneKind
+        var failed: Bool
+        var detail: String?
+        var narration: ChatDecisionNarration?
+    }
+
+    private static func planWork(
+        calls: [ChatToolCall],
+        callNarrations: [Int: ChatDecisionNarration],
+        versions: [PlanVersion]
+    ) -> [String: PlanStepWork] {
+        var work: [String: PlanStepWork] = [:]
         var v = -1
         for (i, call) in calls.enumerated() {
             while v + 1 < versions.count && versions[v + 1].callIndex <= i { v += 1 }
@@ -941,7 +1337,10 @@ public struct ChatTurnActivity: Sendable, Equatable {
             guard let active = versions[v].items.first(where: { $0.state == .active }) else { continue }
             let info = statusOf(tool: call.tool, input: call.input)
             let failed = call.failed && failableKinds.contains(info.kind)
-            work[active.title] = (info.kind, failed)
+            let existing = work[active.title]
+            let target = targetOf(tool: call.tool, input: call.input) ?? existing?.detail
+            let narration = callNarrations[call.key] ?? existing?.narration
+            work[active.title] = PlanStepWork(kind: info.kind, failed: failed, detail: target, narration: narration)
         }
         return work
     }
@@ -949,6 +1348,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
     private static func buildSteps(
         calls: [ChatToolCall],
         callTimes: [Int: (at: TimeInterval, doneAt: TimeInterval?)],
+        callNarrations: [Int: ChatDecisionNarration],
         between: Bool,
         phase: Phase?,
         plans: [PlanSnapshot]
@@ -958,7 +1358,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
         if let latest = versions.last?.items, !latest.isEmpty {
             let baseline = versions.first(where: { $0.items.contains { $0.state != .planned } })?.items
             let original = Set((baseline ?? latest).map(\.title))
-            let work = planWork(calls: calls, versions: versions)
+            let work = planWork(calls: calls, callNarrations: callNarrations, versions: versions)
             var seen: [String: Int] = [:]
             var steps: [ChatTurnStep] = latest.map { item in
                 let n = seen[item.title, default: 0]
@@ -970,7 +1370,10 @@ public struct ChatTurnActivity: Sendable, Equatable {
                     title: item.title,
                     state: state,
                     kind: w?.kind,
-                    added: !original.contains(item.title)
+                    added: !original.contains(item.title),
+                    detail: w?.detail,
+                    intent: w?.narration?.text,
+                    tag: w?.narration?.tag
                 )
             }
             let newest = calls.last
@@ -988,7 +1391,7 @@ public struct ChatTurnActivity: Sendable, Equatable {
             return (steps, true)
         }
 
-        // Planless: coalesce consecutive calls with the same phrase.
+        // Planless: coalesce consecutive calls with the same phrase, keeping latest concrete target & narration.
         var steps: [ChatTurnStep] = []
         var lastPhrase: String?
         for call in calls {
@@ -996,9 +1399,16 @@ public struct ChatTurnActivity: Sendable, Equatable {
             let info = statusOf(tool: call.tool, input: call.input)
             let isFailed = call.failed && failableKinds.contains(info.kind)
             let t = callTimes[call.key]
+            let target = targetOf(tool: call.tool, input: call.input)
+            let narration = callNarrations[call.key]
             if info.phrase == lastPhrase, !steps.isEmpty {
                 steps[steps.count - 1].state = isFailed ? .failed : .done
                 if let done = t?.doneAt ?? t?.at { steps[steps.count - 1].endedAt = done }
+                if let target { steps[steps.count - 1].detail = target }
+                if let narration {
+                    steps[steps.count - 1].intent = narration.text
+                    steps[steps.count - 1].tag = narration.tag
+                }
                 continue
             }
             lastPhrase = info.phrase
@@ -1008,6 +1418,9 @@ public struct ChatTurnActivity: Sendable, Equatable {
                 title: title,
                 state: isFailed ? .failed : .done,
                 kind: info.kind,
+                detail: target,
+                intent: narration?.text,
+                tag: narration?.tag,
                 startedAt: t?.at,
                 endedAt: t?.doneAt ?? t?.at
             ))
