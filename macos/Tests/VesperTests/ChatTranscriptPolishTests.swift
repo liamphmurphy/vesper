@@ -1,4 +1,7 @@
 import AppKit
+import Observation
+import os
+import SwiftUI
 import Testing
 import VesperCore
 @testable import Vesper
@@ -197,5 +200,59 @@ struct ChatTranscriptPolishTests {
             #expect(fence.inlineCodePillSpecs(at: .zero).isEmpty)
             #expect(fence.inlineCodePillComputationCount == 0)
         }
+    }
+
+    @Test("row hover state changes update ChatHoverRevealSlot without re-evaluating parent row body")
+    func hoverRevealIsolatesParentBodyEvaluations() {
+        final class Counter {
+            var parentBodies = 0
+        }
+        struct RowProbe: View {
+            let hoverState: ChatRowHoverState
+            let counter: Counter
+
+            var body: some View {
+                counter.parentBodies += 1
+                return VStack {
+                    Text("Message body")
+                    ChatHoverRevealSlot(hoverState: hoverState, alwaysVisible: false) {
+                        Text("Actions")
+                    }
+                }
+            }
+        }
+
+        let hoverState = ChatRowHoverState()
+        let counter = Counter()
+        let host = NSHostingView(rootView: RowProbe(hoverState: hoverState, counter: counter))
+        host.frame = NSRect(x: 0, y: 0, width: 320, height: 80)
+        let window = NSWindow(
+            contentRect: host.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = host
+        host.layoutSubtreeIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let initialBodies = counter.parentBodies
+        #expect(initialBodies >= 1)
+
+        let observedChange = OSAllocatedUnfairLock(initialState: false)
+        withObservationTracking {
+            _ = hoverState.isHovered
+        } onChange: {
+            observedChange.withLock { $0 = true }
+        }
+
+        for _ in 0..<5 {
+            hoverState.isHovered = true
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            hoverState.isHovered = false
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
+
+        #expect(observedChange.withLock { $0 })
+        #expect(counter.parentBodies == initialBodies)
     }
 }
