@@ -1258,6 +1258,97 @@ type LinkPreview struct {
 	FetchedAt   time.Time
 }
 
+type MailAccount struct {
+	ID                   uuid.UUID
+	WorkspaceID          uuid.UUID
+	UserID               uuid.UUID
+	Enabled              bool
+	DryRun               bool
+	Email                string
+	ImapHost             string
+	ImapPort             int32
+	CarddavUrl           string
+	PasswordNonce        []byte
+	PasswordCiphertext   []byte
+	DefaultFolder        string
+	AllowedFolders       []string
+	TriagePolicy         string
+	PinnedModel          string
+	PollIntervalSeconds  int32
+	InboxUidValidity     int64
+	LastSeenUid          int64
+	LastSyncedAt         *time.Time
+	LastContactsSyncedAt *time.Time
+	LastError            string
+	CreatedAt            time.Time
+	UpdatedAt            time.Time
+}
+
+type MailContact struct {
+	AccountID   uuid.UUID
+	Email       string
+	DisplayName string
+	SyncedAt    time.Time
+}
+
+type MailRule struct {
+	ID           uuid.UUID
+	AccountID    uuid.UUID
+	Priority     int32
+	Name         string
+	MatchField   string
+	MatchValue   string
+	Action       string
+	TargetFolder string
+	Enabled      bool
+	CreatedAt    time.Time
+	UpdatedAt    time.Time
+}
+
+type MailTriageLog struct {
+	ID           uuid.UUID
+	AccountID    uuid.UUID
+	ImapUid      int64
+	UidValidity  int64
+	MessageID    string
+	FromEmail    string
+	FromName     string
+	Subject      string
+	SourceFolder string
+	Action       string
+	TargetFolder string
+	Tier         string
+	Reason       string
+	DryRun       bool
+	UndoneAt     *time.Time
+	CreatedAt    time.Time
+}
+
+type MailTriageQueue struct {
+	ID              uuid.UUID
+	AccountID       uuid.UUID
+	WorkspaceID     uuid.UUID
+	UserID          uuid.UUID
+	ImapUid         int64
+	UidValidity     int64
+	MessageID       string
+	FromEmail       string
+	FromName        string
+	Subject         string
+	ListUnsubscribe bool
+	Snippet         string
+	ReceivedAt      *time.Time
+	Status          string
+	DecisionAction  string
+	DecisionFolder  string
+	DecisionReason  string
+	ClaimedAt       *time.Time
+	Attempts        int32
+	LastError       string
+	CreatedAt       time.Time
+	UpdatedAt       time.Time
+}
+
 type MediaProviderConfig struct {
 	WorkspaceID      uuid.UUID
 	ProviderID       string
