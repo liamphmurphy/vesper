@@ -109,6 +109,11 @@ struct ChatLightweightMarkdownView: View {
     }
 
     private func inlineAttributed(_ raw: String) -> AttributedString {
+        Self.inlineAttributed(raw, theme: theme)
+    }
+
+    /// Lightweight inline Markdown (`code`, **bold**, *italic*) for live activity telemetry lines and reasoning blocks.
+    static func inlineAttributed(_ raw: String, theme: ThemeTokens) -> AttributedString {
         let options = AttributedString.MarkdownParsingOptions(
             interpretedSyntax: .inlineOnlyPreservingWhitespace,
             failurePolicy: .returnPartiallyParsedIfPossible
@@ -117,7 +122,7 @@ struct ChatLightweightMarkdownView: View {
             return AttributedString(raw)
         }
         let monoFont = Font.system(size: max(10, theme.pointSize(.small) - 0.5), design: .monospaced)
-        let codeBg = theme.swiftUIColor("surface-raised", fallback: theme.palette.surface)
+        let codeBg = theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface)
         for run in parsed.runs {
             if let intent = run.inlinePresentationIntent, intent.contains(.code) {
                 parsed[run.range].font = monoFont
@@ -1124,7 +1129,7 @@ struct ChatLiveActivityCardView: View {
             }
 
             // Indented to align cleanly with assistant reply content & finished turn strip
-            VStack(alignment: .leading, spacing: 8) {
+            VStack(alignment: .leading, spacing: 6) {
                 let cockpitCard = VStack(alignment: .leading, spacing: 0) {
                     // Main Diorama + Telemetry Split (width-driven so long wrapping text stays side-by-side)
                     ChatLiveStageSplitLayout {
@@ -1251,7 +1256,7 @@ struct ChatLiveActivityCardView: View {
             }
 
             if let opening = activity.openingLine, !opening.isEmpty {
-                Text(opening)
+                Text(ChatLightweightMarkdownView.inlineAttributed(opening, theme: theme))
                     .font(.system(size: theme.pointSize(.small)))
                     .foregroundStyle(p.secondaryText)
                     .lineLimit(2)
