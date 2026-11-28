@@ -1,4 +1,5 @@
 import AppKit
+import ImageIO
 import SwiftUI
 import UniformTypeIdentifiers
 import VesperCore
@@ -45,6 +46,7 @@ struct ChatComposerView: View {
     let onStartLiveVoice: @MainActor () -> Void
     var onOpenOutline: (@MainActor () -> Void)? = nil
     var onStartTemporaryChat: (@MainActor () -> Void)? = nil
+    var onEditLastUserMessage: (@MainActor () -> Bool)? = nil
     /// Text to draft without sending; `onPrefillApplied` gets its token once it is in the composer.
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
@@ -54,6 +56,8 @@ struct ChatComposerView: View {
     /// When true, omits the bottom-docked bar chrome (outer padding, background, and top divider)
     /// so the composer can sit inline inside a scrollable screen such as a Space hub.
     var inline: Bool = false
+    /// When true (and not inline), focuses the editor automatically on appear and chat switch.
+    var autoFocusOnSwitch: Bool = true
     /// Optional placeholder override for inline contexts (e.g. "New chat in Vesper").
     var placeholderOverride: String? = nil
 
@@ -66,6 +70,7 @@ struct ChatComposerView: View {
     @State private var editorHeight: CGFloat = 34
     @State private var contextChips: [ChatContextChip] = []
     @State private var attachments: [ChatComposerAttachment] = []
+    @State private var attachmentThumbnails: [String: NSImage] = [:]
     @State private var sendModeWhileRunning: ChatSendMode = .queue
     @State private var researchMode = false
     @State private var isSending = false
@@ -200,7 +205,8 @@ struct ChatComposerView: View {
                     onCompletionDismiss: { dismissCompletion() },
                     onAttachFiles: { incoming in handleIncomingFiles(incoming) },
                     onFocusChange: { focused in isEditorFocused = focused },
-                    onDragHoverChange: { targeted in isDragTargeted = targeted }
+                    onDragHoverChange: { targeted in isDragTargeted = targeted },
+                    onEditLastUserMessage: onEditLastUserMessage
                 )
                 .frame(height: editorHeight)
 
@@ -262,6 +268,7 @@ struct ChatComposerView: View {
         .onAppear {
             loadDraft(for: chatId)
             applyPrefill()
+            focusComposerIfEligible()
         }
         .task(id: chatId) { syncFollowupsWatch() }
         .onChange(of: session?.state) { oldState, newState in
@@ -280,10 +287,12 @@ struct ChatComposerView: View {
             saveDraftImmediately(for: oldId)
             loadDraft(for: newId)
             attachments = []
+            attachmentThumbnails = [:]
             errorMessage = nil
             dictationSettingsURL = nil
             completionDismissedText = nil
             sendModeWhileRunning = .queue
+            focusComposerIfEligible()
         }
         .onChange(of: contextChips) { _, _ in
             saveDraftImmediately(for: chatId)
@@ -384,18 +393,33 @@ struct ChatComposerView: View {
                 }
 
                 ForEach(attachments) { item in
-                    HStack(spacing: 5) {
+                    let thumbnail = attachmentThumbnails[item.id]
+                    let isThumbChip = thumbnail != nil
+                    HStack(spacing: isThumbChip ? 6 : 5) {
                         Button {
                             previewAttachment(item)
                         } label: {
-                            HStack(spacing: 4) {
-                                Text(item.badge)
-                                    .font(.system(size: theme.pointSize(.micro), weight: .bold))
-                                    .foregroundStyle(p.accent)
+                            HStack(spacing: isThumbChip ? 6 : 4) {
+                                if let thumbnail {
+                                    Image(nsImage: thumbnail)
+                                        .resizable()
+                                        .scaledToFill()
+                                        .frame(width: 28, height: 28)
+                                        .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+                                        .overlay(
+                                            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                                                .stroke(p.border.opacity(0.7), lineWidth: 0.5)
+                                        )
+                                } else {
+                                    Text(item.badge)
+                                        .font(.system(size: theme.pointSize(.micro), weight: .bold))
+                                        .foregroundStyle(p.accent)
+                                }
                                 Text(item.filename)
                                     .font(.system(size: theme.pointSize(.micro)))
                                     .foregroundStyle(p.text)
                                     .lineLimit(1)
+                                    .frame(maxWidth: isThumbChip ? 140 : nil, alignment: .leading)
                                 if case .uploading = item.uploadState {
                                     ProgressView().controlSize(.mini)
                                 } else if case .failed = item.uploadState {
@@ -410,6 +434,7 @@ struct ChatComposerView: View {
 
                         Button {
                             attachments.removeAll { $0.id == item.id }
+                            attachmentThumbnails.removeValue(forKey: item.id)
                         } label: {
                             Image(systemName: "xmark")
                                 .font(.system(size: 9, weight: .semibold))
@@ -417,10 +442,17 @@ struct ChatComposerView: View {
                         }
                         .buttonStyle(.plain)
                     }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(p.surface, in: Capsule())
-                    .overlay(Capsule().stroke(p.border))
+                    .padding(.leading, isThumbChip ? 4 : 8)
+                    .padding(.trailing, 8)
+                    .padding(.vertical, isThumbChip ? 3 : 4)
+                    .background(
+                        p.surface,
+                        in: RoundedRectangle(cornerRadius: isThumbChip ? 9 : 14, style: .continuous)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: isThumbChip ? 9 : 14, style: .continuous)
+                            .stroke(p.border)
+                    )
                 }
 
                 ForEach(contextChips) { chip in
@@ -1294,6 +1326,7 @@ struct ChatComposerView: View {
         let refs = ChatComposerContextLogic.toAPIContextRefs(contextChips)
         let prevDraft = editor.text
         let prevAttachments = attachments
+        let prevThumbnails = attachmentThumbnails
         let prevChips = contextChips
         let research = researchMode
 
@@ -1312,6 +1345,7 @@ struct ChatComposerView: View {
             if let err {
                 setDraftProgrammatically(prevDraft)
                 attachments = prevAttachments
+                attachmentThumbnails = prevThumbnails
                 contextChips = prevChips
                 errorMessage = err
             } else {
@@ -1334,6 +1368,7 @@ struct ChatComposerView: View {
         draftSaveTask = nil
         setDraftProgrammatically("", cursorUTF16: 0, save: false)
         attachments = []
+        attachmentThumbnails = [:]
         contextChips = []
         draftStore.clear(chatId: chatId)
     }
@@ -1383,9 +1418,30 @@ struct ChatComposerView: View {
                 localURL: file.localURL,
                 uploadState: .uploading
             )
+            if item.isImage, let thumb = Self.makeAttachmentThumbnail(from: file.data) {
+                attachmentThumbnails[item.id] = thumb
+            }
             attachments.append(item)
             uploadAttachment(item, data: file.data)
         }
+    }
+
+    /// Downsamples pasted/dropped image bytes to a tiny Retina-ready thumbnail (56 px max) so
+    /// multi-screenshot prompts stay scannable without keeping full-resolution bitmaps in memory.
+    static func makeAttachmentThumbnail(from data: Data, maxPixelSize: Int = 56) -> NSImage? {
+        guard let source = CGImageSourceCreateWithData(data as CFData, nil) else {
+            return NSImage(data: data)
+        }
+        let options: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: max(16, maxPixelSize),
+            kCGImageSourceShouldCacheImmediately: true,
+        ]
+        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary) else {
+            return NSImage(data: data)
+        }
+        return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
     private func uploadAttachment(_ item: ChatComposerAttachment, data: Data) {
@@ -1443,6 +1499,15 @@ struct ChatComposerView: View {
         onPrefillApplied?(prefill.token)
         // The text view may not be in a window yet on first appear.
         DispatchQueue.main.async { editor.focus() }
+    }
+
+    private func focusComposerIfEligible() {
+        guard !inline, autoFocusOnSwitch, session?.archived != true, context.isActiveTab else { return }
+        DispatchQueue.main.async {
+            guard context.isActiveTab, session?.archived != true else { return }
+            guard let win = context.window()?.window, win.isKeyWindow, win.attachedSheet == nil else { return }
+            editor.focus()
+        }
     }
 
     private func syncFollowupsWatch() {

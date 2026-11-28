@@ -24,6 +24,7 @@ struct TabStripView: View {
     let actions: TabStripActions
 
     @State private var dragging: ObjectIdentifier?
+    @State private var overflow = TabStripLogic.Overflow()
 
     /// The strip as a toolbar item's view: flexible width (at least 240 pt), 28 pt tall.
     static func hostView(model: TabsModel, actions: TabStripActions) -> NSView {
@@ -76,6 +77,20 @@ struct TabStripView: View {
                         }
                         .frame(minWidth: geo.size.width, alignment: .leading)
                     }
+                    .onScrollGeometryChange(for: TabStripLogic.Overflow.self) { scrollGeo in
+                        TabStripLogic.overflow(
+                            contentWidth: scrollGeo.contentSize.width,
+                            containerWidth: scrollGeo.containerSize.width,
+                            contentOffsetX: scrollGeo.contentOffset.x
+                        )
+                    } action: { _, next in
+                        if overflow != next {
+                            overflow = next
+                        }
+                    }
+                    .mask {
+                        edgeFadeMask(overflow: overflow, width: geo.size.width)
+                    }
                     .onChange(of: model.list.active?.id) { _, id in
                         if let id { withAnimation(.easeOut(duration: 0.15)) { proxy.scrollTo(id) } }
                     }
@@ -85,10 +100,24 @@ struct TabStripView: View {
                 Image(systemName: "plus").font(.system(size: 12, weight: .medium)).frame(width: 24, height: 24)
             }
             .buttonStyle(.plain)
-            .help("New Tab")
+            .hoverTooltip("New Tab", hint: "⌘T", highlightHover: true, cornerRadius: 6)
         }
         .frame(height: 28)
         .padding(.horizontal, 2)
+    }
+
+    private func edgeFadeMask(overflow: TabStripLogic.Overflow, width: CGFloat) -> some View {
+        let fadeFrac = min(0.18, 18 / max(1, width))
+        return LinearGradient(
+            stops: [
+                .init(color: overflow.leading ? .clear : .black, location: 0),
+                .init(color: .black, location: overflow.leading ? fadeFrac : 0),
+                .init(color: .black, location: overflow.trailing ? (1 - fadeFrac) : 1),
+                .init(color: overflow.trailing ? .clear : .black, location: 1),
+            ],
+            startPoint: .leading,
+            endPoint: .trailing
+        )
     }
 }
 
@@ -106,18 +135,40 @@ private struct TabCell: View {
         return area == .apps ? "square.grid.2x2" : "bubble.left"
     }
 
+    private var displayedActivity: TabActivityStatus? {
+        let activity = tab.state.tabActivity
+        if activity == .unread && active { return nil }
+        return activity
+    }
+
     var body: some View {
+        let activity = displayedActivity
+        let tooltipText = TabStripLogic.tooltip(
+            title: tab.displayTitle,
+            activity: tab.state.tabActivity,
+            isActive: active
+        )
         HStack(spacing: 6) {
-            Image(systemName: iconName)
-                .font(.system(size: 11))
-                .foregroundStyle(active ? .primary : .secondary)
-                .frame(width: 14)
-            Text(tab.displayTitle)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .truncationMode(.tail)
-                .foregroundStyle(active ? .primary : .secondary)
-                .frame(maxWidth: .infinity, alignment: .leading)
+            HStack(spacing: 6) {
+                Image(systemName: iconName)
+                    .font(.system(size: 11))
+                    .foregroundStyle(active ? .primary : .secondary)
+                    .frame(width: 14, height: 14)
+                    .overlay(alignment: .topTrailing) {
+                        if let activity {
+                            TabActivityDot(status: activity)
+                                .offset(x: 3, y: -2)
+                        }
+                    }
+                Text(tab.displayTitle)
+                    .font(.system(size: 12, weight: activity == .unread ? .medium : .regular))
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                    .foregroundStyle(active || activity == .unread ? .primary : .secondary)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .hoverTooltip(tooltipText)
+
             Button { actions.close(tab) } label: {
                 Image(systemName: "xmark").font(.system(size: 9, weight: .semibold)).frame(width: 16, height: 16)
             }
@@ -142,6 +193,43 @@ private struct TabCell: View {
             Divider()
             Button("Reopen Closed Tab") { actions.reopenClosed() }.disabled(!actions.canReopen())
         }
+    }
+}
+
+private struct TabActivityDot: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    let status: TabActivityStatus
+    @State private var pulsing = false
+
+    private var color: Color {
+        switch status {
+        case .running: .accentColor
+        case .needsAttention: .orange
+        case .unread: .purple
+        }
+    }
+
+    var body: some View {
+        Circle()
+            .fill(color)
+            .frame(width: 6, height: 6)
+            .scaleEffect(status == .running && pulsing && !reduceMotion ? 1.18 : 1.0)
+            .opacity(status == .running && pulsing && !reduceMotion ? 0.55 : 1.0)
+            .onAppear {
+                guard status == .running, !reduceMotion else { return }
+                withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                    pulsing = true
+                }
+            }
+            .onChange(of: status) { _, next in
+                if next == .running, !reduceMotion {
+                    withAnimation(.easeInOut(duration: 0.9).repeatForever(autoreverses: true)) {
+                        pulsing = true
+                    }
+                } else {
+                    pulsing = false
+                }
+            }
     }
 }
 

@@ -143,43 +143,58 @@ struct ChatChartCardView: View {
             if spec.series.count > 1 {
                 legendRow
             }
-            if let readout = hoverReadoutText {
-                Text(readout)
-                    .font(.system(size: theme.pointSize(.micro), weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.palette.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
-                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.accent.opacity(0.45)))
+            Group {
+                switch spec.type {
+                case .bar:
+                    interactiveCategorical(axisDecorated(barChart, height: height))
+                case .stackedBar:
+                    interactiveCategorical(axisDecorated(stackedBarChart, height: height))
+                case .line:
+                    interactiveCategorical(axisDecorated(lineChart, height: height))
+                case .area:
+                    interactiveCategorical(axisDecorated(areaChart(stacked: false), height: height))
+                case .stackedArea:
+                    interactiveCategorical(axisDecorated(areaChart(stacked: true), height: height))
+                case .scatter:
+                    axisDecorated(scatterChart, height: height)
+                case .histogram:
+                    axisDecorated(histogramChart, height: height)
+                case .heatmap:
+                    heatmapView
+                case .calendarHeatmap:
+                    calendarHeatmapView
+                case .radar:
+                    radarView(height: max(height, 260))
+                case .sparkline:
+                    sparklineChartView
+                case .waterfall:
+                    waterfallView(height: max(height, 250))
+                case .sankey:
+                    sankeyView(height: max(height, 260))
+                }
             }
-            switch spec.type {
-            case .bar:
-                interactiveCategorical(axisDecorated(barChart, height: height))
-            case .stackedBar:
-                interactiveCategorical(axisDecorated(stackedBarChart, height: height))
-            case .line:
-                interactiveCategorical(axisDecorated(lineChart, height: height))
-            case .area:
-                interactiveCategorical(axisDecorated(areaChart(stacked: false), height: height))
-            case .stackedArea:
-                interactiveCategorical(axisDecorated(areaChart(stacked: true), height: height))
-            case .scatter:
-                axisDecorated(scatterChart, height: height)
-            case .histogram:
-                axisDecorated(histogramChart, height: height)
-            case .heatmap:
-                heatmapView
-            case .calendarHeatmap:
-                calendarHeatmapView
-            case .radar:
-                radarView(height: max(height, 260))
-            case .sparkline:
-                sparklineChartView
-            case .waterfall:
-                waterfallView(height: max(height, 250))
-            case .sankey:
-                sankeyView(height: max(height, 260))
+            .overlay(alignment: .topTrailing) {
+                // Float the hover readout above the plot rather than inserting a row into the
+                // VStack so hovering bars/lines/waterfall/sankey never shifts the card height.
+                if let readout = activeHoverReadout {
+                    Text(readout)
+                        .font(.system(size: theme.pointSize(.micro), weight: .medium, design: .monospaced))
+                        .foregroundStyle(theme.palette.text)
+                        .lineLimit(1)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 4)
+                        .background(
+                            theme.swiftUIColor("surface-raised", fallback: theme.palette.surface),
+                            in: RoundedRectangle(cornerRadius: 6)
+                        )
+                        .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.accent.opacity(0.45)))
+                        .shadow(color: .black.opacity(theme.mode == .dark ? 0.30 : 0.12), radius: 6, y: 2)
+                        .padding(6)
+                        .allowsHitTesting(false)
+                        .transition(.opacity)
+                }
             }
+            .animation(.easeOut(duration: 0.10), value: activeHoverReadout != nil)
         }
         .padding(14)
     }
@@ -197,6 +212,33 @@ struct ChatChartCardView: View {
         }
         .background(theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface))
         .environment(\.vesperTheme, theme)
+    }
+
+    private var activeHoverReadout: String? {
+        if let cat = hoverReadoutText { return cat }
+        if let wf = waterfallHoverReadoutText { return wf }
+        if let sk = sankeyHoverReadoutText { return sk }
+        return nil
+    }
+
+    private var waterfallHoverReadoutText: String? {
+        guard spec.type == .waterfall,
+              let idx = hoveredWaterfallIndex,
+              idx >= 0, idx < spec.waterfallItems.count else { return nil }
+        let it = spec.waterfallItems[idx]
+        let delta = it.kind == .delta && it.value > 0 ? "+\(spec.formattedValue(it.value))" : spec.formattedValue(it.value)
+        return "\(it.label): \(delta) · total \(spec.formattedValue(it.endY))"
+    }
+
+    private var sankeyHoverReadoutText: String? {
+        guard spec.type == .sankey,
+              let id = hoveredSankeyNodeId,
+              let data = spec.sankey,
+              let node = data.nodes.first(where: { $0.id == id }) else { return nil }
+        let outSum = data.links.filter { $0.from == id }.reduce(0) { $0 + $1.value }
+        let inSum = data.links.filter { $0.to == id }.reduce(0) { $0 + $1.value }
+        let total = max(outSum, inSum)
+        return "\(node.label): \(spec.formattedValue(total))"
     }
 
     private var hoverReadoutText: String? {
@@ -717,15 +759,7 @@ struct ChatChartCardView: View {
         let totColor = viz.seriesColor(at: 0)
         let hovered = hoveredWaterfallIndex
 
-        return VStack(alignment: .leading, spacing: 6) {
-            if let idx = hovered, idx < items.count {
-                let it = items[idx]
-                let delta = it.kind == .delta && it.value > 0 ? "+\(spec.formattedValue(it.value))" : spec.formattedValue(it.value)
-                Text("\(it.label): \(delta)  (total \(spec.formattedValue(it.endY)))")
-                    .font(.system(size: theme.pointSize(.micro), weight: .medium, design: .monospaced))
-                    .foregroundStyle(theme.palette.text)
-            }
-            GeometryReader { geo in
+        return GeometryReader { geo in
                 let padTop: CGFloat = 20
                 let padBottom: CGFloat = 34
                 let padH: CGFloat = 12
@@ -778,7 +812,6 @@ struct ChatChartCardView: View {
                 }
             }
             .frame(height: height)
-        }
     }
 
     private func sankeyView(height: CGFloat) -> some View {

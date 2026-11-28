@@ -32,11 +32,13 @@ struct ChatComposerSlot: View {
     let onStartLiveVoice: @MainActor () -> Void
     var onOpenOutline: (@MainActor () -> Void)? = nil
     var onStartTemporaryChat: (@MainActor () -> Void)? = nil
+    var onEditLastUserMessage: (@MainActor () -> Bool)? = nil
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
     var livePlanProgress: ChatPlanProgress? = nil
     var livePlanTurnKey: String = ""
     var inline: Bool = false
+    var autoFocusOnSwitch: Bool = true
     var placeholderOverride: String? = nil
 
     var body: some View {
@@ -66,11 +68,13 @@ struct ChatComposerSlot: View {
             onStartLiveVoice: onStartLiveVoice,
             onOpenOutline: onOpenOutline,
             onStartTemporaryChat: onStartTemporaryChat,
+            onEditLastUserMessage: onEditLastUserMessage,
             prefill: prefill,
             onPrefillApplied: onPrefillApplied,
             livePlanProgress: livePlanProgress,
             livePlanTurnKey: livePlanTurnKey,
             inline: inline,
+            autoFocusOnSwitch: autoFocusOnSwitch,
             placeholderOverride: placeholderOverride
         )
     }

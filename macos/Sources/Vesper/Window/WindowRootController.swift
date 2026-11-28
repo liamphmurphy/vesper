@@ -12,8 +12,13 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
     private var rail: RailBarView?
     private var railWidth: NSLayoutConstraint?
     private var splitTrailing: NSLayoutConstraint?
-    private var toastHost: NSHostingView<ToastOverlayView>?
+    private var toastHost: ToastHostingView?
+    private var toastHideTask: Task<Void, Never>?
     private var perfHUD: PerfHUDView?
+
+    static let toastExitGraceMs = 340
+    var isToastHostHidden: Bool { toastHost?.isHidden ?? true }
+    var toastHostView: NSView? { toastHost }
 
     var onToggleSidebar: ((Any?) -> Void)?
     var onToggleInspector: ((Any?) -> Void)?
@@ -84,9 +89,11 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
     }
 
     /// Installs the window-level Liquid Glass toast stack centered near the bottom edge.
-    func installToasts(store: ToastStore) {
+    /// Delays hiding the host after the last toast leaves so SwiftUI's slide/fade exit completes
+    /// while `ToastHostingView.hitTest` lets clicks pass straight through immediately.
+    func installToasts(store: ToastStore, exitGraceMs: Int = WindowRootController.toastExitGraceMs) {
         precondition(toastHost == nil)
-        let host = NSHostingView(rootView: ToastOverlayView(store: store))
+        let host = ToastHostingView(store: store)
         host.translatesAutoresizingMaskIntoConstraints = false
         host.sizingOptions = [.intrinsicContentSize]
         host.isHidden = true
@@ -94,8 +101,26 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         if isViewLoaded {
             attachToasts(host, to: view)
         }
-        track({ [weak store] in store?.toasts.isEmpty ?? true }) { [weak host] isEmpty in
-            host?.isHidden = isEmpty
+        track({ [weak store] in store?.toasts.isEmpty ?? true }) { [weak self, weak store, weak host] isEmpty in
+            guard let self, let host else { return }
+            self.toastHideTask?.cancel()
+            self.toastHideTask = nil
+            if !isEmpty {
+                host.isHidden = false
+                return
+            }
+            if host.isHidden { return }
+            if exitGraceMs <= 0 || NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+                host.isHidden = true
+                return
+            }
+            self.toastHideTask = Task { @MainActor [weak host, weak store] in
+                try? await Task.sleep(for: .milliseconds(exitGraceMs))
+                guard !Task.isCancelled, let host else { return }
+                if store?.toasts.isEmpty ?? true {
+                    host.isHidden = true
+                }
+            }
         }
     }
 
@@ -139,7 +164,7 @@ final class WindowRootController: NSViewController, NSUserInterfaceValidations {
         ])
     }
 
-    private func attachToasts(_ host: NSHostingView<ToastOverlayView>, to root: NSView) {
+    private func attachToasts(_ host: ToastHostingView, to root: NSView) {
         root.addSubview(host, positioned: .above, relativeTo: nil)
         NSLayoutConstraint.activate([
             host.centerXAnchor.constraint(equalTo: root.centerXAnchor),

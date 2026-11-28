@@ -218,6 +218,99 @@ extension MarkdownDocument {
     }
 }
 
+// MARK: - Block Segmentation for Native Overflow Views
+
+/// Segment of a `MarkdownDocument` used by `MarkdownView` so wide code fences and tables can
+/// render in horizontally scrollable native cards without disturbing surrounding TextKit 2 prose.
+public enum MarkdownViewSegment: Sendable, Equatable {
+    /// Contiguous rich-text blocks rendered in `MarkdownTextView`, with `codeIndexMap[local]`
+    /// mapping each code block inside `document` back to its index in the parent document.
+    case rich(document: MarkdownDocument, codeIndexMap: [Int])
+    case codeBlock(index: Int, info: String, code: String)
+    case table(MarkdownTable)
+}
+
+public enum MarkdownViewSegmenter: Sendable {
+    /// Splits top-level code fences and/or tables out of `document` while keeping exact global
+    /// code-block indices so Shiki highlights, Copy, and fold toggles line up across all segments.
+    public static func segment(
+        _ document: MarkdownDocument,
+        extractCodeBlocks: Bool,
+        extractTables: Bool
+    ) -> [MarkdownViewSegment] {
+        guard extractCodeBlocks || extractTables else {
+            return [.rich(document: document, codeIndexMap: Array(0..<document.codeBlocks.count))]
+        }
+        let hasExtractable = document.blocks.contains { block in
+            switch block {
+            case .code: return extractCodeBlocks
+            case .table: return extractTables
+            default: return false
+            }
+        }
+        guard hasExtractable else {
+            return [.rich(document: document, codeIndexMap: Array(0..<document.codeBlocks.count))]
+        }
+
+        var segments: [MarkdownViewSegment] = []
+        var pendingBlocks: [MarkdownBlock] = []
+        var pendingCodeIndices: [Int] = []
+        var nextCodeIndex = 0
+
+        func flushRich(footnotes: [MarkdownFootnote] = []) {
+            guard !pendingBlocks.isEmpty || !footnotes.isEmpty else { return }
+            var indices = pendingCodeIndices
+            if !footnotes.isEmpty {
+                for note in footnotes {
+                    for b in note.blocks {
+                        let count = codeBlockCount(in: b)
+                        if count > 0 {
+                            indices.append(contentsOf: nextCodeIndex..<(nextCodeIndex + count))
+                            nextCodeIndex += count
+                        }
+                    }
+                }
+            }
+            segments.append(.rich(
+                document: MarkdownDocument(blocks: pendingBlocks, footnotes: footnotes),
+                codeIndexMap: indices
+            ))
+            pendingBlocks = []
+            pendingCodeIndices = []
+        }
+
+        for block in document.blocks {
+            switch block {
+            case .code(let info, let code) where extractCodeBlocks:
+                flushRich()
+                segments.append(.codeBlock(index: nextCodeIndex, info: info, code: code))
+                nextCodeIndex += 1
+            case .table(let table) where extractTables:
+                flushRich()
+                segments.append(.table(table))
+            default:
+                let count = codeBlockCount(in: block)
+                if count > 0 {
+                    pendingCodeIndices.append(contentsOf: nextCodeIndex..<(nextCodeIndex + count))
+                    nextCodeIndex += count
+                }
+                pendingBlocks.append(block)
+            }
+        }
+        flushRich(footnotes: document.footnotes)
+        return segments
+    }
+
+    private static func codeBlockCount(in block: MarkdownBlock) -> Int {
+        switch block {
+        case .code: return 1
+        case .blockquote(let inner): return inner.reduce(0) { $0 + codeBlockCount(in: $1) }
+        case .list(let list): return list.items.reduce(0) { $0 + $1.blocks.reduce(0) { $0 + codeBlockCount(in: $1) } }
+        default: return 0
+        }
+    }
+}
+
 // MARK: - Snapshots
 
 extension MarkdownDocument {

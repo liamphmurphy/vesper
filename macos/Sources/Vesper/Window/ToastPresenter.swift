@@ -104,7 +104,35 @@ private struct ToastPillGlass: NSViewRepresentable {
     func updateNSView(_ nsView: NSVisualEffectView, context: Context) {}
 }
 
+/// `NSHostingView` for the window toast stack that passes pointer events through immediately once
+/// the toast queue empties, allowing the SwiftUI exit animation to finish without blocking clicks.
+@MainActor
+final class ToastHostingView: NSHostingView<ToastOverlayView> {
+    private weak var store: ToastStore?
+
+    init(store: ToastStore) {
+        self.store = store
+        super.init(rootView: ToastOverlayView(store: store))
+    }
+
+    @available(*, unavailable)
+    @MainActor @preconcurrency required dynamic init(rootView: ToastOverlayView) {
+        fatalError("use init(store:)")
+    }
+
+    @available(*, unavailable)
+    @MainActor @preconcurrency required init?(coder: NSCoder) {
+        fatalError("not used")
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        guard let store, !store.toasts.isEmpty else { return nil }
+        return super.hitTest(point)
+    }
+}
+
 struct ToastOverlayView: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     let store: ToastStore
 
     var body: some View {
@@ -116,10 +144,10 @@ struct ToastOverlayView: View {
                     onDismiss: { store.dismissByUser(id: toast.id) },
                     onHover: { store.setHovered(id: toast.id, hovered: $0) }
                 )
-                .transition(.move(edge: .bottom).combined(with: .opacity))
+                .transition(reduceMotion ? .opacity : .move(edge: .bottom).combined(with: .opacity))
             }
         }
-        .animation(.spring(response: 0.24, dampingFraction: 0.88), value: store.toasts)
+        .animation(reduceMotion ? nil : .spring(response: 0.24, dampingFraction: 0.88), value: store.toasts)
     }
 }
 

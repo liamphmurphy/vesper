@@ -266,7 +266,7 @@ private struct ChatActivityGraphPane: View {
     private func summaryCard(for node: RunGraphLogic.GraphNode, detail: API.RunDetail) -> some View {
         let turnMap = RunGraphLogic.turnByEvent(detail.events)
         ScrollView {
-            VStack(alignment: .leading, spacing: 8) {
+            LazyVStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 6) {
                     Text(summaryTitle(for: node))
                         .font(.system(size: 12, weight: .semibold))

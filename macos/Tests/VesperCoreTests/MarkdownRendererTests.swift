@@ -227,4 +227,91 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertEqual(MarkdownLinkState(API.LinkTarget(displayId: "PAY-1", href: "/tickets/PAY-1", kind: .ticket, title: "Fix it")), .resolved(href: "/tickets/PAY-1", title: "Ticket · PAY-1 · Fix it"))
         XCTAssertEqual(MarkdownLinkState(API.LinkTarget(kind: .unresolved, title: "Nope")), .unresolved)
     }
+
+    func testTableColumnWidthsStretchNarrowAndClampOverflowingTables() throws {
+        // Narrow tables scale proportionally to fill available width.
+        let stretched = MarkdownTableLayout.columnWidths(natural: [80, 120], available: 400)
+        XCTAssertEqual(stretched[0], 160, accuracy: 0.01)
+        XCTAssertEqual(stretched[1], 240, accuracy: 0.01)
+
+        // Wide overflowing tables clamp proportionally inside available width while respecting min floor.
+        let clamped = MarkdownTableLayout.columnWidths(natural: [220, 260, 180, 240], available: 420, minColumnWidth: 64)
+        XCTAssertEqual(clamped.reduce(0, +), 420, accuracy: 0.01)
+        for w in clamped {
+            XCTAssertGreaterThanOrEqual(w, 64 - 0.01)
+        }
+        XCTAssertGreaterThan(clamped[1], clamped[2])
+
+        // Rendered wide table keeps every tab stop within options.width.
+        let md = """
+        | Very Long Header One | Very Long Header Two | Very Long Header Three | Very Long Header Four |
+        | --- | --- | --- | --- |
+        | Alpha long column content | Beta long column content | Gamma long column content | Delta long column content |
+        """
+        let r = render(md, options: MarkdownRenderOptions(width: 360))
+        let style = try XCTUnwrap(r.text.attribute(.paragraphStyle, at: 0, effectiveRange: nil) as? NSParagraphStyle)
+        XCTAssertEqual(style.tabStops.count, 4)
+        for stop in style.tabStops {
+            XCTAssertLessThan(stop.location, 360)
+        }
+    }
+
+    func testMarkdownViewSegmenterExtractsTopLevelCodeAndTablesPreservingCodeIndices() {
+        let md = """
+        Intro text.
+
+        - Nested item:
+          ```python
+          x = 1
+          ```
+
+        ```swift
+        let top = 2
+        ```
+
+        | A | B |
+        | - | - |
+        | 1 | 2 |
+
+        Outro with footnote[^1].
+
+        [^1]: Footnote code:
+            ```go
+            func f() {}
+            ```
+        """
+        let doc = MarkdownParser.parse(md, chat: true)
+        XCTAssertEqual(doc.codeBlocks.count, 3)
+
+        let segments = MarkdownViewSegmenter.segment(doc, extractCodeBlocks: true, extractTables: true)
+        XCTAssertEqual(segments.count, 4)
+
+        guard case .rich(_, let firstMap) = segments[0] else {
+            return XCTFail("Expected leading rich segment")
+        }
+        XCTAssertEqual(firstMap, [0])
+
+        guard case .codeBlock(let idx, let info, let code) = segments[1] else {
+            return XCTFail("Expected extracted top-level code block")
+        }
+        XCTAssertEqual(idx, 1)
+        XCTAssertEqual(info, "swift")
+        XCTAssertEqual(code, "let top = 2")
+
+        guard case .table(let table) = segments[2] else {
+            return XCTFail("Expected extracted table")
+        }
+        XCTAssertEqual(table.header.count, 2)
+
+        guard case .rich(let trailingDoc, let trailingMap) = segments[3] else {
+            return XCTFail("Expected trailing rich segment with footnotes")
+        }
+        XCTAssertEqual(trailingDoc.footnotes.count, 1)
+        XCTAssertEqual(trailingMap, [2])
+
+        // Fast-path: plain prose stays a single rich segment.
+        let plainDoc = MarkdownParser.parse("Just a paragraph.", chat: true)
+        let plainSegments = MarkdownViewSegmenter.segment(plainDoc, extractCodeBlocks: true, extractTables: true)
+        XCTAssertEqual(plainSegments.count, 1)
+    }
 }

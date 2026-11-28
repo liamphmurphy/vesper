@@ -132,7 +132,7 @@ struct KeepsakesScreen: View {
                     }
                     ScrollViewReader { proxy in
                         ScrollView {
-                            VStack(alignment: .leading, spacing: 20) {
+                            LazyVStack(alignment: .leading, spacing: 20) {
                                 LibraryHeading(description: "Private keepsakes from your chats: generated media, saved files, exports, diagrams, references, and links.")
                                 if let error = model.uploadError {
                                     Text(error).vesperText(.small, theme).foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))

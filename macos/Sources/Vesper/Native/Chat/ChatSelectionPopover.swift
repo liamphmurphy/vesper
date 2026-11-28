@@ -120,29 +120,47 @@ private struct ChatSelectionPillView: View {
         let p = theme.palette
         HStack(spacing: 2) {
             ForEach(ChatSelectionAction.allCases) { action in
-                Button {
+                ChatSelectionActionButton(action: action, theme: theme) {
                     onSelect(action)
-                } label: {
-                    HStack(spacing: 4) {
-                        Image(systemName: action.systemImage)
-                            .font(.system(size: 11, weight: .medium))
-                        Text(action.label)
-                            .font(.system(size: theme.pointSize(.micro), weight: .medium))
-                    }
-                    .foregroundStyle(p.text)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 5)
-                    .contentShape(RoundedRectangle(cornerRadius: 6))
                 }
-                .buttonStyle(.plain)
-                .help(action.menuTitle)
             }
         }
         .padding(.horizontal, 6)
         .padding(.vertical, 4)
-        .background(.ultraThinMaterial, in: Capsule())
-        .background(p.surface.opacity(0.85), in: Capsule())
+        .background(
+            theme.swiftUIColor("surface-raised", fallback: p.surface),
+            in: Capsule()
+        )
         .overlay(Capsule().stroke(p.border))
+        .shadow(color: Color.black.opacity(theme.mode == .dark ? 0.36 : 0.14), radius: 10, y: 4)
         .fixedSize()
+    }
+}
+
+private struct ChatSelectionActionButton: View {
+    let action: ChatSelectionAction
+    let theme: ThemeTokens
+    let onTap: () -> Void
+    @State private var isHovered = false
+
+    var body: some View {
+        let p = theme.palette
+        Button(action: onTap) {
+            HStack(spacing: 4) {
+                Image(systemName: action.systemImage)
+                    .font(.system(size: 11, weight: .medium))
+                Text(action.label)
+                    .font(.system(size: theme.pointSize(.micro), weight: .medium))
+            }
+            .foregroundStyle(isHovered ? p.accent : p.text)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(isHovered ? p.hover : .clear, in: Capsule())
+            .contentShape(Capsule())
+        }
+        .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
+        .animation(.easeOut(duration: 0.10), value: isHovered)
+        .help(action.menuTitle)
     }
 }

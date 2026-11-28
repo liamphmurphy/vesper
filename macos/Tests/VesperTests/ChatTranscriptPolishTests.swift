@@ -323,4 +323,89 @@ struct ChatTranscriptPolishTests {
         tableCoordinator.render(tableView, width: 360)
         #expect(tableCoordinator.fullRenderCount == 2)
     }
+
+    @Test("composer attachment thumbnail downsamples images and rejects invalid bytes")
+    func composerAttachmentThumbnailDownsamples() throws {
+        let rep = try #require(NSBitmapImageRep(
+            bitmapDataPlanes: nil,
+            pixelsWide: 200,
+            pixelsHigh: 100,
+            bitsPerSample: 8,
+            samplesPerPixel: 4,
+            hasAlpha: true,
+            isPlanar: false,
+            colorSpaceName: .deviceRGB,
+            bytesPerRow: 0,
+            bitsPerPixel: 0
+        ))
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = NSGraphicsContext(bitmapImageRep: rep)
+        NSColor.systemBlue.setFill()
+        NSRect(x: 0, y: 0, width: 200, height: 100).fill()
+        NSGraphicsContext.restoreGraphicsState()
+        let png = try #require(rep.representation(using: .png, properties: [:]))
+
+        let thumb = try #require(ChatComposerView.makeAttachmentThumbnail(from: png, maxPixelSize: 56))
+        #expect(thumb.size.width <= 56)
+        #expect(thumb.size.height <= 56)
+        #expect(thumb.size.width > thumb.size.height)
+
+        #expect(ChatComposerView.makeAttachmentThumbnail(from: Data("not-an-image".utf8)) == nil)
+    }
+
+    @Test("up arrow in empty composer triggers edit-last-user-message only when empty and completion closed")
+    func upArrowInEmptyComposerTriggersEditLastMessage() {
+        var editTriggers = 0
+        var height: CGFloat = 34
+        let controller = ChatComposerController()
+
+        func makeCoordinator(isCompletionOpen: Bool) -> (ChatComposerTextView.Coordinator, ComposerNSTextView) {
+            let textView = ComposerNSTextView(usingTextLayoutManager: true)
+            let representable = ChatComposerTextView(
+                controller: controller,
+                measuredHeight: Binding(get: { height }, set: { height = $0 }),
+                placeholder: "",
+                fontSize: 13.5,
+                textColor: .primary,
+                placeholderColor: .secondary,
+                isDisabled: false,
+                isCompletionOpen: isCompletionOpen,
+                canCycleSendMode: false,
+                minHeight: 34,
+                maxHeight: 200,
+                onTextChange: { _, _ in },
+                onSelectionChange: { _, _ in },
+                onSubmit: {},
+                onCycleSendMode: { _ in },
+                onCompletionNavigate: { _ in },
+                onCompletionAccept: {},
+                onCompletionDismiss: {},
+                onAttachFiles: { _ in },
+                onEditLastUserMessage: {
+                    editTriggers += 1
+                    return true
+                }
+            )
+            let coordinator = representable.makeCoordinator()
+            coordinator.textView = textView
+            return (coordinator, textView)
+        }
+
+        let (coord, textView) = makeCoordinator(isCompletionOpen: false)
+        textView.string = ""
+        let handledWhenEmpty = coord.textView(textView, doCommandBy: #selector(NSResponder.moveUp(_:)))
+        #expect(handledWhenEmpty)
+        #expect(editTriggers == 1)
+
+        textView.string = "Draft text"
+        let handledWithText = coord.textView(textView, doCommandBy: #selector(NSResponder.moveUp(_:)))
+        #expect(!handledWithText)
+        #expect(editTriggers == 1)
+
+        let (openCoord, openTextView) = makeCoordinator(isCompletionOpen: true)
+        openTextView.string = ""
+        let handledWithCompletion = openCoord.textView(openTextView, doCommandBy: #selector(NSResponder.moveUp(_:)))
+        #expect(handledWithCompletion)
+        #expect(editTriggers == 1)
+    }
 }
