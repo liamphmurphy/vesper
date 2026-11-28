@@ -23,6 +23,67 @@ public enum ChatChartType: String, Sendable, Equatable, Hashable, Codable, CaseI
     case calendarHeatmap = "calendar-heatmap"
     case radar
     case sparkline
+    case waterfall
+    case sankey
+}
+
+public struct ChatWaterfallItem: Sendable, Equatable, Hashable, Identifiable {
+    public enum Kind: String, Sendable, Equatable, Hashable {
+        case start
+        case delta
+        case total
+    }
+
+    public let id: Int
+    public let label: String
+    public let value: Double
+    public let kind: Kind
+    public let startY: Double
+    public let endY: Double
+
+    public init(id: Int, label: String, value: Double, kind: Kind, startY: Double, endY: Double) {
+        self.id = id
+        self.label = label
+        self.value = value
+        self.kind = kind
+        self.startY = startY
+        self.endY = endY
+    }
+}
+
+public struct ChatSankeyNode: Sendable, Equatable, Hashable, Identifiable {
+    public let id: String
+    public let label: String
+    public let group: String?
+
+    public init(id: String, label: String, group: String? = nil) {
+        self.id = id
+        self.label = label
+        self.group = group
+    }
+}
+
+public struct ChatSankeyLink: Sendable, Equatable, Hashable, Identifiable {
+    public var id: String { "\(from)->\(to)" }
+    public let from: String
+    public let to: String
+    public let value: Double
+
+    public init(from: String, to: String, value: Double) {
+        self.from = from
+        self.to = to
+        self.value = value
+    }
+}
+
+public struct ChatSankeyData: Sendable, Equatable, Hashable {
+    public let nodes: [ChatSankeyNode]
+    public let links: [ChatSankeyLink]
+
+    public init(nodes: [ChatSankeyNode], links: [ChatSankeyLink]) {
+        self.nodes = nodes
+        self.links = links
+    }
 }
 
 public struct ChatChartPoint: Sendable, Equatable, Hashable {
@@ -137,6 +198,8 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
     public var sparklineValues: [Double]
     public var sparklineDelta: String?
     public var sparklineTone: String?
+    public var waterfallItems: [ChatWaterfallItem]
+    public var sankey: ChatSankeyData?
 
     public init(
         type: ChatChartType,
@@ -152,7 +215,9 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         radarMax: Double? = nil,
         sparklineValues: [Double] = [],
         sparklineDelta: String? = nil,
-        sparklineTone: String? = nil
+        sparklineTone: String? = nil,
+        waterfallItems: [ChatWaterfallItem] = [],
+        sankey: ChatSankeyData? = nil
     ) {
         self.type = type
         self.title = title
@@ -168,6 +233,8 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         self.sparklineValues = sparklineValues
         self.sparklineDelta = sparklineDelta
         self.sparklineTone = sparklineTone
+        self.waterfallItems = waterfallItems
+        self.sankey = sankey
     }
 
     /// True when a code fence's info string starts with `chart` (case-insensitive).
@@ -193,7 +260,7 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
             .lowercased()
             .replacingOccurrences(of: "_", with: "-")
         guard let type = ChatChartType(rawValue: rawType) else {
-            return .failure(ChatChartError("Unsupported chart type. Expected bar, stacked-bar, line, area, stacked-area, scatter, histogram, heatmap, calendar-heatmap, radar or sparkline."))
+            return .failure(ChatChartError("Unsupported chart type. Expected bar, stacked-bar, line, area, stacked-area, scatter, histogram, heatmap, calendar-heatmap, radar, sparkline, waterfall or sankey."))
         }
 
         let title = trimmedText(obj["title"])
@@ -212,6 +279,10 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
             return parseCalendarHeatmap(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
         case .sparkline:
             return parseSparkline(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        case .waterfall:
+            return parseWaterfall(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
+        case .sankey:
+            return parseSankey(obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
         case .bar, .stackedBar, .line, .area, .stackedArea, .scatter, .radar:
             return parseSeriesChart(type: type, obj: obj, title: title, subtitle: subtitle, xAxis: xAxis, yAxis: yAxis)
         }
@@ -482,6 +553,104 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         ))
     }
 
+    private static func parseWaterfall(
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
+        guard case .array(let rawItems) = obj["items"], !rawItems.isEmpty, rawItems.count <= Limits.categories else {
+            return .failure(ChatChartError("A waterfall chart needs 1 to \(Limits.categories) items."))
+        }
+        var running = 0.0
+        var items: [ChatWaterfallItem] = []
+        for (idx, raw) in rawItems.enumerated() {
+            let entry = asObject(raw)
+            let label = trimmedText(entry["label"]) ?? "Step \(idx + 1)"
+            let rawKind = (trimmedText(entry["kind"]) ?? (idx == 0 ? "start" : "delta")).lowercased()
+            let kind = ChatWaterfallItem.Kind(rawValue: rawKind) ?? .delta
+            let val = entry["value"].flatMap(finiteDouble)
+            switch kind {
+            case .start:
+                let v = val ?? 0
+                running = v
+                items.append(ChatWaterfallItem(id: idx, label: label, value: v, kind: .start, startY: 0, endY: v))
+            case .total:
+                let v = val ?? running
+                running = v
+                items.append(ChatWaterfallItem(id: idx, label: label, value: v, kind: .total, startY: 0, endY: v))
+            case .delta:
+                guard let v = val else {
+                    return .failure(ChatChartError("Waterfall item “\(label)” needs a numeric value."))
+                }
+                let startY = running
+                running += v
+                items.append(ChatWaterfallItem(id: idx, label: label, value: v, kind: .delta, startY: startY, endY: running))
+            }
+        }
+        return .success(ChatChartSpec(
+            type: .waterfall,
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
+            waterfallItems: items
+        ))
+    }
+
+    private static func parseSankey(
+        obj: [String: JSONValue],
+        title: String?,
+        subtitle: String?,
+        xAxis: ChatChartAxis,
+        yAxis: ChatChartAxis
+    ) -> Result<ChatChartSpec, ChatChartError> {
+        guard case .array(let rawLinks) = obj["links"], !rawLinks.isEmpty else {
+            return .failure(ChatChartError("A sankey chart needs at least one link with from, to, and positive value."))
+        }
+        var nodeMap: [String: ChatSankeyNode] = [:]
+        var nodeOrder: [String] = []
+        if case .array(let rawNodes) = obj["nodes"] {
+            for raw in rawNodes.prefix(40) {
+                let n = asObject(raw)
+                guard let id = trimmedText(n["id"]) else { continue }
+                let label = trimmedText(n["label"]) ?? id
+                nodeMap[id] = ChatSankeyNode(id: id, label: label, group: trimmedText(n["group"]))
+                nodeOrder.append(id)
+            }
+        }
+        var links: [ChatSankeyLink] = []
+        for raw in rawLinks.prefix(120) {
+            let l = asObject(raw)
+            guard let from = trimmedText(l["from"] ?? l["source"]),
+                  let to = trimmedText(l["to"] ?? l["target"]),
+                  from != to,
+                  let val = l["value"].flatMap(finiteDouble), val > 0 else { continue }
+            if nodeMap[from] == nil {
+                nodeMap[from] = ChatSankeyNode(id: from, label: from)
+                nodeOrder.append(from)
+            }
+            if nodeMap[to] == nil {
+                nodeMap[to] = ChatSankeyNode(id: to, label: to)
+                nodeOrder.append(to)
+            }
+            links.append(ChatSankeyLink(from: from, to: to, value: val))
+        }
+        guard !links.isEmpty else {
+            return .failure(ChatChartError("Sankey links need valid from, to, and positive value."))
+        }
+        let nodes = nodeOrder.compactMap { nodeMap[$0] }
+        return .success(ChatChartSpec(
+            type: .sankey,
+            title: title,
+            subtitle: subtitle,
+            x: xAxis,
+            y: yAxis,
+            sankey: ChatSankeyData(nodes: nodes, links: links)
+        ))
+    }
+
     // MARK: - Ticks & Formatting
 
     /// Evenly spaced round numbers covering `min...max`, widening endpoints to land on ticks.
@@ -582,6 +751,24 @@ public struct ChatChartSpec: Sendable, Equatable, Hashable {
         case .sparkline:
             let headers = ["Point", y.label ?? "Value"]
             let rows = sparklineValues.enumerated().map { [String($0.offset + 1), formattedValue($0.element)] }
+            return ChatChartTable(headers: headers, rows: rows)
+
+        case .waterfall:
+            let headers = [x.label ?? "Step", "Change", "Running Total"]
+            let rows = waterfallItems.map { item in
+                let change = item.kind == .delta && item.value > 0
+                    ? "+\(formattedValue(item.value))"
+                    : formattedValue(item.value)
+                return [item.label, change, formattedValue(item.endY)]
+            }
+            return ChatChartTable(headers: headers, rows: rows)
+
+        case .sankey:
+            let headers = ["From", "To", y.label ?? "Flow"]
+            let labels = Dictionary(uniqueKeysWithValues: (sankey?.nodes ?? []).map { ($0.id, $0.label) })
+            let rows = (sankey?.links ?? []).map { link in
+                [labels[link.from] ?? link.from, labels[link.to] ?? link.to, formattedValue(link.value)]
+            }
             return ChatChartTable(headers: headers, rows: rows)
 
         case .bar, .stackedBar, .line, .area, .stackedArea, .radar:

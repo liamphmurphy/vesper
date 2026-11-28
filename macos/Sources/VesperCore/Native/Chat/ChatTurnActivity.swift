@@ -135,23 +135,68 @@ public struct ChatPlanProgress: Sendable, Equatable {
     }
 }
 
-/// A finished turn's folded steps, duration, pure thinking time, and thinking blocks.
+/// A memory entry created, updated, or forgotten during a finished turn (`save_memory`,
+/// `update_memory`, `forget_memory`), surfaced inline under the reply with Edit/Undo actions.
+public struct ChatMemoryDiff: Sendable, Equatable, Identifiable {
+    public enum Action: String, Sendable, Equatable {
+        case created
+        case updated
+        case forgotten
+    }
+
+    public let id: String
+    public let action: Action
+    public let memoryId: String?
+    public let about: String
+    public let title: String
+    public let summary: String
+    public let previousTitle: String?
+    public let previousSummary: String?
+    public let type: String?
+
+    public init(
+        id: String,
+        action: Action,
+        memoryId: String? = nil,
+        about: String = "person",
+        title: String,
+        summary: String = "",
+        previousTitle: String? = nil,
+        previousSummary: String? = nil,
+        type: String? = nil
+    ) {
+        self.id = id
+        self.action = action
+        self.memoryId = memoryId
+        self.about = about
+        self.title = title
+        self.summary = summary
+        self.previousTitle = previousTitle
+        self.previousSummary = previousSummary
+        self.type = type
+    }
+}
+
+/// A finished turn's folded steps, duration, pure thinking time, thinking blocks, and memory changes.
 public struct ChatFinishedTurn: Sendable, Equatable {
     public var steps: [ChatTurnStep]
     public var durationMs: Int?
     public var thinkingDurationMs: Int?
     public var thinkingBlocks: [ChatThinkingBlock]
+    public var memoryDiffs: [ChatMemoryDiff]
 
     public init(
         steps: [ChatTurnStep] = [],
         durationMs: Int? = nil,
         thinkingDurationMs: Int? = nil,
-        thinkingBlocks: [ChatThinkingBlock] = []
+        thinkingBlocks: [ChatThinkingBlock] = [],
+        memoryDiffs: [ChatMemoryDiff] = []
     ) {
         self.steps = steps
         self.durationMs = durationMs
         self.thinkingDurationMs = thinkingDurationMs
         self.thinkingBlocks = thinkingBlocks
+        self.memoryDiffs = memoryDiffs
     }
 }
 
@@ -489,12 +534,14 @@ public struct ChatTurnActivity: Sendable, Equatable {
             }
             return parsed.closedThinkingMs + trailing
         }()
+        let memoryDiffs = extractMemoryDiffs(from: parsed.calls)
         guard parsed.calls.contains(where: { $0.tool != replyBlockTool && !bookkeeping.contains(bareTool($0.tool)) }) else {
             return ChatFinishedTurn(
                 steps: [],
                 durationMs: durationMs,
                 thinkingDurationMs: thinkingDurationMs,
-                thinkingBlocks: parsed.thinkingBlocks
+                thinkingBlocks: parsed.thinkingBlocks,
+                memoryDiffs: memoryDiffs
             )
         }
         var (steps, _) = buildSteps(calls: parsed.calls, callTimes: parsed.callTimes, between: false, phase: nil, plans: parsed.plans)
@@ -505,8 +552,91 @@ public struct ChatTurnActivity: Sendable, Equatable {
             steps: steps,
             durationMs: durationMs,
             thinkingDurationMs: thinkingDurationMs,
-            thinkingBlocks: parsed.thinkingBlocks
+            thinkingBlocks: parsed.thinkingBlocks,
+            memoryDiffs: memoryDiffs
         )
+    }
+
+    /// Parses successful `save_memory`, `update_memory`, and `forget_memory` calls into inline diff pills.
+    public static func extractMemoryDiffs(from calls: [ChatToolCall]) -> [ChatMemoryDiff] {
+        var diffs: [ChatMemoryDiff] = []
+        for call in calls where call.done && !call.failed {
+            var name = bareTool(call.tool)
+            if name.hasPrefix("mcp_lazyagents_") {
+                name = String(name.dropFirst("mcp_lazyagents_".count))
+            }
+            guard name == "save_memory" || name == "update_memory" || name == "forget_memory" else { continue }
+            let inputObj: [String: JSONValue] = {
+                if case .object(let o) = call.input { return o }
+                return [:]
+            }()
+            let outputObj: [String: JSONValue] = {
+                guard let raw = call.output?.data(using: .utf8),
+                      let decoded = try? JSONDecoder().decode(JSONValue.self, from: raw),
+                      case .object(let o) = decoded else { return [:] }
+                return o
+            }()
+
+            switch name {
+            case "save_memory":
+                let memId = outputObj["id"]?.stringValue
+                let actionRaw = outputObj["action"]?.stringValue ?? "created"
+                let action: ChatMemoryDiff.Action = actionRaw == "updated" ? .updated : .created
+                let title = outputObj["title"]?.stringValue ?? inputObj["title"]?.stringValue ?? "Memory"
+                let summary = inputObj["summary"]?.stringValue ?? ""
+                let about = outputObj["about"]?.stringValue ?? inputObj["about"]?.stringValue ?? "person"
+                let prevObj: [String: JSONValue] = {
+                    if case .object(let p) = outputObj["previous"] { return p }
+                    return [:]
+                }()
+                diffs.append(ChatMemoryDiff(
+                    id: "mem:\(call.key):\(memId ?? title)",
+                    action: action,
+                    memoryId: memId,
+                    about: about,
+                    title: title,
+                    summary: summary,
+                    previousTitle: prevObj["title"]?.stringValue,
+                    previousSummary: prevObj["summary"]?.stringValue,
+                    type: inputObj["type"]?.stringValue ?? prevObj["type"]?.stringValue
+                ))
+
+            case "update_memory":
+                let memObj: [String: JSONValue] = {
+                    if case .object(let m) = outputObj["memory"] { return m }
+                    return outputObj
+                }()
+                let memId = memObj["id"]?.stringValue ?? inputObj["id"]?.stringValue
+                let title = memObj["title"]?.stringValue ?? inputObj["title"]?.stringValue ?? "Memory"
+                let summary = memObj["summary"]?.stringValue ?? inputObj["summary"]?.stringValue ?? ""
+                let about = memObj["about"]?.stringValue ?? "person"
+                diffs.append(ChatMemoryDiff(
+                    id: "mem:\(call.key):\(memId ?? title)",
+                    action: .updated,
+                    memoryId: memId,
+                    about: about,
+                    title: title,
+                    summary: summary,
+                    type: memObj["type"]?.stringValue ?? inputObj["type"]?.stringValue
+                ))
+
+            case "forget_memory":
+                let memId = outputObj["forgotten"]?.stringValue ?? inputObj["id"]?.stringValue
+                let title = outputObj["title"]?.stringValue ?? "Memory"
+                diffs.append(ChatMemoryDiff(
+                    id: "mem:\(call.key):\(memId ?? title)",
+                    action: .forgotten,
+                    memoryId: memId,
+                    about: "person",
+                    title: title,
+                    summary: ""
+                ))
+
+            default:
+                break
+            }
+        }
+        return diffs
     }
 
     /// Extracts plan progress from a `planned` turn for the pinned checklist bar above the composer.

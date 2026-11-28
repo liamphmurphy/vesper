@@ -24,6 +24,14 @@ struct ChatTranscriptView: View {
     var onForkMessage: (@MainActor (API.ChatMessage) -> Void)? = nil
     var onSaveWiki: (@MainActor (API.ChatMessage) -> Void)? = nil
     var onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)? = nil
+    var replyVariants: ChatReplyVariantStore = ChatReplyVariantStore()
+    var onSelectReplyVariant: (@MainActor (String, Int) -> Void)? = nil
+    var onEditLastUserMessage: (@MainActor (String) async -> String?)? = nil
+    var onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)? = nil
+    var readingMessageId: String? = nil
+    var onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)? = nil
+    var onSelectionAction: (@MainActor (API.ChatMessage, String?, ChatSelectionAction, String) -> Void)? = nil
+    var onSaveAsTemplate: (@MainActor (String) -> Void)? = nil
 
     @State private var watched: [QueryKey] = []
     @State private var parseCache = ChatParsedMessageCache()
@@ -125,6 +133,12 @@ struct ChatTranscriptView: View {
         let visibleRange = ChatTranscriptWindow.visibleRange(totalCount: messages.count, visibleLimit: effectiveLimit)
         let hiddenCount = visibleRange.lowerBound
         let visibleMessages = visibleRange.map { idx in (index: idx, message: messages[idx]) }
+        let lastUserMessage = messages.last(where: { $0.role == .user })
+        let lastAssistantMessage = messages.last(where: { $0.role == .assistant })
+        let canEditOrRegenerate = !isRunning && session?.archived != true
+        let lastAssistantFollowsLastUser = lastUserMessage != nil
+            && lastAssistantMessage != nil
+            && (lastAssistantMessage?.seq ?? 0) > (lastUserMessage?.seq ?? 0)
 
         return Group {
             switch loadState {
@@ -165,9 +179,28 @@ struct ChatTranscriptView: View {
                                 let message = item.message
                                 let nextBody = idx + 1 < messages.count ? messages[idx + 1].bodyMd : nil
                                 let isUser = message.role == .user
+                                let isLastUser = canEditOrRegenerate && message.id == lastUserMessage?.id
+                                let isLastAssistant = canEditOrRegenerate && lastAssistantFollowsLastUser && message.id == lastAssistantMessage?.id
+                                let variantState: (items: [ChatReplyVariant], activeIndex: Int)? = {
+                                    guard message.role == .assistant,
+                                          message.id == lastAssistantMessage?.id,
+                                          lastAssistantFollowsLastUser,
+                                          let uId = lastUserMessage?.id else { return nil }
+                                    let live = ChatReplyVariant(
+                                        id: message.id,
+                                        bodyMd: message.bodyMd,
+                                        model: message.model,
+                                        harness: message.harness?.rawValue,
+                                        createdAt: message.createdAt
+                                    )
+                                    let resolved = replyVariants.variants(chatId: chatId, userMessageId: uId, liveReply: live)
+                                    return resolved.items.count > 1 ? resolved : nil
+                                }()
+                                let activeVariant = variantState.map { $0.items[$0.activeIndex] }
+                                let effectiveBodyMd = activeVariant?.bodyMd ?? message.bodyMd
                                 let parsed = parseCache.parsed(
-                                    messageId: message.id,
-                                    bodyMd: message.bodyMd,
+                                    messageId: activeVariant?.id ?? message.id,
+                                    bodyMd: effectiveBodyMd,
                                     extractSources: !isUser,
                                     knownPersonaNames: knownPersonaNames
                                 )
@@ -177,11 +210,18 @@ struct ChatTranscriptView: View {
                                 ChatMessageRowView(
                                     chatId: chatId,
                                     message: message,
+                                    displayedBodyMd: effectiveBodyMd,
                                     parsed: parsed,
                                     nextMessageBody: nextBody,
                                     personaId: persona?.id,
                                     speakerName: speakerName,
                                     isRunning: isRunning,
+                                    isLastUserMessage: isLastUser,
+                                    isLastAssistantMessage: isLastAssistant,
+                                    lastUserMessageId: lastUserMessage?.id,
+                                    lastUserMessageBody: lastUserMessage?.bodyMd,
+                                    variants: variantState?.items ?? [],
+                                    activeVariantIndex: variantState?.activeIndex ?? 0,
                                     turnWindow: turnWindows[message.id],
                                     endedTurn: endedTurns[message.id],
                                     workflowRuns: parsed.hasWorkflowRunSegment ? workflowRuns : [],
@@ -197,6 +237,13 @@ struct ChatTranscriptView: View {
                                     onForkMessage: onForkMessage,
                                     onSaveWiki: onSaveWiki,
                                     onSecondOpinion: onSecondOpinion,
+                                    onSelectReplyVariant: onSelectReplyVariant,
+                                    onEditLastUserMessage: onEditLastUserMessage,
+                                    onRegenerateMessage: onRegenerateMessage,
+                                    isReadingAloud: readingMessageId == message.id,
+                                    onToggleReadAloud: onToggleReadAloud,
+                                    onSelectionAction: onSelectionAction,
+                                    onSaveAsTemplate: onSaveAsTemplate,
                                     onScrollToSelf: {
                                         withAnimation(.easeOut(duration: 0.2)) {
                                             proxy.scrollTo(message.id, anchor: .top)
@@ -442,11 +489,18 @@ private struct ChatMessageRowView: View {
 
     let chatId: String
     let message: API.ChatMessage
+    let displayedBodyMd: String
     let parsed: ParsedChatMessage
     let nextMessageBody: String?
     let personaId: String?
     let speakerName: String
     let isRunning: Bool
+    let isLastUserMessage: Bool
+    let isLastAssistantMessage: Bool
+    let lastUserMessageId: String?
+    let lastUserMessageBody: String?
+    let variants: [ChatReplyVariant]
+    let activeVariantIndex: Int
     let turnWindow: ChatTurnWindow?
     let endedTurn: ChatEndedTurn?
     let workflowRuns: [API.WorkflowRun]
@@ -462,13 +516,25 @@ private struct ChatMessageRowView: View {
     let onForkMessage: (@MainActor (API.ChatMessage) -> Void)?
     let onSaveWiki: (@MainActor (API.ChatMessage) -> Void)?
     let onSecondOpinion: (@MainActor (API.ChatMessage, API.Harness, String) -> Void)?
+    let onSelectReplyVariant: (@MainActor (String, Int) -> Void)?
+    let onEditLastUserMessage: (@MainActor (String) async -> String?)?
+    let onRegenerateMessage: (@MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?)?
+    let isReadingAloud: Bool
+    let onToggleReadAloud: (@MainActor (API.ChatMessage, String?, String, String) -> Void)?
+    let onSelectionAction: (@MainActor (API.ChatMessage, String?, ChatSelectionAction, String) -> Void)?
+    let onSaveAsTemplate: (@MainActor (String) -> Void)?
     let onScrollToSelf: @MainActor () -> Void
 
     @State private var togglingBookmark = false
     @State private var isReplyCollapsed = false
+    @State private var isEditingUserMessage = false
+    @State private var editDraft = ""
+    @State private var editSubmitting = false
+    @State private var editError: String?
+    @State private var regenerating = false
 
     private var isFoldableReply: Bool {
-        message.role == .assistant && ChatReplyFoldingLogic.isFoldableReply(message.bodyMd)
+        message.role == .assistant && ChatReplyFoldingLogic.isFoldableReply(displayedBodyMd)
     }
 
     private var previewRequest: APIRequest<API.LinkPreviews>? {
@@ -548,6 +614,32 @@ private struct ChatMessageRowView: View {
                             .help("Quote in composer")
                         }
 
+                        if isLastUserMessage, onEditLastUserMessage != nil, !isEditingUserMessage {
+                            Button {
+                                editDraft = parsed.typedBody
+                                editError = nil
+                                isEditingUserMessage = true
+                            } label: {
+                                Image(systemName: "pencil")
+                                    .imageScale(.small)
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Edit message and re-send")
+                        }
+
+                        if let onSaveAsTemplate, !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                            Button {
+                                onSaveAsTemplate(parsed.typedBody)
+                            } label: {
+                                Image(systemName: "text.badge.star")
+                                    .imageScale(.small)
+                                    .foregroundStyle(p.tertiaryText)
+                            }
+                            .buttonStyle(.plain)
+                            .help("Save as reusable prompt template")
+                        }
+
                         if let onForkMessage {
                             Button {
                                 onForkMessage(message)
@@ -562,7 +654,40 @@ private struct ChatMessageRowView: View {
                     }
                     ChatContextChipsView(stripped: parsed.context, refs: message.contextRefs ?? [])
                     VStack(alignment: .leading, spacing: 8) {
-                        if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                        if isEditingUserMessage {
+                            VStack(alignment: .leading, spacing: 8) {
+                                TextEditor(text: $editDraft)
+                                    .font(.system(size: theme.pointSize(.body)))
+                                    .scrollContentBackground(.hidden)
+                                    .frame(minHeight: 64, maxHeight: 220)
+                                    .padding(6)
+                                    .background(p.background, in: RoundedRectangle(cornerRadius: 8))
+                                    .overlay(RoundedRectangle(cornerRadius: 8).stroke(p.accent.opacity(0.6)))
+                                if let editError {
+                                    Text(editError)
+                                        .font(.system(size: theme.pointSize(.micro)))
+                                        .foregroundStyle(theme.swiftUIColor("pill-blocked-fg", fallback: .red))
+                                }
+                                HStack(spacing: 8) {
+                                    Spacer()
+                                    Button("Cancel") {
+                                        isEditingUserMessage = false
+                                        editError = nil
+                                    }
+                                    .buttonStyle(.vesper())
+                                    .keyboardShortcut(.cancelAction)
+                                    .disabled(editSubmitting)
+
+                                    Button(editSubmitting ? "Sending…" : "Save & Re-send") {
+                                        submitUserEdit()
+                                    }
+                                    .buttonStyle(.vesper(.primary))
+                                    .keyboardShortcut(.return, modifiers: [.command])
+                                    .disabled(editSubmitting || editDraft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                                }
+                            }
+                            .frame(minWidth: 340, maxWidth: 620)
+                        } else if !parsed.typedBody.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
                             MarkdownView(markdown: parsed.typedBody, textStyle: .chat, chat: true, findRow: findRow)
                         }
                         if let attachments = message.attachments, !attachments.isEmpty {
@@ -641,6 +766,36 @@ private struct ChatMessageRowView: View {
                     if message.bookmarked == true {
                         TonePill(label: "Pinned", tone: "review")
                     }
+                    if variants.count > 1, let uId = lastUserMessageId, let onSelectReplyVariant {
+                        HStack(spacing: 4) {
+                            Button {
+                                onSelectReplyVariant(uId, max(0, activeVariantIndex - 1))
+                            } label: {
+                                Image(systemName: "chevron.left")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(activeVariantIndex <= 0)
+
+                            Text("\(activeVariantIndex + 1)/\(variants.count)")
+                                .font(.system(size: theme.pointSize(.micro), weight: .medium, design: .monospaced))
+
+                            Button {
+                                onSelectReplyVariant(uId, min(variants.count - 1, activeVariantIndex + 1))
+                            } label: {
+                                Image(systemName: "chevron.right")
+                                    .font(.system(size: 9, weight: .semibold))
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(activeVariantIndex >= variants.count - 1)
+                        }
+                        .foregroundStyle(p.secondaryText)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(p.surface, in: Capsule())
+                        .overlay(Capsule().stroke(p.border))
+                        .help("Switch between regenerated reply variants")
+                    }
                     Spacer(minLength: 8)
                     assistantActionBar
                 }
@@ -652,7 +807,8 @@ private struct ChatMessageRowView: View {
                             outcome: .done,
                             since: turnWindow.since,
                             until: message.createdAt,
-                            end: APIDate.epoch(message.createdAt)
+                            end: APIDate.epoch(message.createdAt),
+                            personaId: personaId
                         )
                     }
 
@@ -774,6 +930,18 @@ private struct ChatMessageRowView: View {
                 .help("Start thread on this message")
             }
 
+            if let onToggleReadAloud {
+                Button {
+                    onToggleReadAloud(message, personaId, speakerName, displayedBodyMd)
+                } label: {
+                    Image(systemName: isReadingAloud ? "stop.circle.fill" : "speaker.wave.2")
+                        .imageScale(.small)
+                        .foregroundStyle(isReadingAloud ? p.accent : p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help(isReadingAloud ? "Stop reading aloud" : "Read message aloud")
+            }
+
             Button {
                 toggleBookmark()
             } label: {
@@ -784,6 +952,22 @@ private struct ChatMessageRowView: View {
             .buttonStyle(.plain)
             .disabled(togglingBookmark)
             .help(message.bookmarked == true ? "Remove bookmark" : "Bookmark message")
+
+            if isLastAssistantMessage,
+               let userId = lastUserMessageId,
+               let userBody = lastUserMessageBody,
+               let onRegenerateMessage {
+                Button {
+                    triggerRegenerate(userId: userId, userBody: userBody, harness: nil, modelId: nil, handler: onRegenerateMessage)
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .disabled(regenerating)
+                .help("Regenerate reply")
+            }
 
             if let onSecondOpinion, !availableModels.isEmpty {
                 Menu {
@@ -808,7 +992,7 @@ private struct ChatMessageRowView: View {
             }
 
             Button {
-                context.copyToClipboard(message.bodyMd)
+                context.copyToClipboard(displayedBodyMd)
                 context.showToast(ToastItemModel(id: "chat.copy.\(message.id)", title: "Copied message", tone: .success))
             } label: {
                 Image(systemName: "doc.on.doc")
@@ -819,6 +1003,29 @@ private struct ChatMessageRowView: View {
             .help("Copy markdown")
 
             Menu {
+                if isLastAssistantMessage,
+                   let userId = lastUserMessageId,
+                   let userBody = lastUserMessageBody,
+                   let onRegenerateMessage,
+                   !availableModels.isEmpty {
+                    Menu("Regenerate with…") {
+                        ForEach(availableModels, id: \.harness.rawValue) { group in
+                            Section(group.label) {
+                                ForEach(group.models, id: \.id) { item in
+                                    Button(item.label) {
+                                        triggerRegenerate(
+                                            userId: userId,
+                                            userBody: userBody,
+                                            harness: group.harness,
+                                            modelId: item.id,
+                                            handler: onRegenerateMessage
+                                        )
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
                 if let onQuoteMessage, !otherPersonas.isEmpty {
                     Menu("Ask another persona") {
                         ForEach(otherPersonas, id: \.id) { other in
@@ -850,11 +1057,56 @@ private struct ChatMessageRowView: View {
         }
     }
 
+    private func submitUserEdit() {
+        guard !editSubmitting, let onEditLastUserMessage else { return }
+        let trimmed = editDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        editSubmitting = true
+        editError = nil
+        Task {
+            defer { editSubmitting = false }
+            if let err = await onEditLastUserMessage(trimmed) {
+                editError = err
+            } else {
+                isEditingUserMessage = false
+            }
+        }
+    }
+
+    private func triggerRegenerate(
+        userId: String,
+        userBody: String,
+        harness: API.Harness?,
+        modelId: String?,
+        handler: @escaping @MainActor (API.ChatMessage, String, String, API.Harness?, String?) async -> String?
+    ) {
+        guard !regenerating else { return }
+        regenerating = true
+        Task {
+            defer { regenerating = false }
+            if let err = await handler(message, userId, userBody, harness, modelId) {
+                context.showToast(ToastItemModel(id: "chat.regen.err", title: err, tone: .error))
+            }
+        }
+    }
+
     @ViewBuilder
     private func segmentView(_ segment: ChatMessageSegment, citationNumbers: [Int]) -> some View {
         switch segment {
         case .markdown(let text):
-            MarkdownView(markdown: text, textStyle: .chat, chat: true, citations: citationNumbers, findRow: findRow, onLinkWithAnchor: handleMarkdownLink)
+            MarkdownView(
+                markdown: text,
+                textStyle: .chat,
+                chat: true,
+                citations: citationNumbers,
+                findRow: findRow,
+                onLinkWithAnchor: handleMarkdownLink,
+                onSelectionAction: onSelectionAction.map { handler in
+                    { @MainActor action, excerpt in
+                        handler(message, message.role == .assistant ? speakerName : nil, action, excerpt)
+                    }
+                }
+            )
         case .embedded(let kind, let source, let info, let index):
             EmbeddedBlockView(kind: kind, source: source, messageID: message.id, info: info, index: index)
         case .chart(let spec):
@@ -875,6 +1127,8 @@ private struct ChatMessageRowView: View {
             ChatGraphCardView(spec: spec)
         case .plot(let spec):
             ChatPlotCardView(spec: spec)
+        case .map(let spec):
+            ChatMapCardView(spec: spec)
         case .dataTable(let spec):
             ChatDataTableCardView(spec: spec)
         case .codeGroup(let spec):
@@ -941,6 +1195,7 @@ private struct ChatTurnStepsCardView: View {
     let since: String?
     let until: String?
     let end: TimeInterval?
+    var personaId: String? = nil
 
     var body: some View {
         let events = context.store.entry(API.listRunEvents(id: runId)).data?.events ?? []
@@ -952,7 +1207,7 @@ private struct ChatTurnStepsCardView: View {
             end: end
         )
         let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
-        if showThinking || !turn.steps.isEmpty {
+        if showThinking || !turn.steps.isEmpty || !turn.memoryDiffs.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 if showThinking {
                     ChatFinishedThinkingDisclosureView(
@@ -962,6 +1217,9 @@ private struct ChatTurnStepsCardView: View {
                 }
                 if !turn.steps.isEmpty {
                     ChatFinishedTurnCardView(turn: turn, outcome: outcome)
+                }
+                if !turn.memoryDiffs.isEmpty {
+                    ChatMemoryDiffPillsView(diffs: turn.memoryDiffs, personaId: personaId)
                 }
             }
         }

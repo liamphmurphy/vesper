@@ -6,6 +6,7 @@ import (
 
 	"github.com/liamphmurphy/vesper/server/internal/api"
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/runs"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
 
@@ -36,7 +37,17 @@ func (s *Server) EditLastChatMessage(ctx context.Context, req api.EditLastChatMe
 	if req.Body == nil {
 		return nil, apperr.Invalid("body", "required")
 	}
-	msg, err := s.Runs.EditLastChatMessage(ctx, ws, u.ID, req.Id, req.Body.Body)
+	var opts runs.ChatEditOptions
+	if req.Body.Harness != nil {
+		opts.Harness = string(*req.Body.Harness)
+	}
+	if req.Body.Model != nil {
+		opts.Model = *req.Body.Model
+	}
+	if req.Body.Effort != nil {
+		opts.Effort = string(*req.Body.Effort)
+	}
+	msg, err := s.Runs.EditLastChatMessage(ctx, ws, u.ID, req.Id, req.Body.Body, opts)
 	if err != nil {
 		return nil, err
 	}

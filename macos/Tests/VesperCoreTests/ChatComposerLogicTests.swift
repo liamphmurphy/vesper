@@ -53,6 +53,8 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/aside what changed?"), ChatParsedCommand(name: "aside", arg: "what changed?"))
         XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/compact   focus on auth  "), ChatParsedCommand(name: "compact", arg: "focus on auth"))
         XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/new"), ChatParsedCommand(name: "new", arg: ""))
+        XCTAssertEqual(ChatSlashCommandLogic.parseCommand("/temp"), ChatParsedCommand(name: "temp", arg: ""))
+        XCTAssertTrue(ChatSlashCommandLogic.matchingCommands(query: "tem").contains { $0.name == "temp" })
         XCTAssertNil(ChatSlashCommandLogic.parseCommand("/usr/bin/env"))
         XCTAssertNil(ChatSlashCommandLogic.parseCommand("//literal slash"))
         XCTAssertNil(ChatSlashCommandLogic.parseCommand("/aside line1\nline2"))
@@ -354,5 +356,39 @@ final class ChatComposerLogicTests: XCTestCase {
         XCTAssertTrue(ChatSlashCommand.all.contains(where: { $0.name == "outline" }))
         let parsed = ChatSlashCommandLogic.parseCommand("/outline")
         XCTAssertEqual(parsed?.name, "outline")
+    }
+
+    func testRoundtableBuildsStructuredMultiPersonaPrompt() {
+        XCTAssertTrue(ChatSlashCommand.all.contains(where: { $0.name == "roundtable" }))
+        let explicit = ChatRoundtableLogic.buildPrompt(
+            raw: "@Judy @Tech Lead Should we split this microservice?",
+            allPersonaNames: ["Judy", "Tech Lead", "Iris"],
+            participantNames: ["Judy"]
+        )
+        switch explicit {
+        case .prompt(let text):
+            XCTAssertTrue(text.hasPrefix("@Judy @Tech Lead"))
+            XCTAssertTrue(text.contains("keep it to 2 replies"))
+            XCTAssertTrue(text.contains("Should we split this microservice?"))
+        case .error(let err):
+            XCTFail("Unexpected error: \(err)")
+        }
+
+        let implicit = ChatRoundtableLogic.buildPrompt(
+            raw: "Best approach for caching?",
+            allPersonaNames: ["Judy", "Iris", "Elminster"],
+            participantNames: ["Judy", "Iris", "Elminster"]
+        )
+        switch implicit {
+        case .prompt(let text):
+            XCTAssertTrue(text.hasPrefix("@Judy @Iris @Elminster"))
+            XCTAssertTrue(text.contains("keep it to 3 replies"))
+        case .error(let err):
+            XCTFail("Unexpected error: \(err)")
+        }
+
+        if case .prompt = ChatRoundtableLogic.buildPrompt(raw: "Solo question", allPersonaNames: ["Judy"], participantNames: ["Judy"]) {
+            XCTFail("Expected error when fewer than 2 personas are targeted")
+        }
     }
 }

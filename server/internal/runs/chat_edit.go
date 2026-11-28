@@ -10,8 +10,17 @@ import (
 	"github.com/jackc/pgx/v5"
 
 	"github.com/liamphmurphy/vesper/server/internal/apperr"
+	"github.com/liamphmurphy/vesper/server/internal/chatmodels"
 	"github.com/liamphmurphy/vesper/server/internal/store"
 )
+
+// ChatEditOptions carries optional model/harness/effort overrides when redoing
+// or regenerating the last turn.
+type ChatEditOptions struct {
+	Harness string
+	Model   string
+	Effort  string
+}
 
 // editQuoteRunes bounds how much of the replaced message the new turn quotes.
 const editQuoteRunes = 2000
@@ -33,8 +42,12 @@ func editNote(previous, body string) string {
 // EditLastChatMessage replaces the person's newest message and everything
 // after it with a new turn on the edited text. Sending the same text retries
 // the turn. Its attachments and context stay with the message.
-func (s *Service) EditLastChatMessage(ctx context.Context, ws, user, id uuid.UUID, body string) (store.ChatMessage, error) {
+func (s *Service) EditLastChatMessage(ctx context.Context, ws, user, id uuid.UUID, body string, opts ...ChatEditOptions) (store.ChatMessage, error) {
 	var out store.ChatMessage
+	var opt ChatEditOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 	body = strings.TrimSpace(body)
 	if body == "" || len([]rune(body)) > 100000 {
 		return out, apperr.Invalid("body", "provide 1–100000 characters")
@@ -56,6 +69,18 @@ func (s *Service) EditLastChatMessage(ctx context.Context, ws, user, id uuid.UUI
 		}
 		if p.Archived {
 			return apperr.Conflict("restore the archived project before chatting")
+		}
+		if opt.Harness != "" || opt.Model != "" || opt.Effort != "" {
+			cur := chatmodels.Selection{Harness: chat.Harness, Model: chat.Model, Effort: chat.Effort, AutoModel: chat.AutoModel}
+			sel, err := s.ChatCatalog().Resolve(ctx, q, chat.WorkspaceID, cur, chatmodels.Selection{Harness: opt.Harness, Model: opt.Model, Effort: opt.Effort})
+			if err != nil {
+				return err
+			}
+			if sel != cur {
+				if chat, err = q.SetChatSelection(ctx, store.SetChatSelectionParams{ID: chat.ID, Harness: sel.Harness, Model: sel.Model, Effort: sel.Effort, AutoModel: sel.AutoModel}); err != nil {
+					return err
+				}
+			}
 		}
 		last, err := q.LastChatUserMessage(ctx, chat.ID)
 		if errors.Is(err, pgx.ErrNoRows) {

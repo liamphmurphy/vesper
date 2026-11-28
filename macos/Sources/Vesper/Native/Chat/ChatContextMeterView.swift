@@ -8,7 +8,9 @@ struct ChatContextMeterView: View {
     @Environment(\.vesperTheme) private var theme
 
     let session: API.ChatSession
+    var messages: [API.ChatMessage] = []
     let pinnedCount: Int
+    var openRequestToken: Int = 0
     let onCompact: @MainActor (String?) async -> String?
 
     @State private var open = false
@@ -53,7 +55,10 @@ struct ChatContextMeterView: View {
             .overlay(Capsule().stroke(state.tone == .neutral ? p.border : barColor.opacity(0.5)))
         }
         .buttonStyle(.plain)
-        .help("Context window: \(state.label)")
+        .help("Context window: \(state.label) (⌘⇧K)")
+        .onChange(of: openRequestToken) { _, newValue in
+            if newValue > 0 { open.toggle() }
+        }
         .popover(isPresented: $open, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
@@ -76,6 +81,51 @@ struct ChatContextMeterView: View {
                         }
                     }
                     .frame(height: 6)
+                }
+
+                let slices = ChatContextMeterLogic.breakdown(
+                    contextTokens: session.contextTokens,
+                    messages: messages,
+                    hasSpace: session.space != nil,
+                    hasPersona: session.persona != nil,
+                    isTemporary: session.temporary == true
+                )
+                if !slices.isEmpty {
+                    VStack(alignment: .leading, spacing: 6) {
+                        Text("ESTIMATED BREAKDOWN")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(p.tertiaryText)
+
+                        GeometryReader { geo in
+                            HStack(spacing: 1.5) {
+                                ForEach(slices) { slice in
+                                    RoundedRectangle(cornerRadius: 2)
+                                        .fill(sliceColor(slice.category))
+                                        .frame(width: max(3, geo.size.width * slice.share - 1.5))
+                                }
+                            }
+                        }
+                        .frame(height: 6)
+
+                        VStack(alignment: .leading, spacing: 3) {
+                            ForEach(slices) { slice in
+                                HStack(spacing: 6) {
+                                    Circle()
+                                        .fill(sliceColor(slice.category))
+                                        .frame(width: 6, height: 6)
+                                    Text(slice.category.label)
+                                        .font(.system(size: theme.pointSize(.micro)))
+                                        .foregroundStyle(p.secondaryText)
+                                    Spacer()
+                                    Text(ChatContextMeterLogic.formatTokens(slice.tokens))
+                                        .font(.system(size: theme.pointSize(.micro), design: .monospaced))
+                                        .foregroundStyle(p.tertiaryText)
+                                }
+                            }
+                        }
+                    }
+                    .padding(8)
+                    .background(theme.swiftUIColor("surface-sunken", fallback: p.surface), in: RoundedRectangle(cornerRadius: 7))
                 }
 
                 Text(pinnedCount > 0
@@ -137,6 +187,17 @@ struct ChatContextMeterView: View {
             }
             .padding(14)
             .frame(width: 280)
+        }
+    }
+
+    private func sliceColor(_ category: ChatContextBreakdownCategory) -> Color {
+        let viz = ChatVizPalette(theme: theme)
+        switch category {
+        case .systemPersona: return viz.seriesColor(at: 0)
+        case .memory: return viz.seriesColor(at: 1)
+        case .spaceKnowledge: return viz.seriesColor(at: 2)
+        case .attachmentsTools: return viz.seriesColor(at: 3)
+        case .conversation: return viz.seriesColor(at: 4)
         }
     }
 

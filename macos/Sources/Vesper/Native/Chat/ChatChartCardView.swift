@@ -1,10 +1,11 @@
+import AppKit
 import Charts
 import SwiftUI
 import VesperCore
 
 /// Native Swift Charts & Canvas renderer for `ChatChartSpec` (LAZYAGENTS-321):
 /// `bar`, `stacked-bar`, `line`, `area`, `stacked-area`, `scatter`, `histogram`, `heatmap`,
-/// `calendar-heatmap`, `radar`, and `sparkline`, using the shared `ChatVizPalette(theme:)`.
+/// `calendar-heatmap`, `radar`, `sparkline`, `waterfall`, and `sankey`, using `ChatVizPalette(theme:)`.
 struct ChatChartCardView: View {
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -13,6 +14,12 @@ struct ChatChartCardView: View {
 
     @State private var mode: DisplayMode = .chart
     @State private var showLightbox = false
+    @State private var hiddenSeries: Set<Int> = []
+    @State private var hoveredCategory: String?
+    @State private var hoveredWaterfallIndex: Int?
+    @State private var hoveredSankeyNodeId: String?
+    @State private var savingLibrary = false
+    @State private var savedLibrary = false
 
     private enum DisplayMode: String, CaseIterable {
         case chart = "Chart"
@@ -83,6 +90,38 @@ struct ChatChartCardView: View {
                 }
                 .buttonStyle(.plain)
                 .help("Copy CSV")
+            } else {
+                Button {
+                    ChatVizExporter.copyPNG(of: exportSnapshotView, context: context)
+                } label: {
+                    Image(systemName: "photo.on.rectangle")
+                        .imageScale(.small)
+                        .foregroundStyle(p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .help("Copy chart as PNG")
+
+                Button {
+                    guard !savingLibrary else { return }
+                    savingLibrary = true
+                    Task {
+                        defer { savingLibrary = false }
+                        if await ChatVizExporter.savePNGToLibrary(
+                            of: exportSnapshotView,
+                            title: spec.title ?? defaultTitle,
+                            context: context
+                        ) {
+                            savedLibrary = true
+                        }
+                    }
+                } label: {
+                    Image(systemName: savedLibrary ? "checkmark" : "bookmark")
+                        .imageScale(.small)
+                        .foregroundStyle(savedLibrary ? p.accent : p.tertiaryText)
+                }
+                .buttonStyle(.plain)
+                .disabled(savingLibrary)
+                .help(savedLibrary ? "Saved to Library" : "Save chart PNG to Library")
             }
             Button {
                 showLightbox = true
@@ -104,17 +143,26 @@ struct ChatChartCardView: View {
             if spec.series.count > 1 {
                 legendRow
             }
+            if let readout = hoverReadoutText {
+                Text(readout)
+                    .font(.system(size: theme.pointSize(.micro), weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.palette.text)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(theme.palette.surface, in: RoundedRectangle(cornerRadius: 6))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(theme.palette.accent.opacity(0.45)))
+            }
             switch spec.type {
             case .bar:
-                axisDecorated(barChart, height: height)
+                interactiveCategorical(axisDecorated(barChart, height: height))
             case .stackedBar:
-                axisDecorated(stackedBarChart, height: height)
+                interactiveCategorical(axisDecorated(stackedBarChart, height: height))
             case .line:
-                axisDecorated(lineChart, height: height)
+                interactiveCategorical(axisDecorated(lineChart, height: height))
             case .area:
-                axisDecorated(areaChart(stacked: false), height: height)
+                interactiveCategorical(axisDecorated(areaChart(stacked: false), height: height))
             case .stackedArea:
-                axisDecorated(areaChart(stacked: true), height: height)
+                interactiveCategorical(axisDecorated(areaChart(stacked: true), height: height))
             case .scatter:
                 axisDecorated(scatterChart, height: height)
             case .histogram:
@@ -127,9 +175,63 @@ struct ChatChartCardView: View {
                 radarView(height: max(height, 260))
             case .sparkline:
                 sparklineChartView
+            case .waterfall:
+                waterfallView(height: max(height, 250))
+            case .sankey:
+                sankeyView(height: max(height, 260))
             }
         }
         .padding(14)
+    }
+
+    private var exportSnapshotView: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            if let title = spec.title, !title.isEmpty {
+                Text(title)
+                    .font(.system(size: theme.pointSize(.body), weight: .semibold))
+                    .foregroundStyle(theme.palette.text)
+                    .padding(.horizontal, 14)
+                    .padding(.top, 12)
+            }
+            chartBody(height: 280)
+        }
+        .background(theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface))
+        .environment(\.vesperTheme, theme)
+    }
+
+    private var hoverReadoutText: String? {
+        guard let cat = hoveredCategory,
+              let cIdx = spec.categories.firstIndex(of: cat) else { return nil }
+        let parts = spec.series.enumerated().compactMap { sIdx, s -> String? in
+            guard !hiddenSeries.contains(sIdx), cIdx < s.values.count, let v = s.values[cIdx] else { return nil }
+            let name = s.name.isEmpty ? (spec.y.label ?? "Value") : s.name
+            return "\(name): \(spec.formattedValue(v))"
+        }
+        guard !parts.isEmpty else { return nil }
+        return "\(cat) — \(parts.joined(separator: " · "))"
+    }
+
+    private func interactiveCategorical<C: View>(_ chart: C) -> some View {
+        chart.chartOverlay { proxy in
+            GeometryReader { geo in
+                Rectangle()
+                    .fill(.clear)
+                    .contentShape(Rectangle())
+                    .onContinuousHover { phase in
+                        switch phase {
+                        case .active(let location):
+                            guard let plotFrame = proxy.plotFrame else { return }
+                            let origin = geo[plotFrame].origin
+                            let x = location.x - origin.x
+                            if let cat: String = proxy.value(atX: x) {
+                                hoveredCategory = cat
+                            }
+                        case .ended:
+                            hoveredCategory = nil
+                        }
+                    }
+            }
+        }
     }
 
     private func axisDecorated<C: View>(_ chart: C, height: CGFloat) -> some View {
@@ -163,15 +265,37 @@ struct ChatChartCardView: View {
     }
 
     private var legendRow: some View {
-        HStack(spacing: 12) {
-            ForEach(Array(spec.series.enumerated()), id: \.offset) { idx, series in
-                HStack(spacing: 5) {
-                    Circle()
-                        .fill(viz.seriesColor(at: idx))
-                        .frame(width: 8, height: 8)
-                    Text(series.name.isEmpty ? "Series \(idx + 1)" : series.name)
-                        .font(.system(size: theme.pointSize(.small)))
-                        .foregroundStyle(theme.palette.secondaryText)
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Array(spec.series.enumerated()), id: \.offset) { idx, series in
+                    let hidden = hiddenSeries.contains(idx)
+                    Button {
+                        if NSEvent.modifierFlags.contains(.option) {
+                            let allOthers = Set(spec.series.indices.filter { $0 != idx })
+                            hiddenSeries = (hiddenSeries == allOthers) ? [] : allOthers
+                        } else if hidden {
+                            hiddenSeries.remove(idx)
+                        } else if hiddenSeries.count + 1 < spec.series.count {
+                            hiddenSeries.insert(idx)
+                        } else {
+                            hiddenSeries.removeAll()
+                        }
+                    } label: {
+                        HStack(spacing: 5) {
+                            Circle()
+                                .fill(viz.seriesColor(at: idx).opacity(hidden ? 0.28 : 1))
+                                .frame(width: 8, height: 8)
+                            Text(series.name.isEmpty ? "Series \(idx + 1)" : series.name)
+                                .font(.system(size: theme.pointSize(.small)))
+                                .foregroundStyle(hidden ? theme.palette.tertiaryText : theme.palette.secondaryText)
+                                .strikethrough(hidden)
+                        }
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(hidden ? Color.clear : theme.palette.surface.opacity(0.6), in: Capsule())
+                    }
+                    .buttonStyle(.plain)
+                    .help("Click to hide/show series · Option-click to solo")
                 }
             }
         }
@@ -189,7 +313,7 @@ struct ChatChartCardView: View {
 
     private var barData: [BarDatum] {
         var rows: [BarDatum] = []
-        for (sIdx, series) in spec.series.enumerated() {
+        for (sIdx, series) in spec.series.enumerated() where !hiddenSeries.contains(sIdx) {
             let sName = series.name.isEmpty ? (spec.y.label ?? "Value") : series.name
             for (cIdx, category) in spec.categories.enumerated() where cIdx < series.values.count {
                 if let val = series.values[cIdx] {
@@ -244,7 +368,7 @@ struct ChatChartCardView: View {
 
     private var lineData: [LineDatum] {
         var rows: [LineDatum] = []
-        for (sIdx, series) in spec.series.enumerated() {
+        for (sIdx, series) in spec.series.enumerated() where !hiddenSeries.contains(sIdx) {
             var run = 0
             for (cIdx, category) in spec.categories.enumerated() where cIdx < series.values.count {
                 if let val = series.values[cIdx] {
@@ -310,7 +434,7 @@ struct ChatChartCardView: View {
 
     private var scatterData: [ScatterDatum] {
         var rows: [ScatterDatum] = []
-        for (sIdx, series) in spec.series.enumerated() {
+        for (sIdx, series) in spec.series.enumerated() where !hiddenSeries.contains(sIdx) {
             for (pIdx, point) in series.points.enumerated() {
                 rows.append(ScatterDatum(id: "\(sIdx)-\(pIdx)", seriesIndex: sIdx, x: point.x, y: point.y))
             }
@@ -580,13 +704,201 @@ struct ChatChartCardView: View {
         }
     }
 
+    // MARK: - Waterfall & Sankey
+
+    private func waterfallView(height: CGFloat) -> some View {
+        let items = spec.waterfallItems
+        let allY = items.flatMap { [$0.startY, $0.endY, 0.0] }
+        let lo = allY.min() ?? 0
+        let hi = allY.max() ?? 1
+        let span = max(hi - lo, 1e-9)
+        let posColor = theme.swiftUIColor("state-done", fallback: .green)
+        let negColor = theme.swiftUIColor("pill-blocked-fg", fallback: .red)
+        let totColor = viz.seriesColor(at: 0)
+        let hovered = hoveredWaterfallIndex
+
+        return VStack(alignment: .leading, spacing: 6) {
+            if let idx = hovered, idx < items.count {
+                let it = items[idx]
+                let delta = it.kind == .delta && it.value > 0 ? "+\(spec.formattedValue(it.value))" : spec.formattedValue(it.value)
+                Text("\(it.label): \(delta)  (total \(spec.formattedValue(it.endY)))")
+                    .font(.system(size: theme.pointSize(.micro), weight: .medium, design: .monospaced))
+                    .foregroundStyle(theme.palette.text)
+            }
+            GeometryReader { geo in
+                let padTop: CGFloat = 20
+                let padBottom: CGFloat = 34
+                let padH: CGFloat = 12
+                let plotH = max(40, geo.size.height - padTop - padBottom)
+                let colW = (geo.size.width - padH * 2) / CGFloat(max(1, items.count))
+                let barW = max(14, min(52, colW * 0.62))
+                let yFor: (Double) -> CGFloat = { val in
+                    padTop + (1 - CGFloat((val - lo) / span)) * plotH
+                }
+
+                Canvas { ctx, _ in
+                    let zeroY = yFor(0)
+                    var zeroLine = Path()
+                    zeroLine.move(to: CGPoint(x: padH, y: zeroY))
+                    zeroLine.addLine(to: CGPoint(x: geo.size.width - padH, y: zeroY))
+                    ctx.stroke(zeroLine, with: .color(viz.grid), lineWidth: 1)
+
+                    for (idx, item) in items.enumerated() {
+                        let cx = padH + (CGFloat(idx) + 0.5) * colW
+                        let topY = min(yFor(item.startY), yFor(item.endY))
+                        let botY = max(yFor(item.startY), yFor(item.endY))
+                        let rect = CGRect(x: cx - barW / 2, y: topY, width: barW, height: max(3, botY - topY))
+                        let color: Color = switch item.kind {
+                        case .start, .total: totColor
+                        case .delta: item.value >= 0 ? posColor : negColor
+                        }
+                        let isHov = hovered == idx
+                        ctx.fill(Path(roundedRect: rect, cornerRadius: 4), with: .color(color.opacity(isHov ? 1.0 : 0.82)))
+                        if idx + 1 < items.count {
+                            let nextCx = padH + (CGFloat(idx + 1) + 0.5) * colW
+                            let connY = yFor(item.endY)
+                            var conn = Path()
+                            conn.move(to: CGPoint(x: cx + barW / 2, y: connY))
+                            conn.addLine(to: CGPoint(x: nextCx - barW / 2, y: connY))
+                            ctx.stroke(conn, with: .color(viz.muted.opacity(0.45)), style: StrokeStyle(lineWidth: 1, dash: [3, 2]))
+                        }
+                        let valText = item.kind == .delta && item.value > 0 ? "+\(spec.formattedValue(item.value))" : spec.formattedValue(item.value)
+                        ctx.draw(Text(valText).font(.system(size: 10, design: .monospaced)).foregroundColor(viz.ink), at: CGPoint(x: cx, y: max(9, topY - 9)))
+                        ctx.draw(Text(item.label).font(.system(size: 10)).foregroundColor(viz.muted), at: CGPoint(x: cx, y: geo.size.height - 14))
+                    }
+                }
+                .onContinuousHover { phase in
+                    switch phase {
+                    case .active(let pt):
+                        let idx = Int((pt.x - padH) / max(1, colW))
+                        hoveredWaterfallIndex = (idx >= 0 && idx < items.count) ? idx : nil
+                    case .ended:
+                        hoveredWaterfallIndex = nil
+                    }
+                }
+            }
+            .frame(height: height)
+        }
+    }
+
+    private func sankeyView(height: CGFloat) -> some View {
+        let data = spec.sankey ?? ChatSankeyData(nodes: [], links: [])
+        let nodes = data.nodes
+        let links = data.links
+        // Compute topological column depth (0 = source, max = sink)
+        var depth: [String: Int] = Dictionary(uniqueKeysWithValues: nodes.map { ($0.id, 0) })
+        for _ in 0..<nodes.count {
+            for link in links {
+                let dFrom = depth[link.from] ?? 0
+                if (depth[link.to] ?? 0) <= dFrom {
+                    depth[link.to] = min(nodes.count, dFrom + 1)
+                }
+            }
+        }
+        let maxCol = max(1, depth.values.max() ?? 1)
+        let columns: [[ChatSankeyNode]] = (0...maxCol).map { col in
+            nodes.filter { (depth[$0.id] ?? 0) == col }
+        }
+        var nodeTotals: [String: Double] = [:]
+        for n in nodes {
+            let outSum = links.filter { $0.from == n.id }.reduce(0) { $0 + $1.value }
+            let inSum = links.filter { $0.to == n.id }.reduce(0) { $0 + $1.value }
+            nodeTotals[n.id] = max(outSum, inSum, 1e-6)
+        }
+        let palette = viz
+        let hoveredId = hoveredSankeyNodeId
+
+        return GeometryReader { geo in
+            let padX: CGFloat = 14
+            let padY: CGFloat = 14
+            let nodeW: CGFloat = 14
+            let usableW = max(80, geo.size.width - padX * 2 - nodeW)
+            let usableH = max(80, geo.size.height - padY * 2)
+            let colStep = usableW / CGFloat(max(1, maxCol))
+            let gapY: CGFloat = 10
+
+            var nodeRects: [String: CGRect] = [:]
+            var nodeColorIdx: [String: Int] = [:]
+            for (idx, n) in nodes.enumerated() { nodeColorIdx[n.id] = idx }
+
+            for (colIdx, colNodes) in columns.enumerated() where !colNodes.isEmpty {
+                let colTotal = colNodes.reduce(0.0) { $0 + (nodeTotals[$1.id] ?? 1) }
+                let totalGap = gapY * CGFloat(max(0, colNodes.count - 1))
+                let availH = max(20, usableH - totalGap)
+                var y = padY
+                let x = padX + CGFloat(colIdx) * colStep
+                for n in colNodes {
+                    let h = max(14, CGFloat((nodeTotals[n.id] ?? 1) / max(colTotal, 1e-6)) * availH)
+                    nodeRects[n.id] = CGRect(x: x, y: y, width: nodeW, height: h)
+                    y += h + gapY
+                }
+            }
+
+            return Canvas { ctx, _ in
+                var outOffset: [String: CGFloat] = [:]
+                var inOffset: [String: CGFloat] = [:]
+
+                for link in links {
+                    guard let fromRect = nodeRects[link.from], let toRect = nodeRects[link.to] else { continue }
+                    let fromScale = fromRect.height / CGFloat(max(nodeTotals[link.from] ?? 1, 1e-6))
+                    let toScale = toRect.height / CGFloat(max(nodeTotals[link.to] ?? 1, 1e-6))
+                    let thickFrom = max(2, CGFloat(link.value) * fromScale)
+                    let thickTo = max(2, CGFloat(link.value) * toScale)
+                    let y1 = fromRect.minY + (outOffset[link.from] ?? 0)
+                    let y2 = toRect.minY + (inOffset[link.to] ?? 0)
+                    outOffset[link.from, default: 0] += thickFrom
+                    inOffset[link.to, default: 0] += thickTo
+
+                    let x1 = fromRect.maxX
+                    let x2 = toRect.minX
+                    let midX = (x1 + x2) / 2
+                    var ribbon = Path()
+                    ribbon.move(to: CGPoint(x: x1, y: y1))
+                    ribbon.addCurve(to: CGPoint(x: x2, y: y2), control1: CGPoint(x: midX, y: y1), control2: CGPoint(x: midX, y: y2))
+                    ribbon.addLine(to: CGPoint(x: x2, y: y2 + thickTo))
+                    ribbon.addCurve(to: CGPoint(x: x1, y: y1 + thickFrom), control1: CGPoint(x: midX, y: y2 + thickTo), control2: CGPoint(x: midX, y: y1 + thickFrom))
+                    ribbon.closeSubpath()
+
+                    let baseColor = palette.seriesColor(at: nodeColorIdx[link.from] ?? 0)
+                    let emphasized = hoveredId == nil || hoveredId == link.from || hoveredId == link.to
+                    ctx.fill(ribbon, with: .color(baseColor.opacity(emphasized ? 0.34 : 0.1)))
+                }
+
+                for n in nodes {
+                    guard let r = nodeRects[n.id] else { continue }
+                    let c = palette.seriesColor(at: nodeColorIdx[n.id] ?? 0)
+                    let emphasized = hoveredId == nil || hoveredId == n.id
+                    ctx.fill(Path(roundedRect: r, cornerRadius: 3), with: .color(c.opacity(emphasized ? 1.0 : 0.35)))
+                    let label = "\(n.label) (\(spec.formattedValue(nodeTotals[n.id] ?? 0)))"
+                    let isRightEdge = (depth[n.id] ?? 0) == maxCol
+                    let tx = isRightEdge ? r.minX - 6 : r.maxX + 6
+                    ctx.draw(
+                        Text(label).font(.system(size: 11, weight: .medium)).foregroundColor(palette.ink),
+                        at: CGPoint(x: tx, y: r.midY),
+                        anchor: isRightEdge ? .trailing : .leading
+                    )
+                }
+            }
+            .onContinuousHover { phase in
+                switch phase {
+                case .active(let pt):
+                    hoveredSankeyNodeId = nodeRects.first(where: { $0.value.insetBy(dx: -8, dy: -4).contains(pt) })?.key
+                case .ended:
+                    hoveredSankeyNodeId = nil
+                }
+            }
+        }
+        .frame(height: height)
+    }
+
     private var chartIcon: String {
         switch spec.type {
-        case .bar, .stackedBar, .histogram: "chart.bar"
+        case .bar, .stackedBar, .histogram, .waterfall: "chart.bar"
         case .line, .area, .stackedArea, .sparkline: "chart.xyaxis.line"
         case .scatter: "chart.dots.scatter"
         case .heatmap, .calendarHeatmap: "square.grid.3x3.fill"
         case .radar: "pentagon"
+        case .sankey: "arrow.triangle.branch"
         }
     }
 
@@ -603,6 +915,8 @@ struct ChatChartCardView: View {
         case .calendarHeatmap: "Calendar heatmap"
         case .radar: "Radar chart"
         case .sparkline: "Sparkline"
+        case .waterfall: "Waterfall chart"
+        case .sankey: "Flow diagram"
         }
     }
 

@@ -312,6 +312,9 @@ WHERE id = sqlc.arg(id) RETURNING *;
 -- name: AddChatParticipant :exec
 INSERT INTO chat_participants (chat_id, persona_id) VALUES ($1, $2) ON CONFLICT DO NOTHING;
 
+-- name: RemoveChatParticipant :exec
+DELETE FROM chat_participants WHERE chat_id = $1 AND persona_id = $2;
+
 -- name: ChatParticipants :many
 -- Personas brought into these chats besides their hosts, in the order they joined.
 SELECT chat_id, persona_id FROM chat_participants WHERE chat_id = ANY(sqlc.arg(chat_ids)::uuid[]) ORDER BY joined_at, persona_id;

@@ -33,6 +33,7 @@ var richReplyBlocks = map[string]bool{
 	"http":           true,
 	"tabs":           true,
 	"details":        true,
+	"map":            true,
 }
 
 // replyScanner finds rich blocks in a reply as it streams, so the chat can say

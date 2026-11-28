@@ -55,6 +55,7 @@ public enum ChatMessageSegment: Sendable, Equatable {
     case compareImages(ChatCompareImagesSpec)
     case graph(ChatGraphSpec)
     case plot(ChatPlotSpec)
+    case map(ChatMapSpec)
     case dataTable(ChatDataTableSpec)
     case codeGroup(ChatCodeGroupSpec)
     case kv(ChatKVSpec)
@@ -419,6 +420,17 @@ public enum ChatTranscriptLogic {
                         segments.append(.plot(spec))
                     case .failure(let err):
                         segments.append(.invalidBlock(kind: "plot", error: err.message, source: code))
+                    }
+                    i = nextIndex
+                    continue
+                }
+                if ChatMapSpec.isMapFence(infoOpt) {
+                    flushMarkdown()
+                    switch ChatMapSpec.parse(code) {
+                    case .success(let spec):
+                        segments.append(.map(spec))
+                    case .failure(let err):
+                        segments.append(.invalidBlock(kind: "map", error: err.message, source: code))
                     }
                     i = nextIndex
                     continue

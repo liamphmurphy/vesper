@@ -9,6 +9,7 @@ struct ChatThreadInspectorView: View {
 
     let chatId: String
     let messageId: String
+    var initialDraft: String? = nil
 
     @State private var draft = ""
     @State private var sending = false
@@ -196,7 +197,15 @@ struct ChatThreadInspectorView: View {
             .padding(10)
         }
         .task(id: "\(chatId):\(messageId):\(thread?.id ?? "")") {
+            if let initialDraft, !initialDraft.isEmpty, draft.isEmpty {
+                draft = initialDraft
+            }
             syncWatches(threadId: thread?.id)
+        }
+        .onChange(of: initialDraft) { _, next in
+            if let next, !next.isEmpty {
+                draft = next
+            }
         }
         .onChange(of: threadSession?.revision) { _, _ in
             if let tid = thread?.id {

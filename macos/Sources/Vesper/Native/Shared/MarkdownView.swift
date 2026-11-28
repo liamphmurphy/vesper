@@ -26,6 +26,7 @@ struct MarkdownView: View {
     var findRow: Int?
     var onLink: ((MarkdownLinkTarget) -> Bool)?
     var onLinkWithAnchor: ((MarkdownLinkTarget, MarkdownLinkAnchor?) -> Bool)? = nil
+    var onSelectionAction: (@MainActor (ChatSelectionAction, String) -> Void)? = nil
 
     @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
@@ -62,7 +63,8 @@ struct MarkdownView: View {
                 match: NSColor(palette.selected),
                 current: NSColor(palette.accent.opacity(0.35))
             ),
-            onLink: { target, newTab, anchor in open(target, newTab: newTab, anchor: anchor, codeBlocks: codeBlocks) }
+            onLink: { target, newTab, anchor in open(target, newTab: newTab, anchor: anchor, codeBlocks: codeBlocks) },
+            onSelectionAction: onSelectionAction
         )
         .task(id: refs) {
             if !refs.isEmpty { context.store.load(resolve) }
@@ -211,6 +213,7 @@ private struct MarkdownText: NSViewRepresentable {
     let options: MarkdownRenderOptions
     let find: Find
     let onLink: (MarkdownLinkTarget, Bool, MarkdownLinkAnchor?) -> Void
+    let onSelectionAction: (@MainActor (ChatSelectionAction, String) -> Void)?
 
     func makeCoordinator() -> Coordinator { Coordinator() }
 
@@ -218,6 +221,8 @@ private struct MarkdownText: NSViewRepresentable {
 
     func updateNSView(_ view: MarkdownTextView, context: Context) {
         view.onLink = onLink
+        view.onSelectionAction = onSelectionAction
+        view.selectionTheme = theme
         context.coordinator.latest = (document, theme, options)
         // Before the first sizeThatFits the width is a guess; sizing renders again at the real one.
         context.coordinator.render(view, width: context.coordinator.width ?? 600)
