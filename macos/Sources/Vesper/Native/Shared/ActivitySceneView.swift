@@ -32,7 +32,6 @@ struct ActivitySceneView: View {
     @State private var box = TransitionerBox()
     @State private var holdTask: Task<Void, Never>?
     @State private var staticTick = 0
-    @State private var start = Date()
 
     private var resolvedStageStyle: ActivitySceneStageStyle {
         stageStyle ?? (showStageChrome ? .boxed : .bare)
@@ -48,12 +47,12 @@ struct ActivitySceneView: View {
                 windowVisible: windowVisible
             )
         )
-        let tickInterval = AnimationPolicy.activitySceneTickInterval(lowPowerMode: power.isLowPowerMode)
+        let minInterval = AnimationPolicy.activitySceneDisplayLinkMinimumInterval(lowPowerMode: power.isLowPowerMode)
 
         Group {
             switch resolvedStageStyle {
             case .boxed:
-                timedCanvas(animate: animate, tickInterval: tickInterval, palette: palette)
+                timedCanvas(animate: animate, minInterval: minInterval, palette: palette)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 3)
                     .frame(width: width, height: height)
@@ -68,7 +67,7 @@ struct ActivitySceneView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 9))
 
             case .bare:
-                timedCanvas(animate: animate, tickInterval: tickInterval, palette: palette)
+                timedCanvas(animate: animate, minInterval: minInterval, palette: palette)
                     .frame(width: width, height: height)
 
             case .diorama(let tint, let ambientPulse, let fillWidth):
@@ -77,7 +76,7 @@ struct ActivitySceneView: View {
                     ambientPulse: ambientPulse,
                     fillWidth: fillWidth,
                     animate: animate,
-                    tickInterval: tickInterval,
+                    minInterval: minInterval,
                     palette: palette
                 )
             }
@@ -120,11 +119,14 @@ struct ActivitySceneView: View {
     @ViewBuilder
     private func timedCanvas(
         animate: Bool,
-        tickInterval: TimeInterval,
+        minInterval: TimeInterval,
         palette: ActivityScenePalette
     ) -> some View {
         if animate {
-            TimelineView(.periodic(from: start, by: tickInterval)) { timeline in
+            // Use VSync-aligned `.animation(minimumInterval:)` instead of wall-clock `.periodic`
+            // so 60fps ticks stay phase-locked to 60Hz/120Hz ProMotion refreshes. Because this
+            // branch is unmounted whenever `animate` is false, no DisplayLink runs while idle/hidden.
+            TimelineView(.animation(minimumInterval: minInterval)) { timeline in
                 let _ = staticTick
                 sceneCanvas(at: timeline.date.timeIntervalSinceReferenceDate, palette: palette)
             }
@@ -134,58 +136,29 @@ struct ActivitySceneView: View {
         }
     }
 
-    /// Static diorama layers (sunken fill, architectural dot grid, top hairline) stay outside
-    /// `TimelineView` so only the breathing bloom and scene canvas repaint at 60 fps.
+    /// Static diorama layers (sunken fill, batched architectural dot grid, GPU-composited ambient
+    /// bloom, top hairline) stay outside `TimelineView` so only the foreground scene canvas ticks.
     private func dioramaStage(
         tint: Color,
         ambientPulse: Bool,
         fillWidth: Bool,
         animate: Bool,
-        tickInterval: TimeInterval,
+        minInterval: TimeInterval,
         palette: ActivityScenePalette
     ) -> some View {
         let isDark = theme.mode == .dark
+        let pulseBloom = animate && ambientPulse && !reduceMotion && !stopping
         return ZStack {
             theme.swiftUIColor("surface-sunken", fallback: theme.palette.surface)
 
-            // Static architectural micro dot-grid backdrop
-            Canvas { ctx, size in
-                let step: CGFloat = 10
-                let dotColor = (isDark ? Color.white : Color.black).opacity(isDark ? 0.045 : 0.04)
-                let cols = Int(size.width / step)
-                let rows = Int(size.height / step)
-                let offsetX = (size.width - CGFloat(cols) * step) * 0.5
-                let offsetY = (size.height - CGFloat(rows) * step) * 0.5
-                for row in 0...rows {
-                    for col in 0...cols {
-                        let x = offsetX + CGFloat(col) * step
-                        let y = offsetY + CGFloat(row) * step
-                        ctx.fill(Path(ellipseIn: CGRect(x: x - 0.5, y: y - 0.5, width: 1, height: 1)), with: .color(dotColor))
-                    }
-                }
-            }
+            DioramaDotGridView(isDark: isDark)
+                .equatable()
 
-            if animate {
-                TimelineView(.periodic(from: start, by: tickInterval)) { timeline in
-                    let _ = staticTick
-                    dioramaAnimatedLayers(
-                        at: timeline.date.timeIntervalSinceReferenceDate,
-                        tint: tint,
-                        ambientPulse: ambientPulse,
-                        isDark: isDark,
-                        palette: palette
-                    )
-                }
-            } else {
-                let _ = staticTick
-                dioramaAnimatedLayers(
-                    at: Date.timeIntervalSinceReferenceDate,
-                    tint: tint,
-                    ambientPulse: false,
-                    isDark: isDark,
-                    palette: palette
-                )
-            }
+            DioramaAmbientBloomView(tint: tint, isDark: isDark, pulsing: pulseBloom)
+
+            timedCanvas(animate: animate, minInterval: minInterval, palette: palette)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 6)
         }
         .frame(
             minWidth: fillWidth ? 0 : width,
@@ -197,40 +170,6 @@ struct ActivitySceneView: View {
             Rectangle()
                 .fill(Color.white.opacity(isDark ? 0.06 : 0.5))
                 .frame(height: 1)
-        }
-    }
-
-    private func dioramaAnimatedLayers(
-        at now: Double,
-        tint: Color,
-        ambientPulse: Bool,
-        isDark: Bool,
-        palette: ActivityScenePalette
-    ) -> some View {
-        let pulseWave: Double = (ambientPulse && !reduceMotion && !stopping)
-            ? (0.5 + 0.5 * sin(now * 1.45))
-            : 0.35
-        let bloomPeak = (isDark ? 0.18 : 0.11) + (isDark ? 0.08 : 0.05) * pulseWave
-
-        return ZStack {
-            // Soft semantic / persona radial ambient bloom sized to actual rendered bounds
-            Canvas { ctx, size in
-                let center = CGPoint(x: size.width * 0.5, y: size.height * 0.5)
-                let radius = max(1, max(size.width, size.height) * 0.68)
-                let gradient = Gradient(colors: [
-                    tint.opacity(bloomPeak),
-                    tint.opacity(bloomPeak * 0.32),
-                    .clear,
-                ])
-                ctx.fill(
-                    Path(CGRect(origin: .zero, size: size)),
-                    with: .radialGradient(gradient, center: center, startRadius: 2, endRadius: radius)
-                )
-            }
-
-            sceneCanvas(at: now, palette: palette)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
         }
     }
 
@@ -314,5 +253,68 @@ struct ActivitySceneView: View {
     @MainActor
     private final class TransitionerBox {
         var transitioner: ActivitySceneTransitioner?
+    }
+}
+
+/// Batched single-path architectural dot grid that skips redraws across 1s timer ticks.
+private struct DioramaDotGridView: View, Equatable {
+    let isDark: Bool
+
+    var body: some View {
+        Canvas { ctx, size in
+            let step: CGFloat = 10
+            let dotColor = (isDark ? Color.white : Color.black).opacity(isDark ? 0.045 : 0.04)
+            let cols = Int(size.width / step)
+            let rows = Int(size.height / step)
+            let offsetX = (size.width - CGFloat(cols) * step) * 0.5
+            let offsetY = (size.height - CGFloat(rows) * step) * 0.5
+            var dots = Path()
+            for row in 0...rows {
+                let y = offsetY + CGFloat(row) * step - 0.5
+                for col in 0...cols {
+                    let x = offsetX + CGFloat(col) * step - 0.5
+                    dots.addEllipse(in: CGRect(x: x, y: y, width: 1, height: 1))
+                }
+            }
+            ctx.fill(dots, with: .color(dotColor))
+        }
+    }
+}
+
+/// GPU-composited elliptical ambient bloom animated via Core Animation opacity rather than a 60fps CPU Canvas.
+private struct DioramaAmbientBloomView: View {
+    let tint: Color
+    let isDark: Bool
+    let pulsing: Bool
+
+    @State private var atPeak = false
+
+    var body: some View {
+        let peak = isDark ? 0.26 : 0.16
+        let minFactor: Double = isDark ? (0.18 / 0.26) : (0.11 / 0.16)
+        let restingFactor: Double = isDark ? (0.208 / 0.26) : (0.1275 / 0.16)
+        let opacity = pulsing ? (atPeak ? 1.0 : minFactor) : restingFactor
+
+        EllipticalGradient(
+            colors: [
+                tint.opacity(peak),
+                tint.opacity(peak * 0.32),
+                .clear,
+            ],
+            center: .center,
+            startRadiusFraction: 0.02,
+            endRadiusFraction: 0.72
+        )
+        .opacity(opacity)
+        .animation(
+            pulsing ? .easeInOut(duration: 2.15).repeatForever(autoreverses: true) : .default,
+            value: atPeak
+        )
+        .onAppear {
+            if pulsing { atPeak = true }
+        }
+        .onChange(of: pulsing) { _, active in
+            atPeak = active
+        }
     }
 }

@@ -1,10 +1,34 @@
 import CoreGraphics
 import CoreText
 import Foundation
+import os
 
 /// CoreGraphics renderer shared by SwiftUI `ActivitySceneView` and `ActivitySceneTests` bitmap snapshots.
 public enum ActivitySceneRenderer {
     private static let srgb = CGColorSpace(name: CGColorSpace.sRGB) ?? CGColorSpaceCreateDeviceRGB()
+
+    private struct PaperSheenKey: Hashable {
+        var r: UInt64
+        var g: UInt64
+        var b: UInt64
+        var isDark: Bool
+    }
+
+    private struct FontCacheKey: Hashable {
+        var sizeTenths: Int
+        var bold: Bool
+    }
+
+    private struct SendableGradientBox: @unchecked Sendable {
+        let gradient: CGGradient
+    }
+
+    private struct SendableFontBox: @unchecked Sendable {
+        let font: CTFont
+    }
+
+    private static let paperSheenCache = OSAllocatedUnfairLock<[PaperSheenKey: SendableGradientBox]>(initialState: [:])
+    private static let fontCache = OSAllocatedUnfairLock<[FontCacheKey: SendableFontBox]>(initialState: [:])
 
     /// Renders `kind` into a Y-down `CGContext` (SwiftUI `Canvas` / SVG coordinate system).
     public static func render(
@@ -167,13 +191,7 @@ public enum ActivitySceneRenderer {
             defer { ctx.restoreGState() }
             applyTransform(pose, origin: style.transformOrigin, node: node, in: ctx)
 
-            let baseFont = CTFontCreateUIFontForLanguage(.system, CGFloat(fontSize), nil)
-                ?? CTFontCreateWithName("Helvetica" as CFString, CGFloat(fontSize), nil)
-            let font: CTFont = if fontWeight >= 600 {
-                CTFontCreateCopyWithSymbolicTraits(baseFont, CGFloat(fontSize), nil, .traitBold, .traitBold) ?? baseFont
-            } else {
-                baseFont
-            }
+            let font = cachedTextFont(size: fontSize, bold: fontWeight >= 600)
             let rgba = palette.resolve(fill)
             let color = cgColor(rgba, alpha: rgba.alpha * pose.opacity)
             let attrs: [NSAttributedString.Key: Any] = [
@@ -212,13 +230,16 @@ public enum ActivitySceneRenderer {
                         drawPaperSheenFill(path: path, base: fillRGBA, alpha: alpha, isDark: isDark, in: ctx)
                     } else {
                         ctx.saveGState()
+                        // Use a lightweight translucent vector halo instead of `CGContext.setShadow`:
+                        // CoreGraphics shadows run a per-shape software Gaussian blur on CPU every tick.
                         if isLuminousToken(style.fill) && alpha > 0.18 {
-                            let glowAlpha = alpha * (isDark ? 0.34 : 0.16)
-                            ctx.setShadow(
-                                offset: .zero,
-                                blur: isDark ? 3.5 : 2.0,
-                                color: cgColor(fillRGBA, alpha: glowAlpha)
-                            )
+                            let haloAlpha = alpha * (isDark ? 0.16 : 0.08)
+                            ctx.setStrokeColor(cgColor(fillRGBA, alpha: haloAlpha))
+                            ctx.setLineWidth(isDark ? 2.6 : 1.6)
+                            ctx.setLineCap(.round)
+                            ctx.setLineJoin(.round)
+                            ctx.addPath(path)
+                            ctx.strokePath()
                         }
                         ctx.setFillColor(cgColor(fillRGBA, alpha: alpha))
                         ctx.addPath(path)
@@ -255,18 +276,17 @@ public enum ActivitySceneRenderer {
                     if let strokedPath {
                         let isDark = isDarkPalette(palette)
                         ctx.saveGState()
+                        ctx.setLineCap(cgLineCap(style.lineCap))
+                        ctx.setLineJoin(cgLineJoin(style.lineJoin))
                         if isLuminousToken(strokeToken) && alpha > 0.12 {
-                            let glowAlpha = alpha * (isDark ? 0.42 : 0.20)
-                            ctx.setShadow(
-                                offset: .zero,
-                                blur: isDark ? 4.0 : 2.2,
-                                color: cgColor(strokeRGBA, alpha: glowAlpha)
-                            )
+                            let haloAlpha = alpha * (isDark ? 0.20 : 0.10)
+                            ctx.setStrokeColor(cgColor(strokeRGBA, alpha: haloAlpha))
+                            ctx.setLineWidth(style.strokeWidth + (isDark ? 3.0 : 1.8))
+                            ctx.addPath(strokedPath)
+                            ctx.strokePath()
                         }
                         ctx.setStrokeColor(cgColor(strokeRGBA, alpha: alpha))
                         ctx.setLineWidth(style.strokeWidth)
-                        ctx.setLineCap(cgLineCap(style.lineCap))
-                        ctx.setLineJoin(cgLineJoin(style.lineJoin))
                         ctx.addPath(strokedPath)
                         ctx.strokePath()
                         ctx.restoreGState()
@@ -423,28 +443,13 @@ public enum ActivitySceneRenderer {
             ctx.fillPath()
             return
         }
-        let lift = isDark ? 0.08 : 0.03
-        let drop = isDark ? 0.02 : 0.035
-        let topColor = RGBA(
-            red: min(1, base.red + lift * (1 - base.red)),
-            green: min(1, base.green + lift * (1 - base.green)),
-            blue: min(1, base.blue + lift * (1 - base.blue)),
-            alpha: alpha
-        )
-        let bottomColor = RGBA(
-            red: max(0, base.red - drop * base.red),
-            green: max(0, base.green - drop * base.green),
-            blue: max(0, base.blue - drop * base.blue),
-            alpha: alpha
-        )
         ctx.saveGState()
         ctx.addPath(path)
         ctx.clip()
-        if let gradient = CGGradient(
-            colorsSpace: srgb,
-            colors: [cgColor(topColor, alpha: alpha), cgColor(bottomColor, alpha: alpha)] as CFArray,
-            locations: [0, 1]
-        ) {
+        if alpha < 0.999 {
+            ctx.setAlpha(alpha)
+        }
+        if let gradient = cachedPaperSheenGradient(base: base, isDark: isDark) {
             ctx.drawLinearGradient(
                 gradient,
                 start: CGPoint(x: bbox.midX, y: bbox.minY),
@@ -452,10 +457,63 @@ public enum ActivitySceneRenderer {
                 options: []
             )
         } else {
-            ctx.setFillColor(cgColor(base, alpha: alpha))
+            ctx.setFillColor(cgColor(base, alpha: 1))
             ctx.fill(bbox)
         }
         ctx.restoreGState()
+    }
+
+    private static func cachedPaperSheenGradient(base: RGBA, isDark: Bool) -> CGGradient? {
+        let key = PaperSheenKey(
+            r: base.red.bitPattern,
+            g: base.green.bitPattern,
+            b: base.blue.bitPattern,
+            isDark: isDark
+        )
+        if let hit = paperSheenCache.withLock({ $0[key] }) {
+            return hit.gradient
+        }
+        let lift = isDark ? 0.08 : 0.03
+        let drop = isDark ? 0.02 : 0.035
+        let topColor = RGBA(
+            red: min(1, base.red + lift * (1 - base.red)),
+            green: min(1, base.green + lift * (1 - base.green)),
+            blue: min(1, base.blue + lift * (1 - base.blue)),
+            alpha: 1
+        )
+        let bottomColor = RGBA(
+            red: max(0, base.red - drop * base.red),
+            green: max(0, base.green - drop * base.green),
+            blue: max(0, base.blue - drop * base.blue),
+            alpha: 1
+        )
+        guard let gradient = CGGradient(
+            colorsSpace: srgb,
+            colors: [cgColor(topColor, alpha: 1), cgColor(bottomColor, alpha: 1)] as CFArray,
+            locations: [0, 1]
+        ) else {
+            return nil
+        }
+        let box = SendableGradientBox(gradient: gradient)
+        paperSheenCache.withLock { $0[key] = box }
+        return box.gradient
+    }
+
+    private static func cachedTextFont(size: Double, bold: Bool) -> CTFont {
+        let key = FontCacheKey(sizeTenths: Int((size * 10).rounded()), bold: bold)
+        if let hit = fontCache.withLock({ $0[key] }) {
+            return hit.font
+        }
+        let baseFont = CTFontCreateUIFontForLanguage(.system, CGFloat(size), nil)
+            ?? CTFontCreateWithName("Helvetica" as CFString, CGFloat(size), nil)
+        let resolved: CTFont = if bold {
+            CTFontCreateCopyWithSymbolicTraits(baseFont, CGFloat(size), nil, .traitBold, .traitBold) ?? baseFont
+        } else {
+            baseFont
+        }
+        let box = SendableFontBox(font: resolved)
+        fontCache.withLock { $0[key] = box }
+        return box.font
     }
 
     private static func cgColor(_ rgba: RGBA, alpha: Double) -> CGColor {

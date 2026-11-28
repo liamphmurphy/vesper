@@ -57,5 +57,17 @@ final class AnimationPolicyTests: XCTestCase {
             AnimationPolicy.activitySceneTickInterval(lowPowerMode: true),
             AnimationPolicy.activitySceneTickInterval(lowPowerMode: false)
         )
+
+        // Display-link minimumInterval leaves a 10% VSync jitter margin so 60Hz/120Hz ProMotion panels
+        // lock cleanly to every 2nd VSync (60fps) or 4th VSync (30fps) instead of dropping frames.
+        let normalMin = AnimationPolicy.activitySceneDisplayLinkMinimumInterval(lowPowerMode: false)
+        XCTAssertGreaterThan(normalMin, 1.0 / 120.0)
+        XCTAssertLessThan(normalMin, 1.0 / 60.0)
+        XCTAssertEqual(normalMin, 0.015, accuracy: 1e-6)
+
+        let lowPowerMin = AnimationPolicy.activitySceneDisplayLinkMinimumInterval(lowPowerMode: true)
+        XCTAssertGreaterThan(lowPowerMin, 3.0 / 120.0)
+        XCTAssertLessThan(lowPowerMin, 1.0 / 30.0)
+        XCTAssertEqual(lowPowerMin, 0.030, accuracy: 1e-6)
     }
 }

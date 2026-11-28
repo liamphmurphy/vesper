@@ -1174,11 +1174,19 @@ struct ChatLiveActivityCardView: View {
                         .padding(.vertical, 9)
                     }
                 }
-                .background(
-                    theme.swiftUIColor("surface-raised", fallback: p.surface),
-                    in: RoundedRectangle(cornerRadius: 12)
-                )
                 .clipShape(RoundedRectangle(cornerRadius: 12))
+                .background {
+                    // Shadow belongs on the static opaque backdrop shape outside clipShape, not on
+                    // the container VStack: shadowing the VStack forces Core Animation to flatten and
+                    // re-blur the animated diorama stage offscreen on every frame.
+                    RoundedRectangle(cornerRadius: 12)
+                        .fill(theme.swiftUIColor("surface-raised", fallback: p.surface))
+                        .shadow(
+                            color: (isStopping ? Color.clear : stageTint.opacity(theme.mode == .dark ? 0.10 : 0.06)),
+                            radius: 10,
+                            y: 2
+                        )
+                }
                 .overlay(
                     RoundedRectangle(cornerRadius: 12)
                         .stroke(
@@ -1187,11 +1195,6 @@ struct ChatLiveActivityCardView: View {
                                 : stageTint.opacity(theme.mode == .dark ? 0.32 : 0.24),
                             lineWidth: 1
                         )
-                )
-                .shadow(
-                    color: (isStopping ? Color.clear : stageTint.opacity(theme.mode == .dark ? 0.10 : 0.06)),
-                    radius: 10,
-                    y: 2
                 )
 
                 if let morphId, let morphNamespace {
