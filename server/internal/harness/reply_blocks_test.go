@@ -7,7 +7,7 @@ func TestReplyScannerRecognizesRicherVisualizationBlocks(t *testing.T) {
 		"gallery", "product",
 		"diff", "compare", "timeline", "stats", "tree",
 		"compare-images", "graph", "plot", "datatable",
-		"code-group", "kv", "json-tree", "http", "tabs", "details",
+		"code-group", "kv", "json-tree", "http", "tabs", "details", "map",
 	}
 	for _, tag := range tags {
 		var s replyScanner

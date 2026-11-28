@@ -47,6 +47,29 @@ func TestEditLastMessageRedoesTheTurn(t *testing.T) {
 	e.want("POST", "/chats/"+uuid.NewString()+"/edit-last", map[string]any{"body": "x"}, http.StatusNotFound)
 }
 
+func TestEditLastMessageRegeneratesWithEffortOverride(t *testing.T) {
+	e := newChatEnv(t)
+	id := e.newChat(map[string]any{"message": map[string]any{"body": "explain quicksort"}})["id"].(string)
+	e.want("POST", "/chats/"+id+"/cancel", nil, 200)
+	e.addReply(t, id, "First answer")
+
+	res := e.want("POST", "/chats/"+id+"/edit-last", map[string]any{
+		"body":   "explain quicksort",
+		"effort": "high",
+	}, http.StatusAccepted)
+	chat := res["chat"].(map[string]any)
+	if chat["state"] != "running" || chat["effort"] != "high" {
+		t.Fatalf("expected running chat with high effort, got %v", chat)
+	}
+	var prompt string
+	if err := e.pool.QueryRow(t.Context(), `SELECT t.input_message FROM run_turns t JOIN chat_messages m ON m.run_turn_id = t.id WHERE m.session_id = $1`, id).Scan(&prompt); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(prompt, "try your last reply again") {
+		t.Fatalf("expected retry note for identical body, got %q", prompt)
+	}
+}
+
 func TestChatSearchFindsOwnMessagesWithAMarkedSnippet(t *testing.T) {
 	e := newChatEnv(t)
 	chat := e.newChat(nil)["id"].(string)

@@ -60,6 +60,37 @@ final class ChatChartExpandedTests: XCTestCase {
         """).get()
         XCTAssertEqual(spark.sparklineValues.count, 4)
         XCTAssertEqual(spark.sparklineDelta, "-75%")
+
+        // waterfall
+        let wf = try ChatChartSpec.parse("""
+        {"type":"waterfall","title":"Cashflow","y":{"unit":"$"},"items":[{"label":"Start","value":1000,"kind":"start"},{"label":"Rent","value":-400,"kind":"delta"},{"label":"Bonus","value":250,"kind":"delta"},{"label":"End","kind":"total"}]}
+        """).get()
+        XCTAssertEqual(wf.type, .waterfall)
+        XCTAssertEqual(wf.waterfallItems.count, 4)
+        XCTAssertEqual(wf.waterfallItems[1].startY, 1000)
+        XCTAssertEqual(wf.waterfallItems[1].endY, 600)
+        XCTAssertEqual(wf.waterfallItems[3].endY, 850)
+        XCTAssertEqual(wf.tableRows().rows.count, 4)
+
+        // sankey
+        let sk = try ChatChartSpec.parse("""
+        {"type":"sankey","title":"Budget","y":{"unit":"$"},"nodes":[{"id":"inc","label":"Income"},{"id":"tax","label":"Tax"},{"id":"save","label":"Savings"}],"links":[{"from":"inc","to":"tax","value":300},{"from":"inc","to":"save","value":700}]}
+        """).get()
+        XCTAssertEqual(sk.type, .sankey)
+        XCTAssertEqual(sk.sankey?.nodes.count, 3)
+        XCTAssertEqual(sk.sankey?.links.count, 2)
+        XCTAssertEqual(sk.tableRows().rows[0], ["Income", "Tax", "$300"])
+
+        // map
+        let map = try ChatMapSpec.parse("""
+        {"title":"PNW Trip","pins":[{"label":"Portland","lat":45.5231,"lon":-122.6765},{"label":"Seattle","lat":47.6062,"lon":-122.3321}],"routes":[{"label":"I-5","points":[[45.5231,-122.6765],[47.6062,-122.3321]]}]}
+        """).get()
+        XCTAssertEqual(map.pins.count, 2)
+        XCTAssertEqual(map.routes.count, 1)
+        XCTAssertGreaterThan(map.totalRouteKm, 200)
+        XCTAssertLessThan(map.totalRouteKm, 300)
+        let parsed = ChatTranscriptLogic.parseMessage("Trip:\n```map\n{\"pins\":[{\"label\":\"PDX\",\"lat\":45.5,\"lon\":-122.6}]}\n```")
+        XCTAssertTrue(parsed.segments.contains { if case .map = $0 { return true }; return false })
     }
 
     // Each of these trapped converting a Double that was NaN, infinite or past Int's range to Int.

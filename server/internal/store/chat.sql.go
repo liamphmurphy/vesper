@@ -3151,6 +3151,20 @@ func (q *Queries) PreviousChatUserMessage(ctx context.Context, arg PreviousChatU
 	return i, err
 }
 
+const removeChatParticipant = `-- name: RemoveChatParticipant :exec
+DELETE FROM chat_participants WHERE chat_id = $1 AND persona_id = $2
+`
+
+type RemoveChatParticipantParams struct {
+	ChatID    uuid.UUID
+	PersonaID uuid.UUID
+}
+
+func (q *Queries) RemoveChatParticipant(ctx context.Context, arg RemoveChatParticipantParams) error {
+	_, err := q.db.Exec(ctx, removeChatParticipant, arg.ChatID, arg.PersonaID)
+	return err
+}
+
 const renameChatSession = `-- name: RenameChatSession :one
 UPDATE chat_sessions SET title = $3, revision = revision + 1, updated_at = now()
 WHERE id = $1 AND workspace_id = $2 AND revision = $4 RETURNING id, workspace_id, project_id, title, created_by, agent_id, harness, model, current_run_id, state, archived, revision, created_at, updated_at, last_message_at, persona_id, repo_url, effort, speaker_persona_id, queued_persona_ids, relay_turns, relay_limit, interrupt_message_id, last_read_seq, hidden, connector_ids, space_id, work_branches, commit_email, secret_ids, temporary, pending_repo_url, parent_chat_id, auto_model, anchor_message_id, second_opinion, last_assistant_seq, compact_pending, compact_focus, auto_rollover_tokens, forked_from_chat_id, forked_from_message_id

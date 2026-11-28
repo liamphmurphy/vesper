@@ -1314,6 +1314,28 @@ extension API {
         )
     }
 
+    /// Add one of your personas to this conversation
+    ///
+    /// `POST /chats/{id}/participants`
+    public static func addChatParticipant(id: Swift.String, body: ChatParticipantAdd) -> APIRequest<ChatSession> {
+        return APIRequest(
+            method: "POST", template: "/chats/{id}/participants",
+            path: "/api/v1/chats/\(APIPath.escape(id))/participants",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Remove a guest persona from this conversation
+    ///
+    /// `DELETE /chats/{id}/participants/{personaId}`
+    public static func removeChatParticipant(id: Swift.String, personaId: Swift.String) -> APIRequest<ChatSession> {
+        return APIRequest(
+            method: "DELETE", template: "/chats/{id}/participants/{personaId}",
+            path: "/api/v1/chats/\(APIPath.escape(id))/participants/\(APIPath.escape(personaId))",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
     /// Animated SVG character proposals in this chat, oldest first
     ///
     /// Pending proposals wait for the person's decision; decided and superseded ones stay for the record. 404 unknown chat.
@@ -1499,6 +1521,17 @@ extension API {
         return APIRequest(
             method: "POST", template: "/chats/{id}/runs",
             path: "/api/v1/chats/\(APIPath.escape(id))/runs",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Choose which persona answers the next message by default
+    ///
+    /// `PUT /chats/{id}/speaker`
+    public static func setChatSpeaker(id: Swift.String, body: ChatSpeakerUpdate) -> APIRequest<ChatSession> {
+        return APIRequest(
+            method: "PUT", template: "/chats/{id}/speaker",
+            path: "/api/v1/chats/\(APIPath.escape(id))/speaker",
             query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
         )
     }
@@ -3568,6 +3601,53 @@ extension API {
             method: "GET", template: "/projects/{key}/board",
             path: "/api/v1/projects/\(APIPath.escape(key))/board",
             query: _query, headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// List reusable prompt templates for the signed-in user
+    ///
+    /// `GET /prompt-templates`
+    public static func listPromptTemplates(personaId: Swift.String? = nil, spaceId: Swift.String? = nil) -> APIRequest<PromptTemplateList> {
+        var _query: [URLQueryItem] = []
+        APIQuery.append(&_query, "persona_id", personaId)
+        APIQuery.append(&_query, "space_id", spaceId)
+        return APIRequest(
+            method: "GET", template: "/prompt-templates",
+            path: "/api/v1/prompt-templates",
+            query: _query, headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Create a reusable prompt template / custom slash command
+    ///
+    /// `POST /prompt-templates`
+    public static func createPromptTemplate(body: NewPromptTemplate) -> APIRequest<PromptTemplate> {
+        return APIRequest(
+            method: "POST", template: "/prompt-templates",
+            path: "/api/v1/prompt-templates",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Update a reusable prompt template
+    ///
+    /// `PATCH /prompt-templates/{id}`
+    public static func updatePromptTemplate(id: Swift.String, body: PromptTemplatePatch) -> APIRequest<PromptTemplate> {
+        return APIRequest(
+            method: "PATCH", template: "/prompt-templates/{id}",
+            path: "/api/v1/prompt-templates/\(APIPath.escape(id))",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Delete a reusable prompt template
+    ///
+    /// `DELETE /prompt-templates/{id}`
+    public static func deletePromptTemplate(id: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/prompt-templates/{id}",
+            path: "/api/v1/prompt-templates/\(APIPath.escape(id))",
+            query: [], headers: [:], body: nil, decode: .empty
         )
     }
 

@@ -4,6 +4,7 @@ import VesperCore
 // MARK: - Relationship Graph View (LAZYAGENTS-326)
 
 struct ChatGraphCardView: View {
+    @Environment(NativeScreenContext.self) private var context
     @Environment(\.vesperTheme) private var theme
 
     let spec: ChatGraphSpec
@@ -15,6 +16,8 @@ struct ChatGraphCardView: View {
     @State private var dragPanStart: CGSize?
     @State private var zoom: CGFloat = 1.0
     @State private var showLightbox = false
+    @State private var savingLibrary = false
+    @State private var savedLibrary = false
 
     private let baseWidth: CGFloat = 700
     private let baseHeight: CGFloat = 420
@@ -47,6 +50,41 @@ struct ChatGraphCardView: View {
                 .buttonStyle(.plain)
                 .font(.system(size: theme.pointSize(.small)))
                 .foregroundStyle(p.secondaryText)
+
+                Button {
+                    ChatVizExporter.copyPNG(
+                        of: graphCanvas(height: 360)
+                            .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+                            .environment(\.vesperTheme, theme),
+                        context: context
+                    )
+                } label: {
+                    Image(systemName: "photo.on.rectangle").imageScale(.small)
+                }
+                .buttonStyle(.plain)
+                .help("Copy graph as PNG")
+
+                Button {
+                    guard !savingLibrary else { return }
+                    savingLibrary = true
+                    Task {
+                        defer { savingLibrary = false }
+                        if await ChatVizExporter.savePNGToLibrary(
+                            of: graphCanvas(height: 360)
+                                .background(theme.swiftUIColor("surface-sunken", fallback: p.surface))
+                                .environment(\.vesperTheme, theme),
+                            title: spec.title ?? "graph",
+                            context: context
+                        ) {
+                            savedLibrary = true
+                        }
+                    }
+                } label: {
+                    Image(systemName: savedLibrary ? "checkmark" : "bookmark").imageScale(.small)
+                }
+                .buttonStyle(.plain)
+                .disabled(savingLibrary)
+                .help(savedLibrary ? "Saved to Library" : "Save graph PNG to Library")
             }
             .foregroundStyle(p.tertiaryText)
         } content: {

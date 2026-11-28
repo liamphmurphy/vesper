@@ -34,6 +34,7 @@ final class BrowserProfileRuntime: Identifiable {
     var proxyConfig: BrowserProxyConfig = .none
     var spaceId: String?
     var highlights: [BrowserWebHighlight] = []
+    var darkModeSiteOverrides: [String: BrowserDarkModeSiteOverride] = [:]
 
     let extensionHost: BrowserExtensionHost
     let autofill: BrowserAutofillManager
@@ -65,6 +66,7 @@ final class BrowserProfileRuntime: Identifiable {
         self.proxyConfig = profile.proxyConfig
         self.spaceId = profile.spaceId
         self.highlights = profile.highlights
+        self.darkModeSiteOverrides = profile.darkModeSiteOverrides
         BrowserWebViewFactory.applyProxy(profile.proxyConfig, toProfileID: profile.dataStoreID)
         self.extensionHost = BrowserExtensionHost(
             profileID: profile.id,
@@ -100,7 +102,8 @@ final class BrowserProfileRuntime: Identifiable {
             sitePermissions: sitePermissions,
             proxyConfig: proxyConfig,
             spaceId: spaceId,
-            highlights: highlights
+            highlights: highlights,
+            darkModeSiteOverrides: darkModeSiteOverrides
         )
     }
 }
@@ -125,6 +128,7 @@ final class BrowserStore {
     var adBlockConfig: BrowserAdBlockConfig = .default
     var securityConfig: BrowserSecurityConfig = .default
     var layoutConfig: BrowserLayoutConfig = .default
+    var darkModeConfig: BrowserDarkModeConfig = .default
     var isFocusMode: Bool = false
     var openExternalLinksInBrowser: Bool = true
     var searchEngine: BrowserSearchEngine = .duckDuckGo
@@ -279,6 +283,7 @@ final class BrowserStore {
         adBlockConfig = persisted.adBlockConfig
         securityConfig = persisted.securityConfig
         layoutConfig = persisted.layoutConfig
+        darkModeConfig = persisted.darkModeConfig
         openExternalLinksInBrowser = persisted.openExternalLinksInBrowser
         searchEngine = persisted.searchEngine
         autofillEnabled = persisted.autofillEnabled
@@ -408,7 +413,8 @@ final class BrowserStore {
             autofillEnabled: autofillEnabled,
             adBlockConfig: adBlockConfig,
             securityConfig: securityConfig,
-            layoutConfig: layoutConfig
+            layoutConfig: layoutConfig,
+            darkModeConfig: darkModeConfig
         )
         do {
             try BrowserStorage.save(snapshot, to: storageURL)
@@ -482,6 +488,7 @@ final class BrowserStore {
             contentRuleLists: adBlockEngine.compiledRuleLists,
             adBlockPageScript: adBlockEngine.compiledPageScript,
             adBlockActive: isAdBlockActive(for: record.url, in: runtime),
+            darkModeState: effectiveDarkModeState(for: record.url, in: runtime),
             webExtensionController: runtime.extensionHost.controller,
             lockdownModeEnabled: isLockdownActive(for: record.url, in: runtime),
             proxyConfig: runtime.proxyConfig
@@ -489,6 +496,10 @@ final class BrowserStore {
         session.adBlockActiveProvider = { [weak self, weak runtime] url in
             guard let self, let runtime else { return true }
             return self.isAdBlockActive(for: url, in: runtime)
+        }
+        session.darkModeStateProvider = { [weak self, weak runtime] url in
+            guard let self, let runtime else { return .disabled }
+            return self.effectiveDarkModeState(for: url, in: runtime)
         }
         session.securityConfigProvider = { [weak self] in
             self?.securityConfig ?? .default
@@ -1398,6 +1409,121 @@ final class BrowserStore {
             host: urlString,
             disabledHosts: target.adBlockDisabledHosts
         )
+    }
+
+    // MARK: Auto Dark Mode
+
+    var isAppDarkMode: Bool {
+        if let app {
+            return app.effectiveTheme().mode == .dark
+        }
+        return AppearanceMonitor.current().mode == .dark
+    }
+
+    func darkModeSiteOverride(for urlString: String, in runtime: BrowserProfileRuntime? = nil) -> BrowserDarkModeSiteOverride {
+        let target = runtime ?? currentRuntime
+        return BrowserDarkModeLogic.siteOverride(for: urlString, overrides: target.darkModeSiteOverrides)
+    }
+
+    func effectiveDarkModeState(for urlString: String, in runtime: BrowserProfileRuntime? = nil) -> BrowserDarkModeEffectiveState {
+        let target = runtime ?? currentRuntime
+        return BrowserDarkModeLogic.effectiveState(
+            for: urlString,
+            config: darkModeConfig,
+            systemIsDark: isAppDarkMode,
+            siteOverrides: target.darkModeSiteOverrides
+        )
+    }
+
+    func setDarkModeMode(_ mode: BrowserDarkModeMode) {
+        guard darkModeConfig.mode != mode else { return }
+        darkModeConfig.mode = mode
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func setDarkModeTheme(_ theme: BrowserDarkModeTheme) {
+        guard darkModeConfig.theme != theme else { return }
+        darkModeConfig.theme = theme
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func setDarkModeRespectNative(_ enabled: Bool) {
+        guard darkModeConfig.respectNativeDarkMode != enabled else { return }
+        darkModeConfig.respectNativeDarkMode = enabled
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func setDarkModeDimImages(_ enabled: Bool) {
+        guard darkModeConfig.dimImages != enabled else { return }
+        darkModeConfig.dimImages = enabled
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func setDarkModeBrightness(_ value: Double) {
+        let clamped = BrowserDarkModeConfig.clampBrightness(value)
+        guard abs(darkModeConfig.brightness - clamped) >= 0.005 else { return }
+        darkModeConfig.brightness = clamped
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func setDarkModeContrast(_ value: Double) {
+        let clamped = BrowserDarkModeConfig.clampContrast(value)
+        guard abs(darkModeConfig.contrast - clamped) >= 0.005 else { return }
+        darkModeConfig.contrast = clamped
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func resetDarkModeAdjustments() {
+        darkModeConfig.brightness = 1.0
+        darkModeConfig.contrast = 1.0
+        scheduleSave()
+        applyDarkModeToAllTabs()
+    }
+
+    func setDarkModeSiteOverride(_ override: BrowserDarkModeSiteOverride, forHost rawHost: String) {
+        let runtime = currentRuntime
+        runtime.darkModeSiteOverrides = BrowserDarkModeLogic.updatingSiteOverride(
+            override,
+            for: rawHost,
+            in: runtime.darkModeSiteOverrides
+        )
+        scheduleSave()
+        applyDarkModeToAllTabs(in: runtime)
+    }
+
+    func toggleDarkModeForActiveSite() {
+        guard let tab = activeTab, tab.hasLoadedPage,
+              let host = BrowserPageGuard.normalizeHost(tab.urlString)
+        else { return }
+        let next = BrowserDarkModeLogic.toggledSiteOverride(
+            for: tab.urlString,
+            config: darkModeConfig,
+            systemIsDark: isAppDarkMode,
+            siteOverrides: currentRuntime.darkModeSiteOverrides,
+            currentStatus: tab.darkModeStatus
+        )
+        setDarkModeSiteOverride(next, forHost: host)
+    }
+
+    func handleAppAppearanceChanged() {
+        guard darkModeConfig.mode == .auto else { return }
+        applyDarkModeToAllTabs()
+    }
+
+    private func applyDarkModeToAllTabs(in targetRuntime: BrowserProfileRuntime? = nil) {
+        let targets = targetRuntime.map { [$0] } ?? runtimes
+        for runtime in targets {
+            for tab in runtime.tabs {
+                let state = effectiveDarkModeState(for: tab.urlString, in: runtime)
+                tab.applyDarkModeState(state, evaluateLive: true)
+            }
+        }
     }
 
     func setAdBlockEnabled(_ enabled: Bool) {

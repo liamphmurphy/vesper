@@ -37,6 +37,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     var hasLoginForm: Bool = false
     var pendingCredentialSave: BrowserPendingCredentialSave?
     var adBlockInterventionsCount: Int = 0
+    var darkModeStatus: BrowserDarkModePageStatus = .inactive
 
     /// Active live share for this tab (backed by `/api/v1/browser-extension/shares`).
     var activeShare: BrowserShare?
@@ -50,6 +51,8 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored private var faviconTask: Task<Void, Never>?
     @ObservationIgnored private var appliedRuleLists: [WKContentRuleList] = []
     @ObservationIgnored private var appliedAdBlockPageScript: WKUserScript?
+    @ObservationIgnored private var appliedDarkModeState: BrowserDarkModeEffectiveState = .disabled
+    @ObservationIgnored private var appliedDarkModeScript: WKUserScript?
     @ObservationIgnored private var isAdBlockAttached: Bool = false
     @ObservationIgnored private var inFlightHTTPSUpgradeOriginalURL: URL?
     @ObservationIgnored private var inFlightHTTPSUpgradeTargetURL: URL?
@@ -74,6 +77,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
     @ObservationIgnored var sitePermissionProvider: ((String, BrowserPermissionKind) -> BrowserPermissionSetting)?
     @ObservationIgnored var onSitePermissionChanged: ((String, BrowserPermissionKind, BrowserPermissionSetting) -> Void)?
     @ObservationIgnored var highlightsProvider: ((String) -> [BrowserWebHighlight])?
+    @ObservationIgnored var darkModeStateProvider: ((String) -> BrowserDarkModeEffectiveState)?
 
     var hasLoadedPage: Bool { !urlString.isEmpty }
 
@@ -137,6 +141,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         contentRuleLists: [WKContentRuleList] = [],
         adBlockPageScript: WKUserScript? = nil,
         adBlockActive: Bool = true,
+        darkModeState: BrowserDarkModeEffectiveState = .disabled,
         webExtensionController: WKWebExtensionController? = nil,
         lockdownModeEnabled: Bool = false,
         proxyConfig: BrowserProxyConfig = .none
@@ -153,6 +158,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         self.favicon = BrowserFaviconCache.shared.cachedIcon(for: record.url)
         self.appliedRuleLists = contentRuleLists
         self.appliedAdBlockPageScript = adBlockPageScript
+        self.appliedDarkModeState = darkModeState
+        let initialDarkModeScript = Self.makeDarkModeUserScript(for: darkModeState)
+        self.appliedDarkModeScript = initialDarkModeScript
         self.isAdBlockAttached = adBlockActive
 
         var weakSessionBox: WeakTabSessionBox?
@@ -167,15 +175,20 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         let passkeyProxy = BrowserScriptMessageProxy { _ in
             weakSessionBox?.session?.passkeyFallbackSuggested = true
         }
+        let darkModeProxy = BrowserScriptMessageProxy { message in
+            weakSessionBox?.session?.handleDarkModeMessage(message.body)
+        }
         self.webView = BrowserWebViewFactory.makeWebView(
             isPrivate: record.isPrivate,
             profileDataStoreID: profileDataStoreID,
             contentRuleLists: adBlockActive ? contentRuleLists : [],
             adBlockPageScript: adBlockActive ? adBlockPageScript : nil,
+            darkModeScript: initialDarkModeScript,
             webExtensionController: webExtensionController,
             autofillMessageHandler: autofillProxy,
             adBlockMetricsHandler: adBlockMetricsProxy,
             passkeyMessageHandler: passkeyProxy,
+            darkModeMessageHandler: darkModeProxy,
             lockdownModeEnabled: lockdownModeEnabled,
             proxyConfig: proxyConfig
         )
@@ -252,6 +265,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         isReaderMode = false
         hasLoginForm = false
         adBlockInterventionsCount = 0
+        darkModeStatus = .inactive
 
         var targetURL = url
         if securityConfigProvider?().stripTrackingParameters ?? true {
@@ -265,6 +279,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         urlString = targetURL.absoluteString
         favicon = BrowserFaviconCache.shared.cachedIcon(for: targetURL.absoluteString)
         syncAdBlockForURL(targetURL.absoluteString)
+        syncDarkModeForURL(targetURL.absoluteString)
         if let host = targetURL.host, let savedZoom = hostZoomProvider?(host) {
             zoom = savedZoom
             webView.pageZoom = savedZoom
@@ -416,6 +431,51 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         syncContentController(attachAdBlock: shouldAttach)
     }
 
+    private static func makeDarkModeUserScript(for state: BrowserDarkModeEffectiveState) -> WKUserScript {
+        WKUserScript(
+            source: BrowserDarkModeScripts.makeUserScriptSource(for: state),
+            injectionTime: .atDocumentStart,
+            forMainFrameOnly: true,
+            in: .defaultClient
+        )
+    }
+
+    /// Updates the dark mode user script for future navigations and applies changes live
+    /// to the currently loaded page without reloading.
+    func applyDarkModeState(_ state: BrowserDarkModeEffectiveState, evaluateLive: Bool = true) {
+        let changed = state != appliedDarkModeState
+        appliedDarkModeState = state
+        if changed || appliedDarkModeScript == nil {
+            appliedDarkModeScript = Self.makeDarkModeUserScript(for: state)
+            syncContentController(attachAdBlock: isAdBlockAttached)
+        }
+        if !state.enabled {
+            darkModeStatus = .inactive
+        }
+        if evaluateLive, hasLoadedPage {
+            let js = BrowserDarkModeScripts.makeLiveUpdateJS(for: state)
+            webView.evaluateJavaScript(js, in: nil, in: .defaultClient) { _ in }
+        }
+    }
+
+    /// Syncs the pre-navigation dark mode user script when navigating between hosts with
+    /// different per-site overrides so the destination page never flashes light.
+    func syncDarkModeForURL(_ urlString: String) {
+        guard let next = darkModeStateProvider?(urlString) else { return }
+        guard next != appliedDarkModeState else { return }
+        appliedDarkModeState = next
+        appliedDarkModeScript = Self.makeDarkModeUserScript(for: next)
+        syncContentController(attachAdBlock: isAdBlockAttached)
+    }
+
+    private func handleDarkModeMessage(_ body: Any) {
+        guard let dict = body as? [String: Any],
+              let raw = dict["status"] as? String,
+              let status = BrowserDarkModePageStatus(rawValue: raw)
+        else { return }
+        darkModeStatus = status
+    }
+
     private func syncContentController(attachAdBlock: Bool) {
         let ucc = webView.configuration.userContentController
         ucc.removeAllContentRuleLists()
@@ -424,7 +484,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
                 ucc.add(ruleList)
             }
         }
-        // Rebuild user scripts cleanly so AutoFill, passkey observer & metrics bridge scripts are always preserved.
+        // Rebuild user scripts cleanly so AutoFill, passkey observer, dark mode & metrics bridge scripts are always preserved.
         ucc.removeAllUserScripts()
         ucc.addUserScript(WKUserScript(
             source: BrowserAdBlockScripts.metricsBridgeScriptSource,
@@ -450,6 +510,9 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
             forMainFrameOnly: false,
             in: .defaultClient
         ))
+        if let darkModeScript = appliedDarkModeScript {
+            ucc.addUserScript(darkModeScript)
+        }
         if attachAdBlock, let pageScript = appliedAdBlockPageScript {
             ucc.addUserScript(pageScript)
         }
@@ -526,6 +589,10 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
         )
         webView.configuration.userContentController.removeScriptMessageHandler(
             forName: BrowserPasskeyBridgeScripts.handlerName,
+            contentWorld: .defaultClient
+        )
+        webView.configuration.userContentController.removeScriptMessageHandler(
+            forName: BrowserDarkModeScripts.handlerName,
             contentWorld: .defaultClient
         )
         webView.contextCallbacks = nil
@@ -757,6 +824,7 @@ final class BrowserTabSession: NSObject, Identifiable, WKNavigationDelegate, WKU
 
         if isMainFrame {
             syncAdBlockForURL(url.absoluteString)
+            syncDarkModeForURL(url.absoluteString)
         }
         return (.allow, preferences)
     }

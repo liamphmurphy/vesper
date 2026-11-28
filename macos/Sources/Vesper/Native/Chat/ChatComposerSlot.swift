@@ -12,6 +12,8 @@ struct ChatComposerSlot: View {
     let harnesses: [API.HarnessActivity]
     let workflows: [API.Workflow]
     let repositories: [API.RepositoryEntry]
+    var promptTemplates: [API.PromptTemplate] = []
+    var spaces: [API.ChatSpace] = []
 
     @Binding var selectedHarness: API.Harness?
     @Binding var selectedModel: String?
@@ -29,6 +31,7 @@ struct ChatComposerSlot: View {
     /// Opens Live Voice, talking with the persona out loud.
     let onStartLiveVoice: @MainActor () -> Void
     var onOpenOutline: (@MainActor () -> Void)? = nil
+    var onStartTemporaryChat: (@MainActor () -> Void)? = nil
     var prefill: ChatComposerPrefill? = nil
     var onPrefillApplied: (@MainActor (Int) -> Void)? = nil
     var livePlanProgress: ChatPlanProgress? = nil
@@ -46,6 +49,8 @@ struct ChatComposerSlot: View {
             harnesses: harnesses,
             workflows: workflows,
             repositories: repositories,
+            promptTemplates: promptTemplates,
+            spaces: spaces,
             selectedHarness: $selectedHarness,
             selectedModel: $selectedModel,
             selectedEffort: $selectedEffort,
@@ -60,6 +65,7 @@ struct ChatComposerSlot: View {
             onCompare: onCompare,
             onStartLiveVoice: onStartLiveVoice,
             onOpenOutline: onOpenOutline,
+            onStartTemporaryChat: onStartTemporaryChat,
             prefill: prefill,
             onPrefillApplied: onPrefillApplied,
             livePlanProgress: livePlanProgress,

@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import VesperCore
 
@@ -15,6 +16,7 @@ final class ChatScreenModel {
     var selectedModel: String?
     var selectedEffort: API.ChatEffort?
     var selectedRepoUrl: String?
+    var temporaryMode = false
     var pinnedIds: Set<String> {
         didSet {
             UserDefaults.standard.set(Array(pinnedIds).sorted(), forKey: Self.pinnedDefaultsKey)
@@ -26,6 +28,8 @@ final class ChatScreenModel {
     var deleteTargetId: String?
     var forkTarget: API.ChatMessage?
     var saveWikiTarget: API.ChatMessage?
+    var saveWikiBodyOverride: String?
+    var saveTemplateBody: String?
     var composerPrefill: ChatComposerPrefill?
     @ObservationIgnored var prefillToken = 0
 
@@ -35,10 +39,14 @@ final class ChatScreenModel {
     var activeCanvasId: String?
     var designReviewing = false
     var threadMessageId: String?
+    var threadInitialDraft: String?
     var forceShowCode = false
     var startingPlayground = false
     var stoppingChatId: String? = nil
     var scrollToMessageRequest: ChatScrollMessageRequest?
+    var focusedTurnMessageId: String?
+    var contextPopoverToken = 0
+    var replyVariants = ChatReplyVariantStore()
     @ObservationIgnored var scrollToken = 0
     var theme: ThemeTokens = ThemeTokens(mode: .light)
     var colorScheme: ColorScheme = .light
@@ -50,9 +58,11 @@ final class ChatScreenModel {
         activeCanvasId = nil
         designReviewing = false
         threadMessageId = nil
+        threadInitialDraft = nil
         forceShowCode = false
         startingPlayground = false
         scrollToMessageRequest = nil
+        focusedTurnMessageId = nil
     }
 
     init() {
@@ -81,7 +91,9 @@ struct ChatScreen: View {
     @State private var companionOpen = false
     /// Live Voice: the persona takes over the chat while the person talks with it out loud.
     @State private var liveVoiceOpen = false
+    @State private var messageReader = ChatMessageReader()
     @State private var lastDockFetch = Date()
+    @State private var keyMonitor: Any?
 
     private static let bootRequest = API.getBootstrap()
     private static let personasRequest = API.listPersonas()
@@ -94,6 +106,7 @@ struct ChatScreen: View {
     private static let longTurnUsageRefreshIntervalMs = ChatTurnActivity.longTurnUsageRefreshIntervalMs
     private static let workflowsRequest = API.listWorkflows()
     private static let repositoriesRequest = API.searchRepositories()
+    private static let promptTemplatesRequest = API.listPromptTemplates()
 
     private var chatId: String? {
         context.match.params["id"]
@@ -152,6 +165,7 @@ struct ChatScreen: View {
         let harnesses = store.entry(Self.dockRequest).data?.harnesses ?? []
         let workflows = store.entry(Self.workflowsRequest).data?.workflows ?? []
         let repositories = store.entry(Self.repositoriesRequest).data ?? []
+        let promptTemplates = store.entry(Self.promptTemplatesRequest).data?.templates ?? []
         let chatsEntry = store.entry(chatsRequest)
         let chats = chatsEntry.data?.chats ?? []
         let session = sessionRequest.flatMap { store.entry($0).data }
@@ -202,9 +216,17 @@ struct ChatScreen: View {
                     personas: personas,
                     activePersona: activePersona,
                     harnessModels: harnessModels,
+                    messages: messages,
                     pinnedCount: messages.filter { $0.bookmarked == true }.count
                 )
                 Divider()
+
+                if messageReader.isActive {
+                    ChatReadAloudMiniBarView(reader: messageReader) { msgId in
+                        model.scrollToken += 1
+                        model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: msgId)
+                    }
+                }
 
                 Group {
                     if let chatId {
@@ -241,6 +263,8 @@ struct ChatScreen: View {
                     harnesses: harnesses,
                     workflows: workflows,
                     repositories: repositories,
+                    promptTemplates: promptTemplates,
+                    spaces: spaces,
                     selectedHarness: $model.selectedHarness,
                     selectedModel: $model.selectedModel,
                     selectedEffort: $model.selectedEffort,
@@ -274,6 +298,10 @@ struct ChatScreen: View {
                     onOpenOutline: {
                         model.inspectorTabId = ChatInspectorLogic.outlineTabId
                         model.inspectorOpen = true
+                    },
+                    onStartTemporaryChat: {
+                        model.temporaryMode = true
+                        context.navigate("/chat?temporary=1")
                     },
                     prefill: model.composerPrefill,
                     onPrefillApplied: { token in
@@ -321,6 +349,7 @@ struct ChatScreen: View {
         }
         .onChange(of: chatId) { oldId, _ in
             companionOpen = false
+            messageReader.stop()
             // Live Voice in a new chat carries on into the chat its first message created.
             if oldId != nil { liveVoiceOpen = false }
         }
@@ -370,6 +399,9 @@ struct ChatScreen: View {
             }
             if let personaQuery = query["persona"], !personaQuery.isEmpty {
                 model.newChatPersonaId = personaQuery
+            }
+            if chatId == nil, query["temporary"] == "1" {
+                model.temporaryMode = true
             }
             applyInspectorQuery(query, canvases: canvases)
         }
@@ -429,13 +461,20 @@ struct ChatScreen: View {
             if context.match.query["view"] == "archived" {
                 model.viewMode = .archived
             }
+            if chatId == nil, context.match.query["temporary"] == "1" {
+                model.temporaryMode = true
+            }
             applyInspectorQuery(context.match.query, canvases: canvases)
             installCommandHandler()
             installInspectorView()
+            installKeyboardMonitor()
         }
         .onChange(of: theme) { _, next in model.theme = next }
         .onChange(of: colorScheme) { _, next in model.colorScheme = next }
         .onDisappear {
+            removeKeyboardMonitor()
+            messageReader.stop()
+            ChatSelectionPopoverPresenter.shared.dismiss()
             context.inspectorView = nil
             for key in watched { context.store.stopObserving(key) }
             watched = []
@@ -457,6 +496,21 @@ struct ChatScreen: View {
             set: { if $0 == nil { model.saveWikiTarget = nil } }
         )) { item in
             saveWikiSheet(session: session, message: item.message)
+        }
+        .sheet(isPresented: Binding(
+            get: { model.saveTemplateBody != nil },
+            set: { if !$0 { model.saveTemplateBody = nil } }
+        )) {
+            if let templateBody = model.saveTemplateBody {
+                ChatSaveTemplateSheetView(
+                    initialBody: templateBody,
+                    activePersonaId: activePersona?.id ?? session?.persona?.id,
+                    activePersonaName: activePersona?.name ?? session?.persona?.name,
+                    activeSpaceId: session?.space?.id,
+                    activeSpaceName: session?.space?.name,
+                    onClose: { model.saveTemplateBody = nil }
+                )
+            }
         }
         .alert(
             "Delete conversation?",
@@ -520,6 +574,7 @@ struct ChatScreen: View {
                 model.forkTarget = msg
             },
             onSaveWiki: { msg in
+                model.saveWikiBodyOverride = nil
                 model.saveWikiTarget = msg
             },
             onSecondOpinion: { msg, harness, modelId in
@@ -535,6 +590,67 @@ struct ChatScreen: View {
                         invalidating: QueryInvalidation(resources: ["chats"])
                     )
                 }
+            },
+            replyVariants: model.replyVariants,
+            onSelectReplyVariant: { userMessageId, index in
+                model.replyVariants.select(chatId: chatId, userMessageId: userMessageId, index: index)
+            },
+            onEditLastUserMessage: { newBody in
+                await editLastMessage(chatId: chatId, body: newBody)
+            },
+            onRegenerateMessage: { replyMsg, userMsgId, userBody, harness, modelId in
+                model.replyVariants.archiveBeforeRegenerate(
+                    chatId: chatId,
+                    userMessageId: userMsgId,
+                    reply: ChatReplyVariant(
+                        id: replyMsg.id,
+                        bodyMd: replyMsg.bodyMd,
+                        model: replyMsg.model,
+                        harness: replyMsg.harness?.rawValue,
+                        createdAt: replyMsg.createdAt
+                    )
+                )
+                return await editLastMessage(
+                    chatId: chatId,
+                    body: userBody,
+                    harness: harness,
+                    modelId: modelId
+                )
+            },
+            readingMessageId: messageReader.activeMessageId,
+            onToggleReadAloud: { msg, personaId, speakerName, bodyMd in
+                companion.stopVoice()
+                messageReader.toggle(
+                    chatId: chatId,
+                    messageId: msg.id,
+                    personaId: personaId,
+                    speakerName: speakerName,
+                    bodyMd: bodyMd
+                )
+            },
+            onSelectionAction: { msg, speaker, action, excerpt in
+                let hostName = activePersona?.name ?? session?.persona?.name
+                switch action {
+                case .quote:
+                    let text = ChatSelectionLogic.quotePrompt(selection: excerpt, speakerName: speaker, hostName: hostName)
+                    model.prefillToken += 1
+                    model.composerPrefill = ChatComposerPrefill(token: model.prefillToken, text: text)
+                case .thread:
+                    model.threadMessageId = msg.id
+                    model.threadInitialDraft = ChatSelectionLogic.threadPrefill(selection: excerpt)
+                    model.inspectorTabId = ChatInspectorLogic.threadTabId
+                    model.inspectorOpen = true
+                case .explain:
+                    let text = ChatSelectionLogic.explainPrompt(selection: excerpt)
+                    model.prefillToken += 1
+                    model.composerPrefill = ChatComposerPrefill(token: model.prefillToken, text: text)
+                case .clipToKnowledge:
+                    model.saveWikiBodyOverride = excerpt
+                    model.saveWikiTarget = msg
+                }
+            },
+            onSaveAsTemplate: { body in
+                model.saveTemplateBody = body
             }
         )
     }
@@ -559,8 +675,11 @@ struct ChatScreen: View {
                 chatId: chatId,
                 chatTitle: session?.title ?? "",
                 projectKey: session?.project,
-                bodyMd: message.bodyMd,
-                onClose: { model.saveWikiTarget = nil }
+                bodyMd: model.saveWikiBodyOverride ?? message.bodyMd,
+                onClose: {
+                    model.saveWikiTarget = nil
+                    model.saveWikiBodyOverride = nil
+                }
             )
         }
     }
@@ -570,6 +689,7 @@ struct ChatScreen: View {
         personas: [API.Persona],
         activePersona: API.Persona?,
         harnessModels: [API.ChatHarnessModels],
+        messages: [API.ChatMessage],
         pinnedCount: Int
     ) -> some View {
         let p = theme.palette
@@ -590,12 +710,29 @@ struct ChatScreen: View {
                     .font(.system(size: theme.pointSize(.body), weight: .semibold))
                     .lineLimit(1)
 
-                if participants.count > 1 {
+                if session.temporary == true {
                     HStack(spacing: 4) {
-                        ForEach(participants, id: \.id) { participant in
-                            TonePill(label: "@\(participant.name)", tone: "neutral")
-                        }
+                        Image(systemName: "eye.slash")
+                            .imageScale(.small)
+                        Text("Temporary")
                     }
+                    .font(.system(size: theme.pointSize(.micro), weight: .medium))
+                    .foregroundStyle(p.secondaryText)
+                    .padding(.horizontal, 7)
+                    .padding(.vertical, 3)
+                    .background(p.surface, in: Capsule())
+                    .overlay(Capsule().strokeBorder(p.border, style: StrokeStyle(lineWidth: 1, dash: [3, 2])))
+                    .help("Temporary chat: no memory reads or writes, excluded from search, auto-deleted after 24h idle.")
+                }
+
+                if personas.count > 1 || participants.count > 1 {
+                    ChatParticipantsPopoverView(
+                        session: session,
+                        allPersonas: personas,
+                        onSendRoundtable: { prompt in
+                            await sendMessage(prompt, activePersona: activePersona)
+                        }
+                    )
                 }
             } else {
                 Text("New conversation")
@@ -611,6 +748,31 @@ struct ChatScreen: View {
                     }
                     .frame(maxWidth: 170)
                 }
+
+                Button {
+                    model.temporaryMode.toggle()
+                } label: {
+                    HStack(spacing: 4) {
+                        Image(systemName: model.temporaryMode ? "eye.slash.fill" : "eye.slash")
+                            .imageScale(.small)
+                        Text("Temporary")
+                            .lineLimit(1)
+                    }
+                    .font(.system(size: theme.pointSize(.small), weight: model.temporaryMode ? .semibold : .regular))
+                    .foregroundStyle(model.temporaryMode ? p.accent : p.secondaryText)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 4)
+                    .background(model.temporaryMode ? p.selected : p.surface, in: Capsule())
+                    .overlay(
+                        Capsule().strokeBorder(
+                            model.temporaryMode ? p.accent.opacity(0.7) : p.border,
+                            style: StrokeStyle(lineWidth: 1, dash: model.temporaryMode ? [4, 2] : [])
+                        )
+                    )
+                }
+                .buttonStyle(.plain)
+                .help("Temporary chat (/temp): no memory reads or writes, excluded from search, auto-deleted after 24h idle.")
+                .accessibilityLabel(model.temporaryMode ? "Disable temporary chat" : "Enable temporary chat")
             }
 
             Spacer(minLength: 8)
@@ -618,7 +780,9 @@ struct ChatScreen: View {
             if let session {
                 ChatContextMeterView(
                     session: session,
+                    messages: messages,
                     pinnedCount: pinnedCount,
+                    openRequestToken: model.contextPopoverToken,
                     onCompact: { focus in await compactChat(focus: focus) }
                 )
             }
@@ -644,6 +808,10 @@ struct ChatScreen: View {
             .accessibilityLabel(showLiveThinking ? "Hide live thinking" : "Show live thinking")
 
             modelMenu(session: session, harnessModels: harnessModels)
+
+            if let session, !messages.isEmpty {
+                exportChatMenu(session: session, activePersona: activePersona, messages: messages)
+            }
 
             Button {
                 context.navigate("/chat")
@@ -719,10 +887,12 @@ struct ChatScreen: View {
                             WorkPersonaAvatarView(id: persona.id, handle: nil, name: persona.name, size: 36, state: .idle, active: true, preferCharacter: true)
                         }
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("Start a conversation")
+                            Text(model.temporaryMode ? "Start a temporary conversation" : "Start a conversation")
                                 .font(.system(size: theme.pointSize(.heading), weight: .semibold))
                             if let persona = activePersona {
-                                Text("Chatting with \(persona.name)")
+                                Text(model.temporaryMode
+                                     ? "Off the record with \(persona.name) — no memory reads or writes, auto-pruned after 24h."
+                                     : "Chatting with \(persona.name)")
                                     .font(.system(size: theme.pointSize(.body)))
                                     .foregroundStyle(p.secondaryText)
                             }
@@ -1023,7 +1193,11 @@ struct ChatScreen: View {
                let currentChatId = context.match.params["id"],
                let msgId = model.threadMessageId, !msgId.isEmpty {
                 return AnyView(
-                    ChatThreadInspectorView(chatId: currentChatId, messageId: msgId)
+                    ChatThreadInspectorView(
+                        chatId: currentChatId,
+                        messageId: msgId,
+                        initialDraft: model.threadInitialDraft
+                    )
                         .id("\(currentChatId):\(msgId)")
                         .environment(context)
                         .environment(\.vesperTheme, model.theme)
@@ -1271,6 +1445,7 @@ struct ChatScreen: View {
                 }
                 context.store.invalidate(QueryInvalidation(resources: ["chats"]))
             } else {
+                let isTemporary = model.temporaryMode
                 let created = try await context.store.mutate(
                     API.createChat(body: API.NewChat(
                         effort: model.selectedEffort,
@@ -1279,10 +1454,12 @@ struct ChatScreen: View {
                         model: model.selectedModel,
                         personaId: activePersona?.id,
                         repoUrl: model.selectedRepoUrl,
-                        spaceId: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId
+                        spaceId: model.selectedSpaceId.isEmpty ? nil : model.selectedSpaceId,
+                        temporary: isTemporary ? true : nil
                     )),
                     invalidating: QueryInvalidation(resources: ["chats"])
                 )
+                model.temporaryMode = false
                 context.navigate("/chat/\(created.id)")
             }
             return nil
@@ -1379,6 +1556,39 @@ struct ChatScreen: View {
         }
     }
 
+    private func editLastMessage(
+        chatId: String,
+        body: String,
+        harness: API.Harness? = nil,
+        modelId: String? = nil,
+        effort: API.ChatEffort? = nil
+    ) async -> String? {
+        companion.finishReveal()
+        do {
+            let resp = try await context.store.mutate(
+                API.editLastChatMessage(
+                    id: chatId,
+                    body: API.ChatMessageEdit(
+                        body: body,
+                        effort: effort,
+                        harness: harness,
+                        model: modelId
+                    )
+                )
+            )
+            context.store.setData(resp.chat, for: API.getChat(id: chatId))
+            let listReq = API.listChatMessages(id: chatId, limit: 200)
+            if var existing = context.store.entry(listReq).data {
+                existing.messages = existing.messages.filter { $0.seq < resp.message.seq } + [resp.message]
+                context.store.setData(existing, for: listReq)
+            }
+            context.store.invalidate(QueryInvalidation(resources: ["chats"]))
+            return nil
+        } catch {
+            return (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
     private func archiveChat(id: String, archived: Bool) {
         Task {
             let revision = context.store.entry(API.getChat(id: id)).data?.revision ?? 1
@@ -1439,6 +1649,190 @@ struct ChatScreen: View {
         )
     }
 
+    // MARK: - Full-Chat Export & Keyboard Shortcuts
+
+    private func exportChatMenu(
+        session: API.ChatSession,
+        activePersona: API.Persona?,
+        messages: [API.ChatMessage]
+    ) -> some View {
+        let p = theme.palette
+        return Menu {
+            Button("Export Markdown…") {
+                runChatExport(session: session, messages: messages, mode: .markdown(includeTraces: false))
+            }
+            Button("Export Markdown (with tool traces)…") {
+                runChatExport(session: session, messages: messages, mode: .markdown(includeTraces: true))
+            }
+            Button("Export PDF…") {
+                runChatExport(session: session, messages: messages, mode: .pdf)
+            }
+            Divider()
+            Button("Save Transcript to Knowledge…") {
+                let md = ChatExportLogic.exportMarkdown(session: session, messages: messages, includeToolTraces: false)
+                if let anchor = messages.last {
+                    model.saveWikiBodyOverride = md
+                    model.saveWikiTarget = anchor
+                }
+            }
+            Button("Summarize & Save to Knowledge") {
+                let prompt = ChatExportLogic.summarizeToKnowledgePrompt(chatTitle: session.title)
+                Task { _ = await sendMessage(prompt, activePersona: activePersona) }
+            }
+            .disabled(session.state == .running)
+            Divider()
+            Menu("Keyboard Shortcuts") {
+                Text("⌥↑ / ⌥↓ — Jump between turns")
+                Text("⌘⇧C — Copy last reply")
+                Text("⌘⇧O — Toggle Outline")
+                Text("⌘⇧K — Open Context / Compact")
+                Text("⌘⇧L — Toggle Live Voice")
+            }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .imageScale(.small)
+                .foregroundStyle(p.secondaryText)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Export chat or save to Knowledge")
+    }
+
+    private enum ChatExportMode {
+        case markdown(includeTraces: Bool)
+        case pdf
+    }
+
+    private func runChatExport(session: API.ChatSession, messages: [API.ChatMessage], mode: ChatExportMode) {
+        let store = context.store
+        Task { @MainActor in
+            var eventsByRunId: [String: [API.RunEvent]] = [:]
+            if case .markdown(true) = mode {
+                let runIds = Set(messages.compactMap(\.runId).filter { !$0.isEmpty })
+                for runId in runIds {
+                    if let cached = store.entry(API.listRunEvents(id: runId)).data?.events {
+                        eventsByRunId[runId] = cached
+                    } else if let fetched = (await store.refetch(API.listRunEvents(id: runId))).data?.events {
+                        eventsByRunId[runId] = fetched
+                    }
+                }
+            }
+            do {
+                let url: URL?
+                switch mode {
+                case .markdown(let includeTraces):
+                    url = try ChatExportHelper.exportMarkdown(
+                        session: session,
+                        messages: messages,
+                        eventsByRunId: eventsByRunId,
+                        includeToolTraces: includeTraces
+                    )
+                case .pdf:
+                    url = try ChatExportHelper.exportPDF(
+                        session: session,
+                        messages: messages,
+                        eventsByRunId: eventsByRunId
+                    )
+                }
+                if let url {
+                    context.showToast(ToastItemModel(id: "chat.export.ok", title: "Exported \(url.lastPathComponent)", tone: .success))
+                }
+            } catch {
+                context.showToast(ToastItemModel(id: "chat.export.err", title: error.localizedDescription, tone: .error))
+            }
+        }
+    }
+
+    private func installKeyboardMonitor() {
+        removeKeyboardMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            guard context.isActiveTab,
+                  let window = context.window()?.window,
+                  event.window === window,
+                  window.isKeyWindow,
+                  window.attachedSheet == nil,
+                  model.renameTargetId == nil,
+                  model.forkTarget == nil,
+                  model.saveWikiTarget == nil,
+                  model.saveTemplateBody == nil else {
+                return event
+            }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard let action = ChatKeyboardNavLogic.resolveAction(
+                keyCode: event.keyCode,
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                command: flags.contains(.command),
+                shift: flags.contains(.shift),
+                option: flags.contains(.option),
+                control: flags.contains(.control)
+            ) else {
+                return event
+            }
+
+            let messages = messagesRequest.flatMap { context.store.entry($0).data?.messages } ?? []
+
+            switch action {
+            case .jumpPreviousTurn, .jumpNextTurn:
+                // Let Option+Up/Down move by paragraph when actively editing non-empty text.
+                if let tv = window.firstResponder as? NSTextView, tv.isEditable, !tv.string.isEmpty {
+                    return event
+                }
+                let dir = action == .jumpPreviousTurn ? -1 : 1
+                guard let targetId = ChatKeyboardNavLogic.stepTurnMessageId(
+                    messages: messages,
+                    currentId: model.focusedTurnMessageId,
+                    direction: dir
+                ) else {
+                    return event
+                }
+                model.focusedTurnMessageId = targetId
+                model.scrollToken += 1
+                model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: targetId)
+                return nil
+
+            case .copyLastReply:
+                guard let reply = ChatKeyboardNavLogic.lastAssistantReplyBody(in: messages) else {
+                    return event
+                }
+                context.copyToClipboard(reply)
+                context.showToast(ToastItemModel(id: "chat.shortcut.copy", title: "Copied last reply", tone: .success))
+                return nil
+
+            case .toggleOutline:
+                guard chatId != nil else { return event }
+                if model.inspectorOpen && model.inspectorTabId == ChatInspectorLogic.outlineTabId {
+                    model.inspectorOpen = false
+                } else {
+                    model.inspectorTabId = ChatInspectorLogic.outlineTabId
+                    model.inspectorOpen = true
+                }
+                return nil
+
+            case .openContextCompact:
+                guard chatId != nil else { return event }
+                model.contextPopoverToken += 1
+                return nil
+
+            case .toggleLiveVoice:
+                companionOpen = false
+                liveVoiceOpen.toggle()
+                return nil
+            }
+        }
+    }
+
+    private func removeKeyboardMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
+    }
+
     // MARK: - Observation
 
     private func watchKey(session: API.ChatSession?, liveSince: String?) -> String {
@@ -1467,6 +1861,7 @@ struct ChatScreen: View {
         track(Self.dockRequest)
         track(Self.workflowsRequest)
         track(Self.repositoriesRequest)
+        track(Self.promptTemplatesRequest)
         track(chatsRequest)
         if let spaceId = session?.space?.id {
             track(SpacesLogic.spaceChatsRequest(spaceId: spaceId))

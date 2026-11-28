@@ -20,6 +20,7 @@
 		AA0000110000000000000011 /* ChatEmbeddedBlockView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000110000000000000011 /* ChatEmbeddedBlockView.swift */; };
 		AA0000120000000000000012 /* ChatChartAndGraphViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000120000000000000012 /* ChatChartAndGraphViews.swift */; };
 		AA0000130000000000000013 /* ChatRichBlocksView.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000130000000000000013 /* ChatRichBlocksView.swift */; };
+		AA0000140000000000000014 /* ChatVoiceControls.swift in Sources */ = {isa = PBXBuildFile; fileRef = BB0000140000000000000014 /* ChatVoiceControls.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -36,6 +37,7 @@
 		BB0000110000000000000011 /* ChatEmbeddedBlockView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatEmbeddedBlockView.swift; sourceTree = "<group>"; };
 		BB0000120000000000000012 /* ChatChartAndGraphViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatChartAndGraphViews.swift; sourceTree = "<group>"; };
 		BB0000130000000000000013 /* ChatRichBlocksView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatRichBlocksView.swift; sourceTree = "<group>"; };
+		BB0000140000000000000014 /* ChatVoiceControls.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ChatVoiceControls.swift; sourceTree = "<group>"; };
 		BB0000990000000000000099 /* VesperCompanion.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = VesperCompanion.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -74,6 +76,7 @@
 				BB0000110000000000000011 /* ChatEmbeddedBlockView.swift */,
 				BB0000120000000000000012 /* ChatChartAndGraphViews.swift */,
 				BB0000130000000000000013 /* ChatRichBlocksView.swift */,
+				BB0000140000000000000014 /* ChatVoiceControls.swift */,
 				BB0000080000000000000008 /* Info.plist */,
 			);
 			path = VesperCompanion;
@@ -168,6 +171,7 @@
 				AA0000110000000000000011 /* ChatEmbeddedBlockView.swift in Sources */,
 				AA0000120000000000000012 /* ChatChartAndGraphViews.swift in Sources */,
 				AA0000130000000000000013 /* ChatRichBlocksView.swift in Sources */,
+				AA0000140000000000000014 /* ChatVoiceControls.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

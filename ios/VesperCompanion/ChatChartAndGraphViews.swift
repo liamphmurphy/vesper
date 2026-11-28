@@ -1,4 +1,5 @@
 import Charts
+import MapKit
 import SwiftUI
 import VesperCore
 
@@ -94,6 +95,10 @@ struct ChatChartCardView: View {
             radarView
         case .sparkline:
             sparklineView
+        case .waterfall:
+            waterfallView
+        case .sankey:
+            sankeyView
         }
     }
 
@@ -310,6 +315,52 @@ struct ChatChartCardView: View {
         }
     }
 
+    private var waterfallView: some View {
+        Chart(spec.waterfallItems) { item in
+            let lo = min(item.startY, item.endY)
+            let hi = max(item.startY, item.endY)
+            let col: Color = switch item.kind {
+            case .start, .total: .blue
+            case .delta: item.value >= 0 ? .green : .red
+            }
+            BarMark(
+                x: .value("Step", item.label),
+                yStart: .value("Start", lo),
+                yEnd: .value("End", hi)
+            )
+            .foregroundStyle(col)
+            .cornerRadius(4)
+        }
+        .frame(height: 200)
+    }
+
+    private var sankeyView: some View {
+        let data = spec.sankey ?? ChatSankeyData(nodes: [], links: [])
+        let labels = Dictionary(uniqueKeysWithValues: data.nodes.map { ($0.id, $0.label) })
+        let maxVal = max(data.links.map(\.value).max() ?? 1, 1e-6)
+        return VStack(alignment: .leading, spacing: 6) {
+            ForEach(data.links) { link in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack {
+                        Text("\(labels[link.from] ?? link.from) → \(labels[link.to] ?? link.to)")
+                            .font(.caption)
+                            .lineLimit(1)
+                        Spacer()
+                        Text(spec.formattedValue(link.value))
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                    GeometryReader { geo in
+                        RoundedRectangle(cornerRadius: 3)
+                            .fill(Color.accentColor.opacity(0.55))
+                            .frame(width: max(6, geo.size.width * CGFloat(link.value / maxVal)), height: 6)
+                    }
+                    .frame(height: 6)
+                }
+            }
+        }
+    }
+
     private func chartTableView(_ table: ChatChartTable) -> some View {
         ScrollView(.horizontal, showsIndicators: false) {
             VStack(alignment: .leading, spacing: 4) {
@@ -337,6 +388,44 @@ struct ChatChartCardView: View {
 }
 
 // MARK: - KPI Stats Card
+
+struct ChatMapCardView: View {
+    let spec: ChatMapSpec
+
+    var body: some View {
+        let b = spec.bounds
+        let region = MKCoordinateRegion(
+            center: CLLocationCoordinate2D(latitude: b.centerLat, longitude: b.centerLon),
+            span: MKCoordinateSpan(latitudeDelta: b.latDelta, longitudeDelta: b.lonDelta)
+        )
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Label(spec.title ?? "Map", systemImage: "map")
+                    .font(.subheadline.weight(.semibold))
+                Spacer()
+                if spec.totalRouteKm > 0.05 {
+                    Text(String(format: "%.1f km", spec.totalRouteKm))
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Map(initialPosition: .region(region)) {
+                ForEach(spec.pins) { pin in
+                    Marker(pin.label, coordinate: CLLocationCoordinate2D(latitude: pin.lat, longitude: pin.lon))
+                }
+                ForEach(spec.routes) { route in
+                    let coords = route.points.map { CLLocationCoordinate2D(latitude: $0.lat, longitude: $0.lon) }
+                    MapPolyline(coordinates: coords)
+                        .stroke(.blue, lineWidth: 3)
+                }
+            }
+            .frame(height: 210)
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+        }
+        .padding(12)
+        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 12))
+    }
+}
 
 struct ChatStatsCardView: View {
     let spec: ChatStatsSpec

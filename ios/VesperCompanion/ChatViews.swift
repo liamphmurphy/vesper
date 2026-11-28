@@ -9,10 +9,30 @@ struct ChatListView: View {
     let connection: CompanionConnectionManager
 
     @State private var chats: [API.ChatSession] = []
+    @State private var personas: [API.Persona] = []
+    @State private var spaces: [API.ChatSpace] = []
+    @State private var selectedPersonaId = ""
+    @State private var selectedSpaceId = ""
+    @State private var showArchived = false
+    @State private var searchQuery = ""
+    @State private var searchHits: [API.ChatSearchHit] = []
+    @State private var searching = false
     @State private var loading = false
     @State private var errorMessage: String?
     @State private var showNewChat = false
     @State private var createdChatId: String?
+
+    private var trimmedSearch: String {
+        searchQuery.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var hasActiveFilters: Bool {
+        !selectedPersonaId.isEmpty || !selectedSpaceId.isEmpty || showArchived
+    }
+
+    private var displayedChats: [API.ChatSession] {
+        CompanionChatFilterLogic.localFilter(chats, query: trimmedSearch)
+    }
 
     var body: some View {
         NavigationStack {
@@ -22,21 +42,68 @@ struct ChatListView: View {
                         .font(.callout)
                         .foregroundStyle(.red)
                 }
-                if chats.isEmpty && !loading {
-                    ContentUnavailableView(
-                        "No Chats Yet",
-                        systemImage: "bubble.left.and.bubble.right",
-                        description: Text("Tap + to start a conversation with one of your personas.")
-                    )
-                } else {
-                    ForEach(chats, id: \.id) { chat in
-                        NavigationLink(value: chat.id) {
-                            ChatRow(chat: chat)
+
+                if !personas.isEmpty || !spaces.isEmpty || showArchived {
+                    Section {
+                        filterChipsBar
+                            .listRowInsets(EdgeInsets(top: 4, leading: 12, bottom: 4, trailing: 12))
+                            .listRowBackground(Color.clear)
+                    }
+                }
+
+                if trimmedSearch.count >= 2 {
+                    Section(searching ? "Searching messages…" : "Message matches (\(searchHits.count))") {
+                        if searchHits.isEmpty && !searching {
+                            Text("No messages matched “\(trimmedSearch)”.")
+                                .font(.callout)
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(searchHits, id: \.messageId) { hit in
+                                NavigationLink(value: CompanionChatFilterLogic.NavigationTarget(
+                                    chatId: hit.chatId,
+                                    initialTitle: hit.chatTitle.isEmpty ? "Chat" : hit.chatTitle,
+                                    focusMessageId: hit.messageId
+                                )) {
+                                    SearchHitRow(hit: hit)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Section(trimmedSearch.count >= 2 ? "Chats" : "") {
+                    if displayedChats.isEmpty && !loading {
+                        ContentUnavailableView(
+                            hasActiveFilters || !trimmedSearch.isEmpty ? "No Matching Chats" : "No Chats Yet",
+                            systemImage: "bubble.left.and.bubble.right",
+                            description: Text(
+                                hasActiveFilters || !trimmedSearch.isEmpty
+                                    ? "Try clearing a filter or searching for something else."
+                                    : "Tap + to start a conversation with one of your personas."
+                            )
+                        )
+                    } else {
+                        ForEach(displayedChats, id: \.id) { chat in
+                            NavigationLink(value: CompanionChatFilterLogic.NavigationTarget(
+                                chatId: chat.id,
+                                initialTitle: chat.title.isEmpty ? "Chat" : chat.title
+                            )) {
+                                ChatRow(chat: chat)
+                            }
                         }
                     }
                 }
             }
-            .navigationTitle("Chats")
+            .navigationTitle(showArchived ? "Archived Chats" : "Chats")
+            .searchable(text: $searchQuery, prompt: "Search chats & messages")
+            .navigationDestination(for: CompanionChatFilterLogic.NavigationTarget.self) { target in
+                ChatDetailView(
+                    connection: connection,
+                    chatId: target.chatId,
+                    initialTitle: target.initialTitle,
+                    initialMessageId: target.focusMessageId
+                )
+            }
             .navigationDestination(for: String.self) { chatId in
                 ChatDetailView(
                     connection: connection,
@@ -55,12 +122,21 @@ struct ChatListView: View {
                 }
             }
             .refreshable { await load() }
-            .task(id: connection.state) { await load() }
+            .task(id: "\(connection.state)|\(selectedPersonaId)|\(selectedSpaceId)|\(showArchived)") {
+                await load()
+            }
+            .task(id: trimmedSearch) {
+                await runSearch(query: trimmedSearch)
+            }
             .onChange(of: connection.eventVersion) { _, _ in
                 Task { await load(silent: true) }
             }
             .sheet(isPresented: $showNewChat) {
-                NewChatSheet(connection: connection) { chat in
+                NewChatSheet(
+                    connection: connection,
+                    spaceId: selectedSpaceId.isEmpty ? nil : selectedSpaceId,
+                    defaultPersonaId: selectedPersonaId.isEmpty ? nil : selectedPersonaId
+                ) { chat in
                     showNewChat = false
                     createdChatId = chat.id
                     Task { await load(silent: true) }
@@ -76,19 +152,166 @@ struct ChatListView: View {
         }
     }
 
+    private var filterChipsBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                if !personas.isEmpty {
+                    let activePersonaName = personas.first(where: { $0.id == selectedPersonaId })?.name
+                    Menu {
+                        Button("All personas") { selectedPersonaId = "" }
+                        Divider()
+                        ForEach(personas, id: \.id) { p in
+                            Button {
+                                selectedPersonaId = p.id
+                            } label: {
+                                if selectedPersonaId == p.id {
+                                    Label(p.name, systemImage: "checkmark")
+                                } else {
+                                    Text(p.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        filterPill(
+                            icon: "person.2",
+                            label: activePersonaName ?? "Persona",
+                            active: activePersonaName != nil
+                        )
+                    }
+                }
+
+                if !spaces.isEmpty {
+                    let activeSpaceName = spaces.first(where: { $0.id == selectedSpaceId })?.name
+                    Menu {
+                        Button("All spaces") { selectedSpaceId = "" }
+                        Divider()
+                        ForEach(spaces, id: \.id) { s in
+                            Button {
+                                selectedSpaceId = s.id
+                            } label: {
+                                if selectedSpaceId == s.id {
+                                    Label(s.name, systemImage: "checkmark")
+                                } else {
+                                    Text(s.name)
+                                }
+                            }
+                        }
+                    } label: {
+                        filterPill(
+                            icon: "square.stack.3d.up",
+                            label: activeSpaceName ?? "Space",
+                            active: activeSpaceName != nil
+                        )
+                    }
+                }
+
+                Button {
+                    showArchived.toggle()
+                } label: {
+                    filterPill(
+                        icon: "archivebox",
+                        label: "Archived",
+                        active: showArchived
+                    )
+                }
+                .buttonStyle(.plain)
+
+                if hasActiveFilters {
+                    Button("Clear") {
+                        selectedPersonaId = ""
+                        selectedSpaceId = ""
+                        showArchived = false
+                    }
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(Color.accentColor)
+                }
+            }
+        }
+    }
+
+    private func filterPill(icon: String, label: String, active: Bool) -> some View {
+        HStack(spacing: 5) {
+            Image(systemName: icon)
+                .font(.caption2)
+            Text(label)
+                .font(.caption.weight(active ? .semibold : .regular))
+                .lineLimit(1)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .foregroundStyle(active ? Color.accentColor : Color.secondary)
+        .background(
+            active ? Color.accentColor.opacity(0.14) : Color(.secondarySystemBackground),
+            in: Capsule()
+        )
+    }
+
     private func load(silent: Bool = false) async {
         guard let client = connection.apiClient else { return }
         if !silent { loading = true }
         defer { loading = false }
         do {
-            let resp = try await client.get("/api/v1/chats?archived=false", as: API.ListChatsResponse.self)
-            chats = resp.chats
+            let listReq = CompanionChatFilterLogic.listRequest(
+                archived: showArchived,
+                personaId: selectedPersonaId,
+                spaceId: selectedSpaceId
+            )
+            async let chatsResp = client.send(listReq)
+            async let personasResp = personas.isEmpty ? (try? await client.send(API.listPersonas())) : nil
+            async let spacesResp = spaces.isEmpty ? (try? await client.send(API.listChatSpaces())) : nil
+
+            let (loadedChats, loadedPersonas, loadedSpaces) = try await (chatsResp, personasResp, spacesResp)
+            chats = loadedChats.chats
+            if let loadedPersonas { personas = loadedPersonas.personas }
+            if let loadedSpaces { spaces = loadedSpaces.spaces }
             errorMessage = nil
         } catch {
             if !silent {
                 errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
             }
         }
+    }
+
+    private func runSearch(query: String) async {
+        guard query.count >= 2, let client = connection.apiClient else {
+            searchHits = []
+            searching = false
+            return
+        }
+        searching = true
+        try? await Task.sleep(for: .milliseconds(220))
+        guard !Task.isCancelled else { return }
+        defer { searching = false }
+        if let resp = try? await client.send(API.searchChats(q: query)) {
+            searchHits = resp.hits
+        }
+    }
+}
+
+private struct SearchHitRow: View {
+    let hit: API.ChatSearchHit
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(hit.chatTitle.isEmpty ? "Untitled chat" : hit.chatTitle)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                if let persona = hit.personaName, !persona.isEmpty {
+                    Text(persona)
+                        .font(.caption2)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 2)
+                        .background(Color.secondary.opacity(0.14), in: Capsule())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Text(CompanionChatFilterLogic.cleanSearchSnippet(hit.snippet))
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .lineLimit(2)
+        }
+        .padding(.vertical, 2)
     }
 }
 
@@ -102,6 +325,11 @@ struct ChatRow: View {
                     Text(chat.title.isEmpty ? "Untitled chat" : chat.title)
                         .font(.body.weight(chat.unread > 0 ? .semibold : .regular))
                         .lineLimit(1)
+                    if chat.temporary == true {
+                        Image(systemName: "eye.slash")
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
+                    }
                     if chat.state == .running {
                         ProgressView()
                             .controlSize(.mini)
@@ -111,7 +339,11 @@ struct ChatRow: View {
                     Text(chat.persona?.name ?? chat.agent.name)
                         .font(.caption)
                         .foregroundStyle(.secondary)
-                    if let project = chat.project, !project.isEmpty {
+                    if let spaceName = chat.space?.name, !spaceName.isEmpty {
+                        Text("· \(spaceName)")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } else if let project = chat.project, !project.isEmpty {
                         Text("· \(project)")
                             .font(.caption)
                             .foregroundStyle(.secondary)
@@ -138,10 +370,12 @@ struct ChatDetailView: View {
     let connection: CompanionConnectionManager
     let chatId: String
     let initialTitle: String
+    var initialMessageId: String? = nil
 
     @State private var title: String
     @State private var session: API.ChatSession?
     @State private var messages: [API.ChatMessage] = []
+    @State private var followups: [API.ChatFollowup] = []
     @State private var runEventsByRunId: [String: [API.RunEvent]] = [:]
     @State private var liveRunEvents: [API.RunEvent] = []
     @State private var pushRequests: [API.PushRequest] = []
@@ -149,16 +383,29 @@ struct ChatDetailView: View {
     @State private var parseCache = ChatParsedMessageCache()
 
     @State private var draft = ""
+    @State private var midTurnMode: CompanionChatFilterLogic.MidTurnSendMode = .queue
     @State private var pendingPhotos: [ImageUploadHelper.PreparedPhoto] = []
     @State private var showCamera = false
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var sending = false
+    @State private var stopping = false
     @State private var errorMessage: String?
+    @State private var toastText: String?
+    @State private var jumpTargetMessageId: String?
+    @State private var didApplyInitialJump = false
+    @State private var voiceReader = IOSChatVoiceReader()
+    @State private var dictation = IOSDictationController()
 
-    init(connection: CompanionConnectionManager, chatId: String, initialTitle: String) {
+    init(
+        connection: CompanionConnectionManager,
+        chatId: String,
+        initialTitle: String,
+        initialMessageId: String? = nil
+    ) {
         self.connection = connection
         self.chatId = chatId
         self.initialTitle = initialTitle
+        self.initialMessageId = initialMessageId
         _title = State(initialValue: initialTitle)
     }
 
@@ -235,15 +482,45 @@ struct ChatDetailView: View {
                     .padding(.vertical, 10)
                 }
                 .onChange(of: messages.count) { _, _ in
-                    scrollToBottom(proxy)
+                    if !didApplyInitialJump, let target = initialMessageId, messages.contains(where: { $0.id == target }) {
+                        didApplyInitialJump = true
+                        withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    } else {
+                        scrollToBottom(proxy)
+                    }
+                }
+                .onChange(of: jumpTargetMessageId) { _, target in
+                    guard let target else { return }
+                    withAnimation { proxy.scrollTo(target, anchor: .center) }
+                    jumpTargetMessageId = nil
                 }
                 .onChange(of: isRunning) { _, running in
                     if running { scrollToBottom(proxy) }
                 }
             }
 
-            if let errorMessage {
-                Text(errorMessage)
+            if let toastText {
+                Text(toastText)
+                    .font(.caption.weight(.medium))
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+                    .background(.ultraThinMaterial, in: Capsule())
+                    .padding(.bottom, 6)
+                    .transition(.opacity)
+            }
+
+            if voiceReader.isActive {
+                IOSReadAloudMiniBarView(reader: voiceReader) { msgId in
+                    jumpTargetMessageId = msgId
+                }
+            }
+
+            if !followups.isEmpty {
+                followupsTray
+            }
+
+            if let err = errorMessage ?? dictation.errorMessage {
+                Text(err)
                     .font(.caption)
                     .foregroundStyle(.red)
                     .padding(.horizontal, 12)
@@ -254,6 +531,10 @@ struct ChatDetailView: View {
         }
         .navigationTitle(title)
         .navigationBarTitleDisplayMode(.inline)
+        .onDisappear {
+            voiceReader.stop()
+            dictation.stop()
+        }
         .task(id: chatId) {
             await refresh()
         }
@@ -319,9 +600,30 @@ struct ChatDetailView: View {
                 parsed: parsed,
                 nextMessageBody: nextBody,
                 isRunning: isRunning,
+                isReadingAloud: voiceReader.isReading(messageId: msg.id),
                 client: connection.apiClient,
                 onSendReply: { reply in
                     Task { await sendMessage(overrideText: reply) }
+                },
+                onCopy: { text in
+                    UIPasteboard.general.string = text
+                    showToast("Copied message")
+                },
+                onQuote: { text in
+                    let quoted = ChatQuoteLogic.quoteForComposer(text)
+                    draft = draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? quoted : "\(draft)\n\(quoted)"
+                },
+                onToggleBookmark: { target in
+                    Task { await toggleBookmark(target) }
+                },
+                onToggleReadAloud: { target, speaker in
+                    voiceReader.toggle(
+                        chatId: chatId,
+                        messageId: target.id,
+                        speakerName: speaker,
+                        bodyMd: target.bodyMd,
+                        client: connection.apiClient
+                    )
                 }
             )
 
@@ -354,11 +656,72 @@ struct ChatDetailView: View {
         }
     }
 
-    // MARK: - Composer
+    // MARK: - Follow-ups Tray & Composer
+
+    private var followupsTray: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Label("Queued (\(followups.count))", systemImage: "text.badge.plus")
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                Spacer()
+            }
+            ForEach(followups, id: \.id) { item in
+                HStack(spacing: 8) {
+                    Text(item.body)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    Button {
+                        Task { await deleteFollowup(item.id) }
+                    } label: {
+                        Image(systemName: "xmark.circle.fill")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 6)
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 8))
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 8)
+        .background(.bar)
+        .overlay(alignment: .top) { Divider() }
+    }
 
     private var composerBar: some View {
         VStack(spacing: 0) {
             Divider()
+
+            if isRunning {
+                HStack(spacing: 8) {
+                    Picker("Mid-turn mode", selection: $midTurnMode) {
+                        ForEach(CompanionChatFilterLogic.MidTurnSendMode.allCases) { mode in
+                            Text(mode.label).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .frame(maxWidth: 160)
+
+                    Spacer()
+
+                    Button(role: .destructive) {
+                        Task { await stopTurn() }
+                    } label: {
+                        Label(stopping ? "Stopping…" : "Stop", systemImage: "stop.circle.fill")
+                            .font(.caption.weight(.semibold))
+                    }
+                    .buttonStyle(.bordered)
+                    .tint(.red)
+                    .controlSize(.small)
+                    .disabled(stopping)
+                }
+                .padding(.horizontal, 12)
+                .padding(.top, 8)
+            }
 
             if !pendingPhotos.isEmpty {
                 ScrollView(.horizontal, showsIndicators: false) {
@@ -403,13 +766,28 @@ struct ChatDetailView: View {
                         .font(.system(size: 28))
                         .foregroundStyle(.secondary)
                 }
-                .disabled(sending || connection.apiClient == nil)
+                .disabled(sending || isRunning || connection.apiClient == nil)
 
-                TextField("Message…", text: $draft, axis: .vertical)
+                TextField(
+                    isRunning ? midTurnMode.placeholder : "Message…",
+                    text: $draft,
+                    axis: .vertical
+                )
                     .lineLimit(1...5)
                     .padding(.horizontal, 12)
                     .padding(.vertical, 8)
                     .background(.secondary.opacity(0.12), in: RoundedRectangle(cornerRadius: 18))
+
+                Button {
+                    dictation.toggle(currentDraft: draft) { updated in
+                        draft = updated
+                    }
+                } label: {
+                    Image(systemName: dictation.isListening ? "stop.circle.fill" : "mic.circle.fill")
+                        .font(.system(size: 28))
+                        .foregroundStyle(dictation.isListening ? Color.red : Color.secondary)
+                }
+                .disabled(sending)
 
                 Button {
                     Task { await sendMessage() }
@@ -418,7 +796,7 @@ struct ChatDetailView: View {
                         ProgressView()
                             .frame(width: 30, height: 30)
                     } else {
-                        Image(systemName: "arrow.up.circle.fill")
+                        Image(systemName: isRunning && midTurnMode == .steer ? "arrow.turn.up.right.circle.fill" : "arrow.up.circle.fill")
                             .font(.system(size: 30))
                     }
                 }
@@ -447,13 +825,15 @@ struct ChatDetailView: View {
             async let msgReq: API.ListChatMessagesResponse = client.get("/api/v1/chats/\(chatId)/messages?limit=100", as: API.ListChatMessagesResponse.self)
             async let pushReq: API.PushRequestList? = try? await client.send(API.listPushRequests(id: chatId))
             async let approvalReq: API.ChatToolApprovalList? = try? await client.send(API.listChatToolApprovals(id: chatId))
+            async let followupsReq: API.ChatFollowupList? = try? await client.send(API.listChatFollowups(id: chatId))
 
-            let (chat, msgResp, pushes, approvals) = try await (chatReq, msgReq, pushReq, approvalReq)
+            let (chat, msgResp, pushes, approvals, loadedFollowups) = try await (chatReq, msgReq, pushReq, approvalReq, followupsReq)
             session = chat
             title = chat.title.isEmpty ? initialTitle : chat.title
             messages = msgResp.messages
             pushRequests = pushes?.requests ?? []
             toolApprovals = approvals?.approvals.filter { $0.state == .pending } ?? []
+            followups = loadedFollowups?.followups ?? []
             errorMessage = nil
 
             await refreshRunEvents(client: client, chat: chat, messages: msgResp.messages)
@@ -514,6 +894,7 @@ struct ChatDetailView: View {
 
     private func sendMessage(overrideText: String? = nil) async {
         guard let client = connection.apiClient else { return }
+        if dictation.isListening { dictation.stop() }
         let rawText = (overrideText ?? draft).trimmingCharacters(in: .whitespacesAndNewlines)
         let photosToUpload = overrideText == nil ? pendingPhotos : []
         guard !rawText.isEmpty || !photosToUpload.isEmpty else { return }
@@ -527,6 +908,30 @@ struct ChatDetailView: View {
         defer { sending = false }
 
         do {
+            if isRunning && overrideText == nil {
+                guard photosToUpload.isEmpty else {
+                    errorMessage = "Attachments can't be sent mid-turn; wait for the reply or stop it."
+                    draft = rawText
+                    pendingPhotos = photosToUpload
+                    return
+                }
+                switch midTurnMode {
+                case .queue:
+                    let queued = try await client.send(
+                        API.queueChatFollowup(id: chatId, body: API.ChatMessageEdit(body: rawText))
+                    )
+                    followups.append(queued)
+                    showToast("Queued follow-up")
+                case .steer:
+                    _ = try await client.send(
+                        API.steerChat(id: chatId, body: API.ChatMessageEdit(body: rawText))
+                    )
+                    showToast("Steered current turn")
+                }
+                await refresh(silent: true)
+                return
+            }
+
             var attachmentIds: [String] = []
             for photo in photosToUpload {
                 let id = try await client.uploadAttachment(
@@ -553,10 +958,46 @@ struct ChatDetailView: View {
         }
     }
 
-    private func stopTurn() async {
+    private func toggleBookmark(_ msg: API.ChatMessage) async {
         guard let client = connection.apiClient else { return }
+        let next = !(msg.bookmarked == true)
+        do {
+            _ = try await client.send(
+                API.updateChatMessageBookmark(
+                    id: chatId,
+                    messageId: msg.id,
+                    body: API.ChatBookmarkUpdate(bookmarked: next)
+                )
+            )
+            showToast(next ? "Bookmarked" : "Removed bookmark")
+            await refresh(silent: true)
+        } catch {
+            errorMessage = (error as? APIError)?.userMessage ?? error.localizedDescription
+        }
+    }
+
+    private func deleteFollowup(_ followupId: String) async {
+        guard let client = connection.apiClient else { return }
+        followups.removeAll { $0.id == followupId }
+        _ = try? await client.send(API.deleteChatFollowup(id: chatId, followupId: followupId))
+    }
+
+    private func stopTurn() async {
+        guard let client = connection.apiClient, !stopping else { return }
+        stopping = true
+        defer { stopping = false }
         _ = try? await client.request("POST", "/api/v1/chats/\(chatId)/stop")
         await refresh(silent: true)
+    }
+
+    private func showToast(_ text: String) {
+        withAnimation { toastText = text }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(1.8))
+            if toastText == text {
+                withAnimation { toastText = nil }
+            }
+        }
     }
 }
 
@@ -568,15 +1009,22 @@ private struct MessageRowView: View {
     let parsed: ParsedChatMessage
     let nextMessageBody: String?
     let isRunning: Bool
+    let isReadingAloud: Bool
     let client: APIClient?
     let onSendReply: (String) -> Void
+    let onCopy: (String) -> Void
+    let onQuote: (String) -> Void
+    let onToggleBookmark: (API.ChatMessage) -> Void
+    let onToggleReadAloud: (API.ChatMessage, String) -> Void
 
     private var isUser: Bool { message.role.rawValue == "user" }
     private var isSystem: Bool { message.role.rawValue == "system" }
+    private var speakerName: String { message.persona?.name ?? "Assistant" }
 
     var body: some View {
         if isUser {
             userBubble
+                .contextMenu { messageContextMenu(includeReadAloud: false) }
         } else if isSystem {
             Text(parsed.typedBody)
                 .font(.caption)
@@ -587,6 +1035,39 @@ private struct MessageRowView: View {
                 .background(Color.secondary.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
         } else {
             assistantMessage
+                .contextMenu { messageContextMenu(includeReadAloud: true) }
+        }
+    }
+
+    @ViewBuilder
+    private func messageContextMenu(includeReadAloud: Bool) -> some View {
+        Button {
+            onCopy(parsed.typedBody.isEmpty ? message.bodyMd : parsed.typedBody)
+        } label: {
+            Label("Copy", systemImage: "doc.on.doc")
+        }
+        Button {
+            onQuote(parsed.typedBody.isEmpty ? message.bodyMd : parsed.typedBody)
+        } label: {
+            Label("Quote in Reply", systemImage: "arrowshape.turn.up.left")
+        }
+        Button {
+            onToggleBookmark(message)
+        } label: {
+            Label(
+                message.bookmarked == true ? "Remove Bookmark" : "Bookmark",
+                systemImage: message.bookmarked == true ? "bookmark.slash" : "bookmark"
+            )
+        }
+        if includeReadAloud {
+            Button {
+                onToggleReadAloud(message, speakerName)
+            } label: {
+                Label(
+                    isReadingAloud ? "Stop Reading" : "Read Aloud",
+                    systemImage: isReadingAloud ? "stop.circle" : "speaker.wave.2"
+                )
+            }
         }
     }
 
@@ -594,6 +1075,11 @@ private struct MessageRowView: View {
         HStack {
             Spacer(minLength: 44)
             VStack(alignment: .trailing, spacing: 6) {
+                if message.bookmarked == true {
+                    Label("Pinned", systemImage: "bookmark.fill")
+                        .font(.caption2.weight(.medium))
+                        .foregroundStyle(.orange)
+                }
                 if let attachments = message.attachments, !attachments.isEmpty {
                     attachmentsView(attachments)
                 }
@@ -620,7 +1106,49 @@ private struct MessageRowView: View {
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.tertiary)
                 }
+                if message.bookmarked == true {
+                    Image(systemName: "bookmark.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
                 Spacer()
+                HStack(spacing: 12) {
+                    Button {
+                        onToggleReadAloud(message, speakerName)
+                    } label: {
+                        Image(systemName: isReadingAloud ? "stop.circle.fill" : "speaker.wave.2")
+                            .font(.caption)
+                            .foregroundStyle(isReadingAloud ? Color.accentColor : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onQuote(message.bodyMd)
+                    } label: {
+                        Image(systemName: "arrowshape.turn.up.left")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onToggleBookmark(message)
+                    } label: {
+                        Image(systemName: message.bookmarked == true ? "bookmark.fill" : "bookmark")
+                            .font(.caption)
+                            .foregroundStyle(message.bookmarked == true ? Color.orange : Color.secondary)
+                    }
+                    .buttonStyle(.plain)
+
+                    Button {
+                        onCopy(message.bodyMd)
+                    } label: {
+                        Image(systemName: "doc.on.doc")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    .buttonStyle(.plain)
+                }
             }
 
             if let attachments = message.attachments, !attachments.isEmpty {
@@ -728,6 +1256,8 @@ private struct MessageRowView: View {
             ChatGraphCardView(spec: spec)
         case .plot(let spec):
             ChatPlotCardView(spec: spec)
+        case .map(let spec):
+            ChatMapCardView(spec: spec)
         case .dataTable(let spec):
             ChatDataTableCardView(spec: spec)
         case .codeGroup(let spec):
@@ -816,6 +1346,7 @@ struct NewChatSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var personas: [API.Persona] = []
     @State private var selectedPersonaId: String = ""
+    @State private var temporaryMode = false
     @State private var messageText = ""
     @State private var creating = false
     @State private var errorMessage: String?
@@ -845,6 +1376,13 @@ struct NewChatSheet: View {
                             }
                         }
                     }
+                }
+                Section {
+                    Toggle(isOn: $temporaryMode) {
+                        Label("Temporary chat", systemImage: "eye.slash")
+                    }
+                } footer: {
+                    Text("No memory reads or writes, excluded from search, auto-deleted after 24h idle.")
                 }
                 Section("First Message") {
                     TextEditor(text: $messageText)
@@ -890,7 +1428,8 @@ struct NewChatSheet: View {
             let payload = API.NewChat(
                 message: API.NewChatMessage(body: text),
                 personaId: selectedPersonaId.isEmpty ? nil : selectedPersonaId,
-                spaceId: spaceId
+                spaceId: spaceId,
+                temporary: temporaryMode ? true : nil
             )
             let data = try await client.request("POST", "/api/v1/chats", body: try JSONEncoder().encode(payload))
             let created = try JSONDecoder().decode(API.ChatSession.self, from: data)

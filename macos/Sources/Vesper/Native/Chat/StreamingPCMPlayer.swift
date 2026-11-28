@@ -12,11 +12,13 @@ final class StreamingPCMPlayer {
 
     private let engine = AVAudioEngine()
     private let playerNode = AVAudioPlayerNode()
+    private let timePitch = AVAudioUnitTimePitch()
     private let format: AVAudioFormat
     private var framer: PCMChunkFramer
     private let prebufferSamples: Int
 
     private var started = false
+    private var paused = false
     private var inputFinished = false
     private var stopped = false
     private var pendingBuffers = 0
@@ -27,28 +29,52 @@ final class StreamingPCMPlayer {
 
     init?(
         sampleRate: Int,
+        rate: Float = 1.0,
         onStarted: @escaping @MainActor () -> Void,
         onEnd: @escaping @MainActor () -> Void
     ) {
-        let rate = max(1, sampleRate)
+        let rateVal = max(1, sampleRate)
         guard let fmt = AVAudioFormat(
             commonFormat: .pcmFormatFloat32,
-            sampleRate: Double(rate),
+            sampleRate: Double(rateVal),
             channels: 1,
             interleaved: false
         ) else { return nil }
         self.format = fmt
-        self.framer = PCMChunkFramer(sampleRate: rate)
-        self.prebufferSamples = max(1, Int((Double(rate) * Self.prebufferSeconds).rounded()))
+        self.framer = PCMChunkFramer(sampleRate: rateVal)
+        self.prebufferSamples = max(1, Int((Double(rateVal) * Self.prebufferSeconds).rounded()))
         self.onStarted = onStarted
         self.onEnd = onEnd
+        self.timePitch.rate = max(0.5, min(2.5, rate))
 
         engine.attach(playerNode)
-        engine.connect(playerNode, to: engine.mainMixerNode, format: fmt)
+        engine.attach(timePitch)
+        engine.connect(playerNode, to: timePitch, format: fmt)
+        engine.connect(timePitch, to: engine.mainMixerNode, format: fmt)
     }
 
     var hasStarted: Bool { started }
+    var isPaused: Bool { paused }
     var decodedDuration: Double { framer.decodedDuration }
+
+    func setRate(_ newRate: Float) {
+        timePitch.rate = max(0.5, min(2.5, newRate))
+    }
+
+    func pause() {
+        guard started, !stopped, !paused else { return }
+        paused = true
+        playerNode.pause()
+    }
+
+    func resume() {
+        guard started, !stopped, paused else { return }
+        paused = false
+        if !engine.isRunning {
+            try? engine.start()
+        }
+        playerNode.play()
+    }
 
     /// Feeds the next raw PCM byte slice. Returns false if the audio engine failed to start.
     @discardableResult

@@ -412,6 +412,7 @@ struct ChatTurnStepsCardView: View {
     let since: String?
     let until: String?
     let end: TimeInterval?
+    var personaId: String? = nil
     var morphId: String? = nil
     var morphNamespace: Namespace.ID? = nil
 
@@ -425,7 +426,7 @@ struct ChatTurnStepsCardView: View {
             end: end
         )
         let showThinking = showLiveThinking && !turn.thinkingBlocks.isEmpty
-        if showThinking || !turn.steps.isEmpty {
+        if showThinking || !turn.steps.isEmpty || !turn.memoryDiffs.isEmpty {
             VStack(alignment: .leading, spacing: 6) {
                 if showThinking {
                     ChatFinishedThinkingDisclosureView(
@@ -440,6 +441,9 @@ struct ChatTurnStepsCardView: View {
                     } else {
                         card
                     }
+                }
+                if !turn.memoryDiffs.isEmpty {
+                    ChatMemoryDiffPillsView(diffs: turn.memoryDiffs, personaId: personaId)
                 }
             }
         }

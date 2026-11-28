@@ -380,6 +380,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
         Task { await tab.toggleReaderMode(darkMode: isDark) }
     }
 
+    @objc func toggleBrowserDarkMode(_ sender: Any?) {
+        guard app.keyController?.isBrowserActive == true else { return }
+        app.browser.toggleDarkModeForActiveSite()
+    }
+
     @objc func toggleBrowserBookmark(_ sender: Any?) {
         guard app.keyController?.isBrowserActive == true else { return }
         app.browser.toggleBookmark()
@@ -522,8 +527,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation {
             guard app.keyController?.isBrowserActive == true, let tab = app.browser.activeTab else { return false }
             item.title = tab.isMuted ? "Unmute Tab" : "Mute Tab"
             return tab.hasLoadedPage
-        case #selector(toggleBrowserReaderMode(_:)), #selector(toggleBrowserBookmark(_:)),
-             #selector(openBrowserPageInSafari(_:)), #selector(captureBrowserRegionScreenshot(_:)):
+        case #selector(toggleBrowserReaderMode(_:)), #selector(toggleBrowserDarkMode(_:)),
+             #selector(toggleBrowserBookmark(_:)), #selector(openBrowserPageInSafari(_:)),
+             #selector(captureBrowserRegionScreenshot(_:)):
             return app.keyController?.isBrowserActive == true && app.browser.activeTab?.hasLoadedPage == true
         case #selector(nextBrowserTab(_:)), #selector(previousBrowserTab(_:)):
             return app.keyController?.isBrowserActive == true && app.browser.tabs.count > 1
