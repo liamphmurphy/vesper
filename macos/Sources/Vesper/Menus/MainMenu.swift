@@ -97,6 +97,7 @@ enum MainMenu {
             item("Reload", #selector(AppDelegate.reload(_:)), "r"),
             item("Force Reload", #selector(AppDelegate.forceReload(_:)), "r", [.command, .shift]),
             item("Developer Tools", #selector(AppDelegate.showInspector(_:)), "i", [.command, .option]),
+            item("Show Performance HUD", #selector(AppDelegate.togglePerfHUD(_:)), "p", [.command, .option, .control]),
             sep(),
             item("Actual Size", #selector(AppDelegate.zoomReset(_:)), "0"),
             item("Zoom In", #selector(AppDelegate.zoomIn(_:)), "+"),

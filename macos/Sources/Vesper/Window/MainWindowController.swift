@@ -215,6 +215,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
             services: { [weak app] in app?.system }
         )
         root.installToasts(store: toastStore)
+        root.installPerfHUD()
         root.onToggleSidebar = { [weak self] sender in self?.split.toggleSidebar(sender) }
         root.onToggleInspector = { [weak self] sender in self?.toggleInspector(sender) }
         root.canToggleSidebar = { [weak self] in self?.hasSidebar == true }
@@ -716,6 +717,7 @@ final class MainWindowController: NSWindowController, NSWindowDelegate, NSToolba
 
     func windowWillClose(_ notification: Notification) {
         SplitAnimationCoordinator.shared.clear(for: window)
+        rootController?.teardownPerfHUD()
         inspectorCollapseObservation = nil
         inspectorController?.teardown()
         container.teardown()
