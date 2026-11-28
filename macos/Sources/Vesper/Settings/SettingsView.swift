@@ -16,6 +16,7 @@ extension SettingsPane: Identifiable {
         case .personas: return "Personas"
         case .secrets: return "Credentials & API Secrets"
         case .connectors: return "Connectors"
+        case .mail: return "Mail Butler"
         case .repositories: return "Repositories"
         case .workspace: return "Workspace"
         case .runners: return "Runners"
@@ -44,6 +45,7 @@ extension SettingsPane: Identifiable {
         case .personas: return "person.2"
         case .secrets: return "key"
         case .connectors: return "powerplug"
+        case .mail: return "envelope.badge.shield.half.filled"
         case .repositories: return "chevron.left.forwardslash.chevron.right"
         case .workspace: return "building.2"
         case .runners: return "server.rack"
@@ -73,7 +75,7 @@ private struct SettingsSidebarGroup: Identifiable {
 private let settingsSidebarGroups: [SettingsSidebarGroup] = [
     SettingsSidebarGroup(id: "personal", title: "Personal", panes: [.you, .appearance, .memory, .promptTemplates]),
     SettingsSidebarGroup(id: "personas", title: "Personas", panes: [.personas]),
-    SettingsSidebarGroup(id: "integrations", title: "Integrations", panes: [.secrets, .connectors, .repositories]),
+    SettingsSidebarGroup(id: "integrations", title: "Integrations", panes: [.secrets, .connectors, .mail, .repositories]),
     SettingsSidebarGroup(id: "workspace", title: "Workspace", panes: [.workspace, .runners, .devWorkspace, .spaces]),
     SettingsSidebarGroup(id: "account", title: "Account", panes: [.signIn]),
     SettingsSidebarGroup(id: "mac-app", title: "Mac App", panes: [.general, .notifications, .shortcuts, .files, .workspaces, .power, .backups, .security, .companion, .updates]),
@@ -212,6 +214,8 @@ struct SettingsView: View {
             SettingsSecretsPane(aux: aux, navigation: navigation)
         case .connectors:
             SettingsConnectorsPane(aux: aux)
+        case .mail:
+            SettingsMailPane(aux: aux)
         case .repositories:
             SettingsRepositoriesPane(aux: aux)
         case .workspace:

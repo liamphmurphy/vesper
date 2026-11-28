@@ -41,7 +41,7 @@ type movedMsgIDCall struct {
 	target    string
 }
 
-func (f *fakeIMAP) Close() error                       { return nil }
+func (f *fakeIMAP) Close() error                         { return nil }
 func (f *fakeIMAP) TestConnection(context.Context) error { return nil }
 func (f *fakeIMAP) ListMailboxes(context.Context) ([]Mailbox, error) {
 	return slices.Clone(f.mailboxes), nil

@@ -174,9 +174,9 @@ func (r *Runner) runMailTriageBatch(ctx context.Context, due store.NextMailTriag
 		env[k] = v
 	}
 	proc, err := r.Backend.Start(ctx, workspace, ExecSpec{
-		Name: "lazyagents-" + workspace,
-		Argv: append(append([]string{}, TurnWrapper...), inv.Argv...),
-		Env:  env,
+		Name:  "lazyagents-" + workspace,
+		Argv:  append(append([]string{}, TurnWrapper...), inv.Argv...),
+		Env:   env,
 		Files: files,
 	})
 	if err != nil {

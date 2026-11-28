@@ -15,9 +15,11 @@ type testMailIMAP struct {
 	mailboxes []mail.Mailbox
 }
 
-func (f *testMailIMAP) Close() error                                         { return nil }
-func (f *testMailIMAP) TestConnection(context.Context) error                 { return nil }
-func (f *testMailIMAP) ListMailboxes(context.Context) ([]mail.Mailbox, error) { return f.mailboxes, nil }
+func (f *testMailIMAP) Close() error                         { return nil }
+func (f *testMailIMAP) TestConnection(context.Context) error { return nil }
+func (f *testMailIMAP) ListMailboxes(context.Context) ([]mail.Mailbox, error) {
+	return f.mailboxes, nil
+}
 func (f *testMailIMAP) CreateMailbox(_ context.Context, name string) error {
 	f.mailboxes = append(f.mailboxes, mail.Mailbox{Name: name})
 	return nil
@@ -91,11 +93,11 @@ func TestMailButlerHTTPAPI(t *testing.T) {
 
 	// Create, list, and delete a rule.
 	rule := e.want("POST", "/mail/rules", map[string]any{
-		"name":          "Keep bills",
-		"match_field":   "subject",
-		"match_value":   "statement ready",
-		"action":        "keep",
-		"priority":      10,
+		"name":        "Keep bills",
+		"match_field": "subject",
+		"match_value": "statement ready",
+		"action":      "keep",
+		"priority":    10,
 	}, http.StatusCreated)
 	ruleID, _ := rule["id"].(string)
 	if ruleID == "" {
