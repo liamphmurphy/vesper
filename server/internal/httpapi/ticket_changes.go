@@ -28,6 +28,7 @@ func (s *Server) agentDeps() agentapi.Deps {
 		Secrets:    s.userSecrets(),
 		Designs:    s.designs(),
 		CustomApps: s.customApps(),
+		Mail:       s.mailService(),
 		AppAPICall: func(ctx context.Context, user store.User, method, rawPath string, body any) (any, error) {
 			cleaned, _, err := validateCustomAppAPIRequest(method, rawPath)
 			if err != nil {

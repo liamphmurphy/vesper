@@ -42,6 +42,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/httpapi"
+	"github.com/liamphmurphy/vesper/server/internal/mail"
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/media/providers/gemini"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
@@ -175,6 +176,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		log.Warn("SECRETS_KEY is not set: storing secrets is disabled")
 	}
 	secretsSvc := &secrets.Service{Q: q, Box: box}
+	mailSvc := &mail.Service{Pool: pool, Q: q, Box: box, Log: log}
 	trackerSvc := &tracker.Service{Pool: pool}
 	events := realtime.New()
 	go events.Run(ctx, pool)
@@ -193,6 +195,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 		Artifacts:      arts,
 		Agents:         &agents.Service{Pool: pool},
 		Secrets:        secretsSvc,
+		Mail:           mailSvc,
 		Runs:           &runs.Service{Pool: pool, Secrets: secretsSvc, Artifacts: arts, Tracker: trackerSvc, RequireHarnessKey: config.IsolatesBackend(cfg.Runner.Backend), PlanModels: planModels(cfg.Runner.Backend, pool), Transcripts: transcript.Shared, RolloverContextTokens: int64(cfg.RolloverContextTokens)},
 		Wiki:           &wiki.Service{Pool: pool, Artifacts: arts, Tracker: trackerSvc},
 		PublicURL:      cfg.PublicURL,
@@ -229,6 +232,7 @@ func serve(ctx context.Context, log *slog.Logger) error {
 	if cfg.MemoryConsolidateInterval > 0 {
 		go memory.RunConsolidation(ctx, q, log, time.Duration(cfg.MemoryConsolidateInterval)*time.Second)
 	}
+	go mailSvc.Run(ctx, 15*time.Second)
 	hs := &http.Server{
 		Addr:              cfg.Addr,
 		Handler:           srv.Handler(),

@@ -6,6 +6,10 @@ tool github.com/oapi-codegen/oapi-codegen/v2/cmd/oapi-codegen
 
 require (
 	github.com/Code-Hex/vz/v3 v3.8.0
+	github.com/emersion/go-imap/v2 v2.0.0-beta.9
+	github.com/emersion/go-message v0.18.2
+	github.com/emersion/go-vcard v0.1.0
+	github.com/emersion/go-webdav v0.8.0
 	github.com/evanw/esbuild v0.28.2
 	github.com/getkin/kin-openapi v0.153.0
 	github.com/google/jsonschema-go v0.4.3
@@ -39,6 +43,7 @@ require (
 	github.com/dlclark/regexp2 v1.12.0 // indirect
 	github.com/dprotaso/go-yit v0.0.0-20220510233725-9ba8df137936 // indirect
 	github.com/dustin/go-humanize v1.1.0 // indirect
+	github.com/emersion/go-sasl v0.0.0-20241020182733-b788ff22d5a6 // indirect
 	github.com/felixge/httpsnoop v1.1.0 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/go-logr/logr v1.4.4 // indirect

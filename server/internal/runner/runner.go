@@ -992,6 +992,7 @@ func (r *Runner) sweepFast(ctx context.Context) {
 	defer r.advanceResearch(ctx)
 	defer r.advanceWorkflows(ctx)
 	defer r.advanceChatTicketRuns(ctx)
+	defer r.processMailTriage(ctx, time.Now())
 	r.expireIdleChats(ctx)
 	ids, err := r.q().EndedRunsWithWorkspace(ctx, append([]uuid.UUID{}, r.otherBackend...))
 	if err != nil {

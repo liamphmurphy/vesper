@@ -34,6 +34,8 @@ var excluded = map[string]string{
 	"pr_feedback":               "cached GitHub PR check runs, review threads and ETags, refreshed by prsync",
 	"companion_pairing_codes":   "one-time companion pairing codes",
 	"companion_devices":         "paired mobile companion credentials: devices re-pair with the new machine",
+	"mail_contacts":             "cached Apple Contacts emails synced from iCloud CardDAV; the mail poller refills it",
+	"mail_triage_queue":         "ephemeral pending mail classification jobs claimed by the runner",
 }
 
 // excludedPrefixes are table-name prefixes owned by a library with its own

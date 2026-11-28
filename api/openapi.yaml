@@ -3651,6 +3651,157 @@ paths:
         "404": { $ref: "#/components/responses/Error" }
         default: { $ref: "#/components/responses/Error" }
 
+  /mail/account:
+    get:
+      operationId: getMailAccount
+      summary: Get the signed-in user's opt-in Mail Butler configuration
+      tags: [mail]
+      responses:
+        "200":
+          description: Mail Butler configuration and sync status
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailAccountResponse" }
+        default: { $ref: "#/components/responses/Error" }
+    put:
+      operationId: upsertMailAccount
+      summary: Save or update the signed-in user's Mail Butler configuration
+      tags: [mail]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UpsertMailAccount" }
+      responses:
+        "200":
+          description: Saved Mail Butler configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailAccount" }
+        "409": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+    delete:
+      operationId: deleteMailAccount
+      summary: Delete the signed-in user's Mail Butler configuration
+      tags: [mail]
+      responses:
+        "204": { description: Deleted }
+        default: { $ref: "#/components/responses/Error" }
+
+  /mail/account/test:
+    post:
+      operationId: testMailAccount
+      summary: Test IMAP and CardDAV connectivity for the saved Mail Butler account
+      tags: [mail]
+      responses:
+        "200":
+          description: Connectivity test results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailTestResult" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /mail/contacts/sync:
+    post:
+      operationId: syncMailContacts
+      summary: Trigger an immediate CardDAV Apple Contacts sync
+      tags: [mail]
+      responses:
+        "200":
+          description: Synced contacts count
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailContactsSyncResult" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /mail/rules:
+    get:
+      operationId: listMailRules
+      summary: List deterministic Mail Butler rules
+      tags: [mail]
+      responses:
+        "200":
+          description: Deterministic triage rules
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailRuleList" }
+        default: { $ref: "#/components/responses/Error" }
+    post:
+      operationId: createMailRule
+      summary: Create a deterministic Mail Butler rule
+      tags: [mail]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/NewMailRule" }
+      responses:
+        "201":
+          description: Created rule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailRule" }
+        "404": { $ref: "#/components/responses/Error" }
+        "422": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /mail/rules/{id}:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    delete:
+      operationId: deleteMailRule
+      summary: Delete a deterministic Mail Butler rule
+      tags: [mail]
+      responses:
+        "204": { description: Deleted }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /mail/triage-log:
+    get:
+      operationId: listMailTriageLog
+      summary: List recent Mail Butler triage decisions
+      tags: [mail]
+      parameters:
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 200 } }
+      responses:
+        "200":
+          description: Recent triage decisions
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailTriageLogList" }
+        default: { $ref: "#/components/responses/Error" }
+
+  /mail/triage-log/{id}/undo:
+    parameters:
+      - name: id
+        in: path
+        required: true
+        schema: { type: string, format: uuid }
+    post:
+      operationId: undoMailTriageLog
+      summary: Undo a Mail Butler move and optionally pin the sender to Inbox
+      tags: [mail]
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UndoMailTriageRequest" }
+      responses:
+        "200":
+          description: Updated triage log entry
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/MailTriageLogEntry" }
+        "404": { $ref: "#/components/responses/Error" }
+        default: { $ref: "#/components/responses/Error" }
+
   /chats/{id}/research:
     parameters:
       - { $ref: "#/components/parameters/ChatId" }
@@ -12328,3 +12479,139 @@ components:
         repository: { type: string }
         branch: { type: string }
         pr_number: { type: integer }
+    MailAccount:
+      type: object
+      required:
+        - id
+        - enabled
+        - dry_run
+        - email
+        - imap_host
+        - imap_port
+        - carddav_url
+        - default_folder
+        - allowed_folders
+        - triage_policy
+        - pinned_model
+        - poll_interval_seconds
+        - contacts_count
+        - pending_triage_count
+        - last_error
+        - created_at
+        - updated_at
+      properties:
+        id: { type: string, format: uuid }
+        enabled: { type: boolean }
+        dry_run: { type: boolean }
+        email: { type: string }
+        imap_host: { type: string }
+        imap_port: { type: integer }
+        carddav_url: { type: string }
+        default_folder: { type: string }
+        allowed_folders: { type: array, items: { type: string } }
+        triage_policy: { type: string }
+        pinned_model: { type: string }
+        poll_interval_seconds: { type: integer }
+        contacts_count: { type: integer }
+        pending_triage_count: { type: integer }
+        last_synced_at: { type: string, format: date-time, nullable: true }
+        last_contacts_synced_at: { type: string, format: date-time, nullable: true }
+        last_error: { type: string }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MailAccountResponse:
+      type: object
+      required: [configured, default_triage_policy]
+      properties:
+        configured: { type: boolean }
+        account:
+          allOf: [{ $ref: "#/components/schemas/MailAccount" }]
+          nullable: true
+        default_triage_policy: { type: string }
+    UpsertMailAccount:
+      type: object
+      required: [enabled, dry_run, email]
+      properties:
+        enabled: { type: boolean }
+        dry_run: { type: boolean }
+        email: { type: string }
+        password: { type: string }
+        imap_host: { type: string }
+        imap_port: { type: integer }
+        carddav_url: { type: string }
+        default_folder: { type: string }
+        allowed_folders: { type: array, items: { type: string } }
+        triage_policy: { type: string }
+        pinned_model: { type: string }
+        poll_interval_seconds: { type: integer }
+    MailTestResult:
+      type: object
+      required: [imap_ok, imap_error, carddav_ok, carddav_error, contacts_count]
+      properties:
+        imap_ok: { type: boolean }
+        imap_error: { type: string }
+        carddav_ok: { type: boolean }
+        carddav_error: { type: string }
+        contacts_count: { type: integer }
+    MailContactsSyncResult:
+      type: object
+      required: [contacts_count]
+      properties:
+        contacts_count: { type: integer }
+    MailRule:
+      type: object
+      required: [id, priority, name, match_field, match_value, action, target_folder, enabled, created_at, updated_at]
+      properties:
+        id: { type: string, format: uuid }
+        priority: { type: integer }
+        name: { type: string }
+        match_field: { type: string, enum: [from_email, from_domain, subject, list_id] }
+        match_value: { type: string }
+        action: { type: string, enum: [keep, move] }
+        target_folder: { type: string }
+        enabled: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+    MailRuleList:
+      type: object
+      required: [rules]
+      properties:
+        rules: { type: array, items: { $ref: "#/components/schemas/MailRule" } }
+    NewMailRule:
+      type: object
+      required: [match_field, match_value, action]
+      properties:
+        priority: { type: integer }
+        name: { type: string }
+        match_field: { type: string, enum: [from_email, from_domain, subject, list_id] }
+        match_value: { type: string }
+        action: { type: string, enum: [keep, move] }
+        target_folder: { type: string }
+        enabled: { type: boolean }
+    MailTriageLogEntry:
+      type: object
+      required: [id, imap_uid, message_id, from_email, from_name, subject, source_folder, action, target_folder, tier, reason, dry_run, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        imap_uid: { type: integer, format: int64 }
+        message_id: { type: string }
+        from_email: { type: string }
+        from_name: { type: string }
+        subject: { type: string }
+        source_folder: { type: string }
+        action: { type: string, enum: [keep, move] }
+        target_folder: { type: string }
+        tier: { type: string, enum: [contact, rule, llm, manual] }
+        reason: { type: string }
+        dry_run: { type: boolean }
+        undone_at: { type: string, format: date-time, nullable: true }
+        created_at: { type: string, format: date-time }
+    MailTriageLogList:
+      type: object
+      required: [entries]
+      properties:
+        entries: { type: array, items: { $ref: "#/components/schemas/MailTriageLogEntry" } }
+    UndoMailTriageRequest:
+      type: object
+      properties:
+        pin_sender: { type: boolean }

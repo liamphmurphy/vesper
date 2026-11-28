@@ -2980,6 +2980,118 @@ extension API {
         )
     }
 
+    /// Get the signed-in user's opt-in Mail Butler configuration
+    ///
+    /// `GET /mail/account`
+    public static func getMailAccount() -> APIRequest<MailAccountResponse> {
+        return APIRequest(
+            method: "GET", template: "/mail/account",
+            path: "/api/v1/mail/account",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Save or update the signed-in user's Mail Butler configuration
+    ///
+    /// `PUT /mail/account`
+    public static func upsertMailAccount(body: UpsertMailAccount) -> APIRequest<MailAccount> {
+        return APIRequest(
+            method: "PUT", template: "/mail/account",
+            path: "/api/v1/mail/account",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Delete the signed-in user's Mail Butler configuration
+    ///
+    /// `DELETE /mail/account`
+    public static func deleteMailAccount() -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/mail/account",
+            path: "/api/v1/mail/account",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
+    /// Test IMAP and CardDAV connectivity for the saved Mail Butler account
+    ///
+    /// `POST /mail/account/test`
+    public static func testMailAccount() -> APIRequest<MailTestResult> {
+        return APIRequest(
+            method: "POST", template: "/mail/account/test",
+            path: "/api/v1/mail/account/test",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Trigger an immediate CardDAV Apple Contacts sync
+    ///
+    /// `POST /mail/contacts/sync`
+    public static func syncMailContacts() -> APIRequest<MailContactsSyncResult> {
+        return APIRequest(
+            method: "POST", template: "/mail/contacts/sync",
+            path: "/api/v1/mail/contacts/sync",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// List deterministic Mail Butler rules
+    ///
+    /// `GET /mail/rules`
+    public static func listMailRules() -> APIRequest<MailRuleList> {
+        return APIRequest(
+            method: "GET", template: "/mail/rules",
+            path: "/api/v1/mail/rules",
+            query: [], headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Create a deterministic Mail Butler rule
+    ///
+    /// `POST /mail/rules`
+    public static func createMailRule(body: NewMailRule) -> APIRequest<MailRule> {
+        return APIRequest(
+            method: "POST", template: "/mail/rules",
+            path: "/api/v1/mail/rules",
+            query: [], headers: [:], body: APIRequestBody.json(body), decode: .json
+        )
+    }
+
+    /// Delete a deterministic Mail Butler rule
+    ///
+    /// `DELETE /mail/rules/{id}`
+    public static func deleteMailRule(id: Swift.String) -> APIRequest<APIEmpty> {
+        return APIRequest(
+            method: "DELETE", template: "/mail/rules/{id}",
+            path: "/api/v1/mail/rules/\(APIPath.escape(id))",
+            query: [], headers: [:], body: nil, decode: .empty
+        )
+    }
+
+    /// List recent Mail Butler triage decisions
+    ///
+    /// `GET /mail/triage-log`
+    public static func listMailTriageLog(limit: Swift.Int? = nil) -> APIRequest<MailTriageLogList> {
+        var _query: [URLQueryItem] = []
+        APIQuery.append(&_query, "limit", limit)
+        return APIRequest(
+            method: "GET", template: "/mail/triage-log",
+            path: "/api/v1/mail/triage-log",
+            query: _query, headers: [:], body: nil, decode: .json
+        )
+    }
+
+    /// Undo a Mail Butler move and optionally pin the sender to Inbox
+    ///
+    /// `POST /mail/triage-log/{id}/undo`
+    public static func undoMailTriageLog(id: Swift.String, body: UndoMailTriageRequest? = nil) -> APIRequest<MailTriageLogEntry> {
+        return APIRequest(
+            method: "POST", template: "/mail/triage-log/{id}/undo",
+            path: "/api/v1/mail/triage-log/\(APIPath.escape(id))/undo",
+            query: [], headers: [:], body: body.map { APIRequestBody.json($0) }, decode: .json
+        )
+    }
+
     /// The signed-in person's profile
     ///
     /// `GET /me`

@@ -14297,6 +14297,510 @@ extension API {
         }
     }
 
+    public struct MailAccount: Codable, Sendable, Equatable {
+        public var allowedFolders: [Swift.String]
+        public var carddavUrl: Swift.String
+        public var contactsCount: Swift.Int
+        public var createdAt: Swift.String
+        public var defaultFolder: Swift.String
+        public var dryRun: Swift.Bool
+        public var email: Swift.String
+        public var enabled: Swift.Bool
+        public var id: Swift.String
+        public var imapHost: Swift.String
+        public var imapPort: Swift.Int
+        public var lastContactsSyncedAt: APINullable<Swift.String>?
+        public var lastError: Swift.String
+        public var lastSyncedAt: APINullable<Swift.String>?
+        public var pendingTriageCount: Swift.Int
+        public var pinnedModel: Swift.String
+        public var pollIntervalSeconds: Swift.Int
+        public var triagePolicy: Swift.String
+        public var updatedAt: Swift.String
+
+        public init(
+            allowedFolders: [Swift.String],
+            carddavUrl: Swift.String,
+            contactsCount: Swift.Int,
+            createdAt: Swift.String,
+            defaultFolder: Swift.String,
+            dryRun: Swift.Bool,
+            email: Swift.String,
+            enabled: Swift.Bool,
+            id: Swift.String,
+            imapHost: Swift.String,
+            imapPort: Swift.Int,
+            lastContactsSyncedAt: APINullable<Swift.String>? = nil,
+            lastError: Swift.String,
+            lastSyncedAt: APINullable<Swift.String>? = nil,
+            pendingTriageCount: Swift.Int,
+            pinnedModel: Swift.String,
+            pollIntervalSeconds: Swift.Int,
+            triagePolicy: Swift.String,
+            updatedAt: Swift.String
+        ) {
+            self.allowedFolders = allowedFolders
+            self.carddavUrl = carddavUrl
+            self.contactsCount = contactsCount
+            self.createdAt = createdAt
+            self.defaultFolder = defaultFolder
+            self.dryRun = dryRun
+            self.email = email
+            self.enabled = enabled
+            self.id = id
+            self.imapHost = imapHost
+            self.imapPort = imapPort
+            self.lastContactsSyncedAt = lastContactsSyncedAt
+            self.lastError = lastError
+            self.lastSyncedAt = lastSyncedAt
+            self.pendingTriageCount = pendingTriageCount
+            self.pinnedModel = pinnedModel
+            self.pollIntervalSeconds = pollIntervalSeconds
+            self.triagePolicy = triagePolicy
+            self.updatedAt = updatedAt
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case allowedFolders = "allowed_folders"
+            case carddavUrl = "carddav_url"
+            case contactsCount = "contacts_count"
+            case createdAt = "created_at"
+            case defaultFolder = "default_folder"
+            case dryRun = "dry_run"
+            case email
+            case enabled
+            case id
+            case imapHost = "imap_host"
+            case imapPort = "imap_port"
+            case lastContactsSyncedAt = "last_contacts_synced_at"
+            case lastError = "last_error"
+            case lastSyncedAt = "last_synced_at"
+            case pendingTriageCount = "pending_triage_count"
+            case pinnedModel = "pinned_model"
+            case pollIntervalSeconds = "poll_interval_seconds"
+            case triagePolicy = "triage_policy"
+            case updatedAt = "updated_at"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.allowedFolders = try c.decodeIfPresent([Swift.String].self, forKey: .allowedFolders) ?? []
+            self.carddavUrl = try c.decode(Swift.String.self, forKey: .carddavUrl)
+            self.contactsCount = try c.decode(Swift.Int.self, forKey: .contactsCount)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.defaultFolder = try c.decode(Swift.String.self, forKey: .defaultFolder)
+            self.dryRun = try c.decode(Swift.Bool.self, forKey: .dryRun)
+            self.email = try c.decode(Swift.String.self, forKey: .email)
+            self.enabled = try c.decode(Swift.Bool.self, forKey: .enabled)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.imapHost = try c.decode(Swift.String.self, forKey: .imapHost)
+            self.imapPort = try c.decode(Swift.Int.self, forKey: .imapPort)
+            self.lastContactsSyncedAt = try c.decodeNullable(Swift.String.self, forKey: .lastContactsSyncedAt)
+            self.lastError = try c.decode(Swift.String.self, forKey: .lastError)
+            self.lastSyncedAt = try c.decodeNullable(Swift.String.self, forKey: .lastSyncedAt)
+            self.pendingTriageCount = try c.decode(Swift.Int.self, forKey: .pendingTriageCount)
+            self.pinnedModel = try c.decode(Swift.String.self, forKey: .pinnedModel)
+            self.pollIntervalSeconds = try c.decode(Swift.Int.self, forKey: .pollIntervalSeconds)
+            self.triagePolicy = try c.decode(Swift.String.self, forKey: .triagePolicy)
+            self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(allowedFolders, forKey: .allowedFolders)
+            try c.encode(carddavUrl, forKey: .carddavUrl)
+            try c.encode(contactsCount, forKey: .contactsCount)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(defaultFolder, forKey: .defaultFolder)
+            try c.encode(dryRun, forKey: .dryRun)
+            try c.encode(email, forKey: .email)
+            try c.encode(enabled, forKey: .enabled)
+            try c.encode(id, forKey: .id)
+            try c.encode(imapHost, forKey: .imapHost)
+            try c.encode(imapPort, forKey: .imapPort)
+            try c.encodeIfPresent(lastContactsSyncedAt, forKey: .lastContactsSyncedAt)
+            try c.encode(lastError, forKey: .lastError)
+            try c.encodeIfPresent(lastSyncedAt, forKey: .lastSyncedAt)
+            try c.encode(pendingTriageCount, forKey: .pendingTriageCount)
+            try c.encode(pinnedModel, forKey: .pinnedModel)
+            try c.encode(pollIntervalSeconds, forKey: .pollIntervalSeconds)
+            try c.encode(triagePolicy, forKey: .triagePolicy)
+            try c.encode(updatedAt, forKey: .updatedAt)
+        }
+    }
+
+    public struct MailAccountResponse: Codable, Sendable, Equatable {
+        public var account: APINullable<MailAccount>?
+        public var configured: Swift.Bool
+        public var defaultTriagePolicy: Swift.String
+
+        public init(
+            account: APINullable<MailAccount>? = nil,
+            configured: Swift.Bool,
+            defaultTriagePolicy: Swift.String
+        ) {
+            self.account = account
+            self.configured = configured
+            self.defaultTriagePolicy = defaultTriagePolicy
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case account
+            case configured
+            case defaultTriagePolicy = "default_triage_policy"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.account = try c.decodeNullable(MailAccount.self, forKey: .account)
+            self.configured = try c.decode(Swift.Bool.self, forKey: .configured)
+            self.defaultTriagePolicy = try c.decode(Swift.String.self, forKey: .defaultTriagePolicy)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(account, forKey: .account)
+            try c.encode(configured, forKey: .configured)
+            try c.encode(defaultTriagePolicy, forKey: .defaultTriagePolicy)
+        }
+    }
+
+    public struct MailContactsSyncResult: Codable, Sendable, Equatable {
+        public var contactsCount: Swift.Int
+
+        public init(
+            contactsCount: Swift.Int
+        ) {
+            self.contactsCount = contactsCount
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case contactsCount = "contacts_count"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.contactsCount = try c.decode(Swift.Int.self, forKey: .contactsCount)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(contactsCount, forKey: .contactsCount)
+        }
+    }
+
+    public struct MailRule: Codable, Sendable, Equatable {
+        public var action: Action
+        public var createdAt: Swift.String
+        public var enabled: Swift.Bool
+        public var id: Swift.String
+        public var matchField: MatchField
+        public var matchValue: Swift.String
+        public var name: Swift.String
+        public var priority: Swift.Int
+        public var targetFolder: Swift.String
+        public var updatedAt: Swift.String
+
+        public struct Action: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let keep = Action(rawValue: "keep")
+            public static let move = Action(rawValue: "move")
+            public static let allKnown: [Action] = [keep, move]
+        }
+
+        public struct MatchField: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let fromEmail = MatchField(rawValue: "from_email")
+            public static let fromDomain = MatchField(rawValue: "from_domain")
+            public static let subject = MatchField(rawValue: "subject")
+            public static let listId = MatchField(rawValue: "list_id")
+            public static let allKnown: [MatchField] = [fromEmail, fromDomain, subject, listId]
+        }
+
+        public init(
+            action: Action,
+            createdAt: Swift.String,
+            enabled: Swift.Bool,
+            id: Swift.String,
+            matchField: MatchField,
+            matchValue: Swift.String,
+            name: Swift.String,
+            priority: Swift.Int,
+            targetFolder: Swift.String,
+            updatedAt: Swift.String
+        ) {
+            self.action = action
+            self.createdAt = createdAt
+            self.enabled = enabled
+            self.id = id
+            self.matchField = matchField
+            self.matchValue = matchValue
+            self.name = name
+            self.priority = priority
+            self.targetFolder = targetFolder
+            self.updatedAt = updatedAt
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case action
+            case createdAt = "created_at"
+            case enabled
+            case id
+            case matchField = "match_field"
+            case matchValue = "match_value"
+            case name
+            case priority
+            case targetFolder = "target_folder"
+            case updatedAt = "updated_at"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.action = try c.decode(Action.self, forKey: .action)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.enabled = try c.decode(Swift.Bool.self, forKey: .enabled)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.matchField = try c.decode(MatchField.self, forKey: .matchField)
+            self.matchValue = try c.decode(Swift.String.self, forKey: .matchValue)
+            self.name = try c.decode(Swift.String.self, forKey: .name)
+            self.priority = try c.decode(Swift.Int.self, forKey: .priority)
+            self.targetFolder = try c.decode(Swift.String.self, forKey: .targetFolder)
+            self.updatedAt = try c.decode(Swift.String.self, forKey: .updatedAt)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(action, forKey: .action)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(enabled, forKey: .enabled)
+            try c.encode(id, forKey: .id)
+            try c.encode(matchField, forKey: .matchField)
+            try c.encode(matchValue, forKey: .matchValue)
+            try c.encode(name, forKey: .name)
+            try c.encode(priority, forKey: .priority)
+            try c.encode(targetFolder, forKey: .targetFolder)
+            try c.encode(updatedAt, forKey: .updatedAt)
+        }
+    }
+
+    public struct MailRuleList: Codable, Sendable, Equatable {
+        public var rules: [MailRule]
+
+        public init(
+            rules: [MailRule]
+        ) {
+            self.rules = rules
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case rules
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.rules = try c.decodeIfPresent([MailRule].self, forKey: .rules) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(rules, forKey: .rules)
+        }
+    }
+
+    public struct MailTestResult: Codable, Sendable, Equatable {
+        public var carddavError: Swift.String
+        public var carddavOk: Swift.Bool
+        public var contactsCount: Swift.Int
+        public var imapError: Swift.String
+        public var imapOk: Swift.Bool
+
+        public init(
+            carddavError: Swift.String,
+            carddavOk: Swift.Bool,
+            contactsCount: Swift.Int,
+            imapError: Swift.String,
+            imapOk: Swift.Bool
+        ) {
+            self.carddavError = carddavError
+            self.carddavOk = carddavOk
+            self.contactsCount = contactsCount
+            self.imapError = imapError
+            self.imapOk = imapOk
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case carddavError = "carddav_error"
+            case carddavOk = "carddav_ok"
+            case contactsCount = "contacts_count"
+            case imapError = "imap_error"
+            case imapOk = "imap_ok"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.carddavError = try c.decode(Swift.String.self, forKey: .carddavError)
+            self.carddavOk = try c.decode(Swift.Bool.self, forKey: .carddavOk)
+            self.contactsCount = try c.decode(Swift.Int.self, forKey: .contactsCount)
+            self.imapError = try c.decode(Swift.String.self, forKey: .imapError)
+            self.imapOk = try c.decode(Swift.Bool.self, forKey: .imapOk)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(carddavError, forKey: .carddavError)
+            try c.encode(carddavOk, forKey: .carddavOk)
+            try c.encode(contactsCount, forKey: .contactsCount)
+            try c.encode(imapError, forKey: .imapError)
+            try c.encode(imapOk, forKey: .imapOk)
+        }
+    }
+
+    public struct MailTriageLogEntry: Codable, Sendable, Equatable {
+        public var action: Action
+        public var createdAt: Swift.String
+        public var dryRun: Swift.Bool
+        public var fromEmail: Swift.String
+        public var fromName: Swift.String
+        public var id: Swift.String
+        public var imapUid: Swift.Int
+        public var messageId: Swift.String
+        public var reason: Swift.String
+        public var sourceFolder: Swift.String
+        public var subject: Swift.String
+        public var targetFolder: Swift.String
+        public var tier: Tier
+        public var undoneAt: APINullable<Swift.String>?
+
+        public struct Action: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let keep = Action(rawValue: "keep")
+            public static let move = Action(rawValue: "move")
+            public static let allKnown: [Action] = [keep, move]
+        }
+
+        public struct Tier: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let contact = Tier(rawValue: "contact")
+            public static let rule = Tier(rawValue: "rule")
+            public static let llm = Tier(rawValue: "llm")
+            public static let manual = Tier(rawValue: "manual")
+            public static let allKnown: [Tier] = [contact, rule, llm, manual]
+        }
+
+        public init(
+            action: Action,
+            createdAt: Swift.String,
+            dryRun: Swift.Bool,
+            fromEmail: Swift.String,
+            fromName: Swift.String,
+            id: Swift.String,
+            imapUid: Swift.Int,
+            messageId: Swift.String,
+            reason: Swift.String,
+            sourceFolder: Swift.String,
+            subject: Swift.String,
+            targetFolder: Swift.String,
+            tier: Tier,
+            undoneAt: APINullable<Swift.String>? = nil
+        ) {
+            self.action = action
+            self.createdAt = createdAt
+            self.dryRun = dryRun
+            self.fromEmail = fromEmail
+            self.fromName = fromName
+            self.id = id
+            self.imapUid = imapUid
+            self.messageId = messageId
+            self.reason = reason
+            self.sourceFolder = sourceFolder
+            self.subject = subject
+            self.targetFolder = targetFolder
+            self.tier = tier
+            self.undoneAt = undoneAt
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case action
+            case createdAt = "created_at"
+            case dryRun = "dry_run"
+            case fromEmail = "from_email"
+            case fromName = "from_name"
+            case id
+            case imapUid = "imap_uid"
+            case messageId = "message_id"
+            case reason
+            case sourceFolder = "source_folder"
+            case subject
+            case targetFolder = "target_folder"
+            case tier
+            case undoneAt = "undone_at"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.action = try c.decode(Action.self, forKey: .action)
+            self.createdAt = try c.decode(Swift.String.self, forKey: .createdAt)
+            self.dryRun = try c.decode(Swift.Bool.self, forKey: .dryRun)
+            self.fromEmail = try c.decode(Swift.String.self, forKey: .fromEmail)
+            self.fromName = try c.decode(Swift.String.self, forKey: .fromName)
+            self.id = try c.decode(Swift.String.self, forKey: .id)
+            self.imapUid = try c.decode(Swift.Int.self, forKey: .imapUid)
+            self.messageId = try c.decode(Swift.String.self, forKey: .messageId)
+            self.reason = try c.decode(Swift.String.self, forKey: .reason)
+            self.sourceFolder = try c.decode(Swift.String.self, forKey: .sourceFolder)
+            self.subject = try c.decode(Swift.String.self, forKey: .subject)
+            self.targetFolder = try c.decode(Swift.String.self, forKey: .targetFolder)
+            self.tier = try c.decode(Tier.self, forKey: .tier)
+            self.undoneAt = try c.decodeNullable(Swift.String.self, forKey: .undoneAt)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(action, forKey: .action)
+            try c.encode(createdAt, forKey: .createdAt)
+            try c.encode(dryRun, forKey: .dryRun)
+            try c.encode(fromEmail, forKey: .fromEmail)
+            try c.encode(fromName, forKey: .fromName)
+            try c.encode(id, forKey: .id)
+            try c.encode(imapUid, forKey: .imapUid)
+            try c.encode(messageId, forKey: .messageId)
+            try c.encode(reason, forKey: .reason)
+            try c.encode(sourceFolder, forKey: .sourceFolder)
+            try c.encode(subject, forKey: .subject)
+            try c.encode(targetFolder, forKey: .targetFolder)
+            try c.encode(tier, forKey: .tier)
+            try c.encodeIfPresent(undoneAt, forKey: .undoneAt)
+        }
+    }
+
+    public struct MailTriageLogList: Codable, Sendable, Equatable {
+        public var entries: [MailTriageLogEntry]
+
+        public init(
+            entries: [MailTriageLogEntry]
+        ) {
+            self.entries = entries
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case entries
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.entries = try c.decodeIfPresent([MailTriageLogEntry].self, forKey: .entries) ?? []
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(entries, forKey: .entries)
+        }
+    }
+
     public struct McpServer: Codable, Sendable, Equatable {
         public var description: Swift.String?
         public var name: Swift.String
@@ -16414,6 +16918,84 @@ extension API {
             try c.encodeIfPresent(note, forKey: .note)
             try c.encode(slug, forKey: .slug)
             try c.encodeIfPresent(template, forKey: .template)
+        }
+    }
+
+    public struct NewMailRule: Codable, Sendable, Equatable {
+        public var action: Action
+        public var enabled: Swift.Bool?
+        public var matchField: MatchField
+        public var matchValue: Swift.String
+        public var name: Swift.String?
+        public var priority: Swift.Int?
+        public var targetFolder: Swift.String?
+
+        public struct Action: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let keep = Action(rawValue: "keep")
+            public static let move = Action(rawValue: "move")
+            public static let allKnown: [Action] = [keep, move]
+        }
+
+        public struct MatchField: APIStringEnum {
+            public let rawValue: Swift.String
+            public init(rawValue: Swift.String) { self.rawValue = rawValue }
+            public static let fromEmail = MatchField(rawValue: "from_email")
+            public static let fromDomain = MatchField(rawValue: "from_domain")
+            public static let subject = MatchField(rawValue: "subject")
+            public static let listId = MatchField(rawValue: "list_id")
+            public static let allKnown: [MatchField] = [fromEmail, fromDomain, subject, listId]
+        }
+
+        public init(
+            action: Action,
+            enabled: Swift.Bool? = nil,
+            matchField: MatchField,
+            matchValue: Swift.String,
+            name: Swift.String? = nil,
+            priority: Swift.Int? = nil,
+            targetFolder: Swift.String? = nil
+        ) {
+            self.action = action
+            self.enabled = enabled
+            self.matchField = matchField
+            self.matchValue = matchValue
+            self.name = name
+            self.priority = priority
+            self.targetFolder = targetFolder
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case action
+            case enabled
+            case matchField = "match_field"
+            case matchValue = "match_value"
+            case name
+            case priority
+            case targetFolder = "target_folder"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.action = try c.decode(Action.self, forKey: .action)
+            self.enabled = try c.decodeIfPresent(Swift.Bool.self, forKey: .enabled)
+            self.matchField = try c.decode(MatchField.self, forKey: .matchField)
+            self.matchValue = try c.decode(Swift.String.self, forKey: .matchValue)
+            self.name = try c.decodeIfPresent(Swift.String.self, forKey: .name)
+            self.priority = try c.decodeIfPresent(Swift.Int.self, forKey: .priority)
+            self.targetFolder = try c.decodeIfPresent(Swift.String.self, forKey: .targetFolder)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encode(action, forKey: .action)
+            try c.encodeIfPresent(enabled, forKey: .enabled)
+            try c.encode(matchField, forKey: .matchField)
+            try c.encode(matchValue, forKey: .matchValue)
+            try c.encodeIfPresent(name, forKey: .name)
+            try c.encodeIfPresent(priority, forKey: .priority)
+            try c.encodeIfPresent(targetFolder, forKey: .targetFolder)
         }
     }
 
@@ -24542,6 +25124,30 @@ extension API {
         }
     }
 
+    public struct UndoMailTriageRequest: Codable, Sendable, Equatable {
+        public var pinSender: Swift.Bool?
+
+        public init(
+            pinSender: Swift.Bool? = nil
+        ) {
+            self.pinSender = pinSender
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case pinSender = "pin_sender"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.pinSender = try c.decodeIfPresent(Swift.Bool.self, forKey: .pinSender)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(pinSender, forKey: .pinSender)
+        }
+    }
+
     public struct UpdateCustomApp: Codable, Sendable, Equatable {
         public var capabilities: CustomAppCapabilities?
         public var description: Swift.String?
@@ -24742,6 +25348,96 @@ extension API {
             try c.encodeIfPresent(enabled, forKey: .enabled)
             try c.encodeIfPresent(secrets, forKey: .secrets)
             try c.encodeIfPresent(settings, forKey: .settings)
+        }
+    }
+
+    public struct UpsertMailAccount: Codable, Sendable, Equatable {
+        public var allowedFolders: [Swift.String]?
+        public var carddavUrl: Swift.String?
+        public var defaultFolder: Swift.String?
+        public var dryRun: Swift.Bool
+        public var email: Swift.String
+        public var enabled: Swift.Bool
+        public var imapHost: Swift.String?
+        public var imapPort: Swift.Int?
+        public var password: Swift.String?
+        public var pinnedModel: Swift.String?
+        public var pollIntervalSeconds: Swift.Int?
+        public var triagePolicy: Swift.String?
+
+        public init(
+            allowedFolders: [Swift.String]? = nil,
+            carddavUrl: Swift.String? = nil,
+            defaultFolder: Swift.String? = nil,
+            dryRun: Swift.Bool,
+            email: Swift.String,
+            enabled: Swift.Bool,
+            imapHost: Swift.String? = nil,
+            imapPort: Swift.Int? = nil,
+            password: Swift.String? = nil,
+            pinnedModel: Swift.String? = nil,
+            pollIntervalSeconds: Swift.Int? = nil,
+            triagePolicy: Swift.String? = nil
+        ) {
+            self.allowedFolders = allowedFolders
+            self.carddavUrl = carddavUrl
+            self.defaultFolder = defaultFolder
+            self.dryRun = dryRun
+            self.email = email
+            self.enabled = enabled
+            self.imapHost = imapHost
+            self.imapPort = imapPort
+            self.password = password
+            self.pinnedModel = pinnedModel
+            self.pollIntervalSeconds = pollIntervalSeconds
+            self.triagePolicy = triagePolicy
+        }
+
+        enum CodingKeys: Swift.String, CodingKey {
+            case allowedFolders = "allowed_folders"
+            case carddavUrl = "carddav_url"
+            case defaultFolder = "default_folder"
+            case dryRun = "dry_run"
+            case email
+            case enabled
+            case imapHost = "imap_host"
+            case imapPort = "imap_port"
+            case password
+            case pinnedModel = "pinned_model"
+            case pollIntervalSeconds = "poll_interval_seconds"
+            case triagePolicy = "triage_policy"
+        }
+
+        public init(from decoder: any Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            self.allowedFolders = try c.decodeIfPresent([Swift.String].self, forKey: .allowedFolders)
+            self.carddavUrl = try c.decodeIfPresent(Swift.String.self, forKey: .carddavUrl)
+            self.defaultFolder = try c.decodeIfPresent(Swift.String.self, forKey: .defaultFolder)
+            self.dryRun = try c.decode(Swift.Bool.self, forKey: .dryRun)
+            self.email = try c.decode(Swift.String.self, forKey: .email)
+            self.enabled = try c.decode(Swift.Bool.self, forKey: .enabled)
+            self.imapHost = try c.decodeIfPresent(Swift.String.self, forKey: .imapHost)
+            self.imapPort = try c.decodeIfPresent(Swift.Int.self, forKey: .imapPort)
+            self.password = try c.decodeIfPresent(Swift.String.self, forKey: .password)
+            self.pinnedModel = try c.decodeIfPresent(Swift.String.self, forKey: .pinnedModel)
+            self.pollIntervalSeconds = try c.decodeIfPresent(Swift.Int.self, forKey: .pollIntervalSeconds)
+            self.triagePolicy = try c.decodeIfPresent(Swift.String.self, forKey: .triagePolicy)
+        }
+
+        public func encode(to encoder: any Encoder) throws {
+            var c = encoder.container(keyedBy: CodingKeys.self)
+            try c.encodeIfPresent(allowedFolders, forKey: .allowedFolders)
+            try c.encodeIfPresent(carddavUrl, forKey: .carddavUrl)
+            try c.encodeIfPresent(defaultFolder, forKey: .defaultFolder)
+            try c.encode(dryRun, forKey: .dryRun)
+            try c.encode(email, forKey: .email)
+            try c.encode(enabled, forKey: .enabled)
+            try c.encodeIfPresent(imapHost, forKey: .imapHost)
+            try c.encodeIfPresent(imapPort, forKey: .imapPort)
+            try c.encodeIfPresent(password, forKey: .password)
+            try c.encodeIfPresent(pinnedModel, forKey: .pinnedModel)
+            try c.encodeIfPresent(pollIntervalSeconds, forKey: .pollIntervalSeconds)
+            try c.encodeIfPresent(triagePolicy, forKey: .triagePolicy)
         }
     }
 

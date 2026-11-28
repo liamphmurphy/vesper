@@ -38,6 +38,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
 	"github.com/liamphmurphy/vesper/server/internal/httpapi"
+	"github.com/liamphmurphy/vesper/server/internal/mail"
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/memory"
 	"github.com/liamphmurphy/vesper/server/internal/metrics"
@@ -297,6 +298,9 @@ func runApp(ctx context.Context, log *slog.Logger, args []string) error {
 	if appCfg.MemoryConsolidateInterval > 0 {
 		go memory.RunConsolidation(ctx, q, log, time.Duration(appCfg.MemoryConsolidateInterval)*time.Second)
 	}
+	mailSvc := &mail.Service{Pool: pool, Q: q, Box: box, Log: log}
+	srv.Mail = mailSvc
+	go mailSvc.Run(ctx, 15*time.Second)
 
 	imgMgr := NewImageManager()
 	apiHandler := srv.Handler()

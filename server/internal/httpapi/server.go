@@ -31,6 +31,7 @@ import (
 	"github.com/liamphmurphy/vesper/server/internal/customapps"
 	"github.com/liamphmurphy/vesper/server/internal/designs"
 	"github.com/liamphmurphy/vesper/server/internal/githubpr"
+	"github.com/liamphmurphy/vesper/server/internal/mail"
 	"github.com/liamphmurphy/vesper/server/internal/media"
 	"github.com/liamphmurphy/vesper/server/internal/media/providers/gemini"
 	"github.com/liamphmurphy/vesper/server/internal/realtime"
@@ -62,6 +63,7 @@ type Server struct {
 	Artifacts *artifacts.Service
 	Agents    *agents.Service
 	Secrets   *secrets.Service
+	Mail      *mail.Service
 	Runs      *runs.Service
 	Wiki      *wiki.Service
 	// PublicURL is how agents reach this server (the /mcp link shown with tokens).

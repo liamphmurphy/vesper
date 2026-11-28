@@ -12,6 +12,7 @@ public enum SettingsPane: String, CaseIterable, Sendable, Hashable, Codable {
     // Integrations
     case secrets
     case connectors
+    case mail
     case repositories
     // Workspace
     case workspace
@@ -73,6 +74,7 @@ public enum SettingsRouteResolver {
         "prompt-templates": .promptTemplates,
         "templates": .promptTemplates,
         "connectors": .connectors,
+        "mail": .mail,
         "repositories": .repositories,
         "runners": .runners,
         "dev-workspace": .devWorkspace,

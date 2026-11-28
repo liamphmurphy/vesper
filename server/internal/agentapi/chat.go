@@ -24,7 +24,7 @@ var chatTools = runs.ChatTools
 // asideTools is the MCP surface of an aside (a chat answering a question
 // about another chat's running reply): chatTools that only read.
 var asideTools = []string{"list_pages", "page_outline", "list_page_versions", "list_page_reviews", "knowledge_graph", "list_imports", "suggest_links", "whoami", "search_knowledge", "read_page", "read_artifact", "get_backlinks", "list_spaces",
-	"search_memory", "read_memory", "search_chats", "read_chat", "search_repositories", "get_video_transcript", "list_saved_links", "search_library", "read_library_item", "list_inbox", "canvas_read", "canvas_list", "design_flows", "list_workflows", "read_workflow", "list_scheduled_tasks", "list_learning_modules", "get_learning_progress", "list_connectors", "list_secret_names", "list_custom_apps", "get_custom_app", "http_list_workspaces", "http_get_workspace"}
+	"search_memory", "read_memory", "search_chats", "read_chat", "search_repositories", "get_video_transcript", "list_saved_links", "search_library", "read_library_item", "list_inbox", "canvas_read", "canvas_list", "design_flows", "list_workflows", "read_workflow", "list_scheduled_tasks", "list_learning_modules", "get_learning_progress", "list_connectors", "list_secret_names", "list_custom_apps", "get_custom_app", "http_list_workspaces", "http_get_workspace", "mail_list_mailboxes", "mail_search", "mail_list_rules", "mail_triage_log"}
 
 // isAsideRun reports whether a chat run answers an aside. An unreadable spec
 // counts as one, so the check fails closed.
