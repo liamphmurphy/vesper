@@ -66,6 +66,8 @@ struct ChatComposerTextView: NSViewRepresentable {
     let onCompletionAccept: @MainActor () -> Void
     let onCompletionDismiss: @MainActor () -> Void
     let onAttachFiles: @MainActor ([ChatComposerIncomingFile]) -> Void
+    var onFocusChange: (@MainActor (Bool) -> Void)? = nil
+    var onDragHoverChange: (@MainActor (Bool) -> Void)? = nil
 
     func makeCoordinator() -> Coordinator {
         Coordinator(self)
@@ -394,14 +396,48 @@ final class ComposerNSTextView: NSTextView {
         super.paste(sender)
     }
 
+    override func becomeFirstResponder() -> Bool {
+        let accepted = super.becomeFirstResponder()
+        if accepted {
+            let cb = coordinator?.parent.onFocusChange
+            Task { @MainActor in cb?(true) }
+        }
+        return accepted
+    }
+
+    override func resignFirstResponder() -> Bool {
+        let resigned = super.resignFirstResponder()
+        if resigned {
+            let cb = coordinator?.parent.onFocusChange
+            Task { @MainActor in cb?(false) }
+        }
+        return resigned
+    }
+
     override func draggingEntered(_ sender: any NSDraggingInfo) -> NSDragOperation {
         if coordinator?.canHandlePasteboard(sender.draggingPasteboard) == true {
+            let cb = coordinator?.parent.onDragHoverChange
+            Task { @MainActor in cb?(true) }
             return .copy
         }
         return super.draggingEntered(sender)
     }
 
+    override func draggingExited(_ sender: (any NSDraggingInfo)?) {
+        let cb = coordinator?.parent.onDragHoverChange
+        Task { @MainActor in cb?(false) }
+        super.draggingExited(sender)
+    }
+
+    override func draggingEnded(_ sender: any NSDraggingInfo) {
+        let cb = coordinator?.parent.onDragHoverChange
+        Task { @MainActor in cb?(false) }
+        super.draggingEnded(sender)
+    }
+
     override func performDragOperation(_ sender: any NSDraggingInfo) -> Bool {
+        let cb = coordinator?.parent.onDragHoverChange
+        Task { @MainActor in cb?(false) }
         if coordinator?.handlePasteboard(sender.draggingPasteboard) == true {
             return true
         }

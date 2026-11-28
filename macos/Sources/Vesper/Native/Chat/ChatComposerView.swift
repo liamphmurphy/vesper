@@ -87,6 +87,8 @@ struct ChatComposerView: View {
     @State private var micWasListeningBeforePress = false
     @State private var pendingReleaseStop = false
     @State private var watchedFollowupsKey: QueryKey?
+    @State private var isEditorFocused = false
+    @State private var isDragTargeted = false
 
     private var isRunning: Bool { session?.state == .running }
     private var personaName: String { activePersona?.name ?? session?.agent.name ?? "Vesper" }
@@ -108,14 +110,10 @@ struct ChatComposerView: View {
         (hasDraftText || !attachments.isEmpty) && !isSending && !isUploading
     }
 
-    private var activeRepoLabel: String? {
-        let raw = (selectedRepoUrl ?? session?.repoUrl ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !raw.isEmpty else { return nil }
-        return Self.repoShortName(raw)
-    }
-
+    /// Ephemeral chips only (attachments, context refs, research mode, active dictation).
+    /// The active repository lives in `controlsBar` (`repositoryPickerMenu`) rather than duplicating here.
     private var hasAnyChips: Bool {
-        !attachments.isEmpty || !contextChips.isEmpty || researchMode || (canCode && activeRepoLabel != nil) || speech.listening
+        !attachments.isEmpty || !contextChips.isEmpty || researchMode || speech.listening
     }
 
     var body: some View {
@@ -123,7 +121,7 @@ struct ChatComposerView: View {
         let followups = followupsRequest.flatMap { context.store.entry($0).data?.followups } ?? []
         let messages = chatId.flatMap { context.store.entry(API.listChatMessages(id: $0, limit: 200)).data?.messages } ?? []
 
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             if isRunning, let livePlanProgress {
                 ChatPinnedPlanChecklistBar(
                     progress: livePlanProgress,
@@ -199,7 +197,9 @@ struct ChatComposerView: View {
                         applyCompletion(completion.items[idx], mode: completion.mode)
                     },
                     onCompletionDismiss: { dismissCompletion() },
-                    onAttachFiles: { incoming in handleIncomingFiles(incoming) }
+                    onAttachFiles: { incoming in handleIncomingFiles(incoming) },
+                    onFocusChange: { focused in isEditorFocused = focused },
+                    onDragHoverChange: { targeted in isDragTargeted = targeted }
                 )
                 .frame(height: editorHeight)
 
@@ -210,19 +210,47 @@ struct ChatComposerView: View {
             .background {
                 // Shadow belongs on the backdrop shape, not the VStack: shadowing the container
                 // forces Core Animation to re-rasterize the text view and animated harness canvas.
-                RoundedRectangle(cornerRadius: 14)
+                let focusGlow = isDragTargeted
+                    ? p.accent.opacity(0.24)
+                    : (isEditorFocused ? p.accent.opacity(theme.mode == .dark ? 0.14 : 0.10) : Color.black.opacity(theme.mode == .dark ? 0.24 : 0.10))
+                RoundedRectangle(cornerRadius: 15)
                     .fill(.ultraThinMaterial)
-                    .overlay(RoundedRectangle(cornerRadius: 14).fill(p.surface.opacity(0.6)))
-                    .shadow(color: Color.black.opacity(0.10), radius: 10, y: 3)
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 15)
+                            .fill(p.surface.opacity(theme.mode == .dark ? 0.68 : 0.78))
+                    )
+                    .shadow(color: focusGlow, radius: isEditorFocused || isDragTargeted ? 14 : 12, y: 4)
             }
-            .overlay(RoundedRectangle(cornerRadius: 14).stroke(p.border))
+            .overlay(
+                RoundedRectangle(cornerRadius: 15)
+                    .strokeBorder(
+                        isDragTargeted
+                            ? p.accent
+                            : (isEditorFocused ? p.accent.opacity(theme.mode == .dark ? 0.55 : 0.45) : p.border),
+                        style: StrokeStyle(lineWidth: isDragTargeted ? 1.5 : 1, dash: isDragTargeted ? [5, 3] : [])
+                    )
+            )
+            .animation(.easeOut(duration: 0.16), value: isEditorFocused)
+            .animation(.easeOut(duration: 0.14), value: isDragTargeted)
         }
-        .padding(.horizontal, inline ? 0 : 20)
-        .padding(.vertical, inline ? 0 : 12)
-        .background(inline ? Color.clear : p.background)
-        .overlay(alignment: .top) {
+        .frame(maxWidth: inline ? .infinity : 860, alignment: .leading)
+        .frame(maxWidth: .infinity)
+        .padding(.horizontal, inline ? 0 : 24)
+        .padding(.top, inline ? 0 : 12)
+        .padding(.bottom, inline ? 0 : 14)
+        .background {
             if !inline {
-                Rectangle().fill(p.rowBorder).frame(height: 1)
+                // Soft fade scrim so transcript content glides behind the floating glass composer.
+                LinearGradient(
+                    stops: [
+                        .init(color: p.background.opacity(0), location: 0),
+                        .init(color: p.background.opacity(0.78), location: 0.34),
+                        .init(color: p.background.opacity(0.96), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .allowsHitTesting(false)
             }
         }
         .fileImporter(
@@ -333,22 +361,6 @@ struct ChatComposerView: View {
                     .overlay(Capsule().stroke(activeColor.opacity(0.35)))
                 }
 
-                if canCode, let repoLabel = activeRepoLabel {
-                    HStack(spacing: 4) {
-                        Image(systemName: "arrow.triangle.branch")
-                            .font(.system(size: 9))
-                            .foregroundStyle(p.secondaryText)
-                        Text(repoLabel)
-                            .font(.system(size: theme.pointSize(.micro), design: .monospaced))
-                            .foregroundStyle(p.text)
-                            .lineLimit(1)
-                    }
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 4)
-                    .background(p.surface, in: Capsule())
-                    .overlay(Capsule().stroke(p.border))
-                }
-
                 if researchMode {
                     HStack(spacing: 4) {
                         Image(systemName: "magnifyingglass")
@@ -448,6 +460,8 @@ struct ChatComposerView: View {
                 Image(systemName: "plus.circle")
                     .font(.system(size: 15))
                     .foregroundStyle(p.secondaryText)
+                    .frame(width: 24, height: 24)
+                    .modifier(ChatComposerGhostPill(active: false))
             }
             .buttonStyle(.plain)
             .help("Attach files")
@@ -462,12 +476,11 @@ struct ChatComposerView: View {
                 researchMode.toggle()
             } label: {
                 Image(systemName: "magnifyingglass")
-                    .font(.system(size: 11, weight: .medium))
+                    .font(.system(size: 11.5, weight: .medium))
                     .foregroundStyle(researchMode ? p.accent : p.secondaryText)
                     .padding(.horizontal, 7)
                     .padding(.vertical, 4)
-                    .background((researchMode ? p.selected : p.surface.opacity(0.8)), in: Capsule())
-                    .overlay(Capsule().stroke(researchMode ? p.accent : p.border))
+                    .modifier(ChatComposerGhostPill(active: researchMode))
             }
             .buttonStyle(.plain)
             .help("Research mode (plan before answering)")
@@ -496,6 +509,7 @@ struct ChatComposerView: View {
                     .font(.system(size: 13, weight: .semibold))
                     .foregroundStyle(p.secondaryText)
                     .frame(width: 26, height: 22)
+                    .modifier(ChatComposerGhostPill(active: false))
             }
             .buttonStyle(.plain)
             .help("Live Voice: talk with \(personaName) out loud")
@@ -617,9 +631,8 @@ struct ChatComposerView: View {
             }
         }
         .padding(2)
-        .frame(height: 28)
-        .background(p.surface.opacity(0.8), in: Capsule())
-        .overlay(Capsule().stroke(p.border))
+        .frame(height: 26)
+        .background(theme.swiftUIColor("surface-sunken", fallback: p.surface).opacity(0.6), in: Capsule())
         .accessibilityElement(children: .contain)
         .accessibilityLabel("Send as")
     }
@@ -702,8 +715,7 @@ struct ChatComposerView: View {
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(p.surface.opacity(0.8), in: Capsule())
-            .overlay(Capsule().stroke(p.border))
+            .modifier(ChatComposerGhostPill(active: false))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -780,8 +792,7 @@ struct ChatComposerView: View {
             .foregroundStyle(p.secondaryText)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(p.surface.opacity(0.8), in: Capsule())
-            .overlay(Capsule().stroke(p.border))
+            .modifier(ChatComposerGhostPill(active: false))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -838,8 +849,7 @@ struct ChatComposerView: View {
             .foregroundStyle(p.secondaryText)
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(p.surface.opacity(0.8), in: Capsule())
-            .overlay(Capsule().stroke(p.border))
+            .modifier(ChatComposerGhostPill(active: false))
         }
         .menuStyle(.button)
         .buttonStyle(.plain)
@@ -1632,6 +1642,28 @@ struct ChatComposerView: View {
         let parts = trimmed.split(separator: "/")
         if parts.count >= 2 { return "\(parts[parts.count - 2])/\(parts[parts.count - 1])" }
         return trimmed
+    }
+}
+
+/// Borderless-at-rest pill modifier for composer controls: reveals `p.hover` on pointer hover
+/// and reserves tinted fills + accent stroke for active states (e.g. Research mode).
+private struct ChatComposerGhostPill: ViewModifier {
+    @Environment(\.vesperTheme) private var theme
+    let active: Bool
+    @State private var isHovered = false
+
+    func body(content: Content) -> some View {
+        let p = theme.palette
+        content
+            .background(
+                (active ? p.selected : (isHovered ? p.hover : Color.clear)),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().stroke(active ? p.accent.opacity(0.5) : Color.clear)
+            )
+            .contentShape(Capsule())
+            .onHover { isHovered = $0 }
     }
 }
 

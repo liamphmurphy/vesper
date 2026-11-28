@@ -1077,7 +1077,6 @@ struct ChatLiveActivityCardView: View {
         }()
         let shouldShowLiveThinking = showLiveThinking && (!activity.thinkingBlocks.isEmpty || activity.timingPhase == .thinking)
         let deduplicatePlanSteps = activity.planned && hasPinnedPlanBar
-        let activePlanStep = deduplicatePlanSteps ? activity.steps.first(where: { $0.state == .active }) : nil
 
         VStack(alignment: .leading, spacing: 8) {
             // Message-row aligned persona identity header (24pt avatar matches ChatMessageRowView)
@@ -1149,25 +1148,9 @@ struct ChatLiveActivityCardView: View {
                             .padding(.vertical, 9)
                     }
 
-                    // Smart plan deduplication vs. planless step rail
-                    if deduplicatePlanSteps {
-                        if let activePlanStep {
-                            Divider()
-                            HStack(spacing: 6) {
-                                ChatPulsingStatusDot(color: stageTint, size: 5, active: !isStopping)
-                                Text("Current plan step:")
-                                    .font(.system(size: theme.pointSize(.micro), weight: .semibold))
-                                    .foregroundStyle(p.tertiaryText)
-                                Text(activePlanStep.title)
-                                    .font(.system(size: theme.pointSize(.small), weight: .medium))
-                                    .foregroundStyle(p.secondaryText)
-                                    .lineLimit(1)
-                                Spacer(minLength: 4)
-                            }
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 7)
-                        }
-                    } else if !displaySteps.isEmpty {
+                    // Smart plan deduplication: when ChatPinnedPlanChecklistBar is already visible
+                    // directly above the composer, omit the echoed plan row here and show only planless steps.
+                    if !deduplicatePlanSteps && !displaySteps.isEmpty {
                         Divider()
                         VStack(alignment: .leading, spacing: 5) {
                             if !showAllSteps && folded.earlier > 0 {

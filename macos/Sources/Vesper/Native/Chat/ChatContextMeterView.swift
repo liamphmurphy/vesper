@@ -14,6 +14,7 @@ struct ChatContextMeterView: View {
     let onCompact: @MainActor (String?) async -> String?
 
     @State private var open = false
+    @State private var isHovered = false
     @State private var focus = ""
     @State private var compacting = false
     @State private var updatingThreshold = false
@@ -51,10 +52,21 @@ struct ChatContextMeterView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(p.surface, in: Capsule())
-            .overlay(Capsule().stroke(state.tone == .neutral ? p.border : barColor.opacity(0.5)))
+            .background(
+                (open ? p.selected : (state.tone != .neutral ? barColor.opacity(0.12) : (isHovered ? p.hover : Color.clear))),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().stroke(
+                    state.tone != .neutral
+                        ? barColor.opacity(0.45)
+                        : (open ? p.accent.opacity(0.4) : Color.clear)
+                )
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .help("Context window: \(state.label) (⌘⇧K)")
         .onChange(of: openRequestToken) { _, newValue in
             if newValue > 0 { open.toggle() }

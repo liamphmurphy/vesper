@@ -256,6 +256,7 @@ struct ChatHarnessUsageButton: View {
     let isWorking: Bool
 
     @State private var showingPopover = false
+    @State private var isHovered = false
 
     private var activeActivity: API.HarnessActivity? {
         harnesses.first(where: { $0.harness == activeHarnessId })
@@ -284,10 +285,17 @@ struct ChatHarnessUsageButton: View {
             }
             .padding(.horizontal, 7)
             .padding(.vertical, 3)
-            .background(p.surface.opacity(0.8), in: Capsule())
-            .overlay(Capsule().stroke(p.border))
+            .background(
+                (showingPopover ? p.selected : (isHovered ? p.hover : Color.clear)),
+                in: Capsule()
+            )
+            .overlay(
+                Capsule().stroke(showingPopover ? p.accent.opacity(0.45) : Color.clear)
+            )
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
+        .onHover { isHovered = $0 }
         .help("Harness allowance & activity")
         .popover(isPresented: $showingPopover, arrowEdge: .top) {
             harnessPopoverContent
