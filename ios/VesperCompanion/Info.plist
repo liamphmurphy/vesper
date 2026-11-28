@@ -28,6 +28,10 @@
 	</array>
 	<key>NSCameraUsageDescription</key>
 	<string>Vesper uses the camera to scan your Mac's pairing QR code and capture photos for chats and your Library.</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Vesper uses the microphone so you can dictate chat messages to your personas.</string>
+	<key>NSSpeechRecognitionUsageDescription</key>
+	<string>Vesper uses speech recognition to transcribe your dictated messages in chat.</string>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>Vesper accesses your photo library so you can attach photos to chats and upload them to your Library.</string>
 	<key>NSLocalNetworkUsageDescription</key>
