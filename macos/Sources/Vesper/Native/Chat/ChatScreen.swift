@@ -49,6 +49,8 @@ final class ChatScreenModel {
     @ObservationIgnored var scrollToken = 0
     var theme: ThemeTokens = ThemeTokens(mode: .light)
     var colorScheme: ColorScheme = .light
+    var wizardStep: OnboardingLogic.WizardStep = .greeting
+    var wizardDismissed = false
 
     func resetInspectorForChatSwitch() {
         activeDesignId = nil
@@ -92,6 +94,7 @@ struct ChatScreen: View {
     @State private var lastDockFetch = Date()
     @State private var keyMonitor: Any?
 
+    private static let bootRequest = API.getBootstrap()
     private static let personasRequest = API.listPersonas()
     private static let spacesRequest = API.listChatSpaces()
     private static let modelsRequest = API.listChatModels()
@@ -153,6 +156,7 @@ struct ChatScreen: View {
 
     var body: some View {
         let store = context.store
+        let boot = store.entry(Self.bootRequest).data
         let personas = store.entry(Self.personasRequest).data?.personas ?? []
         let spaces = store.entry(Self.spacesRequest).data?.spaces ?? []
         let harnessModels = store.entry(Self.modelsRequest).data ?? []
@@ -171,6 +175,9 @@ struct ChatScreen: View {
         let canvases = canvasesRequest.flatMap { store.entry($0).data?.canvases } ?? []
         let messages = messagesRequest.flatMap { store.entry($0).data?.messages } ?? []
         let costs = costsRequest.flatMap { store.entry($0).data }
+        let forceSetup = context.match.query["setup"] != nil
+        let wizardMode = OnboardingLogic.wizardMode(me: boot?.me, forceSetup: forceSetup)
+        let activeWizardMode: OnboardingLogic.WizardMode? = (chatId == nil && !model.wizardDismissed && boot != nil) ? wizardMode : nil
         let liveSince = ChatTurnActivity.runningSince(for: messages)
         let liveActivity: ChatTurnActivity? = {
             guard session?.state == .running, let runId = session?.currentRunId, !runId.isEmpty else { return nil }
@@ -187,106 +194,123 @@ struct ChatScreen: View {
         }()
 
         VStack(spacing: 0) {
-            headerBar(
-                session: session,
-                personas: personas,
-                activePersona: activePersona,
-                harnessModels: harnessModels,
-                messages: messages,
-                pinnedCount: messages.filter { $0.bookmarked == true }.count
-            )
-            Divider()
-
-            if messageReader.isActive {
-                ChatReadAloudMiniBarView(reader: messageReader) { msgId in
-                    model.scrollToken += 1
-                    model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: msgId)
-                }
-            }
-
-            Group {
-                if let chatId {
-                    transcriptSection(
-                        chatId: chatId,
-                        session: session,
-                        personas: personas,
-                        activePersona: activePersona,
-                        harnessModels: harnessModels
-                    )
-                } else {
-                    emptyChatView(
-                        personas: personas,
-                        activePersona: activePersona,
-                        suggestions: suggestions,
-                        spaces: spaces
-                    )
-                }
-            }
-            // The host persona's loop stands bottom-right just above the composer for the whole chat.
-            .overlay(alignment: .bottomTrailing) {
-                if let persona = activePersona, let loops = persona.playableLoops {
-                    PersonaCompanionDock(companion: companion, persona: persona, loops: loops) { companionOpen = true }
-                }
-            }
-
-            ChatComposerSlot(
-                chatId: chatId,
-                session: session,
-                personas: personas,
-                activePersona: activePersona,
-                harnessModels: harnessModels,
-                harnesses: harnesses,
-                workflows: workflows,
-                repositories: repositories,
-                promptTemplates: promptTemplates,
-                spaces: spaces,
-                selectedHarness: $model.selectedHarness,
-                selectedModel: $model.selectedModel,
-                selectedEffort: $model.selectedEffort,
-                selectedRepoUrl: $model.selectedRepoUrl,
-                onSelectNewChatPersona: { id in model.newChatPersonaId = id },
-                onSend: { submission in
-                    await submitFromComposer(submission, activePersona: activePersona)
-                },
-                onCancel: {
-                    await cancelActiveTurn()
-                },
-                onSetRepository: { repoUrl in
-                    await setChatRepository(repoUrl)
-                },
-                onCompact: { focus in
-                    await compactChat(focus: focus)
-                },
-                onStartWorkflow: { workflowId, input in
-                    await startChatWorkflow(workflowId: workflowId, input: input)
-                },
-                onStartMusic: { prompt in
-                    await startChatMusic(prompt: prompt)
-                },
-                onCompare: { option, question in
-                    await startCompareAside(option: option, question: question)
-                },
-                onStartLiveVoice: {
-                    companionOpen = false
-                    liveVoiceOpen = true
-                },
-                onOpenOutline: {
-                    model.inspectorTabId = ChatInspectorLogic.outlineTabId
-                    model.inspectorOpen = true
-                },
-                onStartTemporaryChat: {
-                    model.temporaryMode = true
-                    context.navigate("/chat?temporary=1")
-                },
-                prefill: model.composerPrefill,
-                onPrefillApplied: { token in
-                    if model.composerPrefill?.token == token {
-                        model.composerPrefill = nil
+            if let activeWizardMode {
+                WelcomeWizardView(
+                    mode: activeWizardMode,
+                    step: $model.wizardStep,
+                    onDone: { personaId in
+                        model.wizardDismissed = true
+                        if let personaId, !personaId.isEmpty {
+                            model.newChatPersonaId = personaId
+                            let encoded = personaId.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? personaId
+                            context.navigate("/chat?new&persona=\(encoded)", replace: true)
+                        } else {
+                            context.navigate("/chat?new", replace: true)
+                        }
                     }
-                },
-                livePlanProgress: livePlanProgress,
-                livePlanTurnKey: livePlanTurnKey
-            )
+                )
+            } else {
+                headerBar(
+                    session: session,
+                    personas: personas,
+                    activePersona: activePersona,
+                    harnessModels: harnessModels,
+                    messages: messages,
+                    pinnedCount: messages.filter { $0.bookmarked == true }.count
+                )
+                Divider()
+
+                if messageReader.isActive {
+                    ChatReadAloudMiniBarView(reader: messageReader) { msgId in
+                        model.scrollToken += 1
+                        model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: msgId)
+                    }
+                }
+
+                Group {
+                    if let chatId {
+                        transcriptSection(
+                            chatId: chatId,
+                            session: session,
+                            personas: personas,
+                            activePersona: activePersona,
+                            harnessModels: harnessModels
+                        )
+                    } else {
+                        emptyChatView(
+                            personas: personas,
+                            activePersona: activePersona,
+                            suggestions: suggestions,
+                            spaces: spaces
+                        )
+                    }
+                }
+                // The host persona's loop stands bottom-right just above the composer for the whole chat.
+                .overlay(alignment: .bottomTrailing) {
+                    if let persona = activePersona, let loops = persona.playableLoops {
+                        PersonaCompanionDock(companion: companion, persona: persona, loops: loops) { companionOpen = true }
+                    }
+                }
+
+                ChatComposerSlot(
+                    chatId: chatId,
+                    session: session,
+                    personas: personas,
+                    activePersona: activePersona,
+                    harnessModels: harnessModels,
+                    harnesses: harnesses,
+                    workflows: workflows,
+                    repositories: repositories,
+                    promptTemplates: promptTemplates,
+                    spaces: spaces,
+                    selectedHarness: $model.selectedHarness,
+                    selectedModel: $model.selectedModel,
+                    selectedEffort: $model.selectedEffort,
+                    selectedRepoUrl: $model.selectedRepoUrl,
+                    onSelectNewChatPersona: { id in model.newChatPersonaId = id },
+                    onSend: { submission in
+                        await submitFromComposer(submission, activePersona: activePersona)
+                    },
+                    onCancel: {
+                        await cancelActiveTurn()
+                    },
+                    onSetRepository: { repoUrl in
+                        await setChatRepository(repoUrl)
+                    },
+                    onCompact: { focus in
+                        await compactChat(focus: focus)
+                    },
+                    onStartWorkflow: { workflowId, input in
+                        await startChatWorkflow(workflowId: workflowId, input: input)
+                    },
+                    onStartMusic: { prompt in
+                        await startChatMusic(prompt: prompt)
+                    },
+                    onCompare: { option, question in
+                        await startCompareAside(option: option, question: question)
+                    },
+                    onStartLiveVoice: {
+                        companionOpen = false
+                        liveVoiceOpen = true
+                    },
+                    onOpenOutline: {
+                        model.inspectorTabId = ChatInspectorLogic.outlineTabId
+                        model.inspectorOpen = true
+                    },
+                    onStartTemporaryChat: {
+                        model.temporaryMode = true
+                        context.navigate("/chat?temporary=1")
+                    },
+                    prefill: model.composerPrefill,
+                    onPrefillApplied: { token in
+                        if model.composerPrefill?.token == token {
+                            model.composerPrefill = nil
+                        }
+                    },
+                    livePlanProgress: livePlanProgress,
+                    livePlanTurnKey: livePlanTurnKey
+                )
+            }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         .overlay {
@@ -341,11 +365,18 @@ struct ChatScreen: View {
                 codeReviews: codeReviews,
                 playgroundState: playgroundState,
                 canvases: canvases,
-                liveActivity: liveActivity
+                liveActivity: liveActivity,
+                wizardMode: activeWizardMode,
+                wizardStep: model.wizardStep
             ),
             initial: true
         ) { _, next in
             context.chrome = next
+        }
+        .onChange(of: activeWizardMode, initial: true) { oldMode, newMode in
+            if let newMode, (oldMode != newMode || (newMode == .harnessOnly && model.wizardStep != .connectHarness)) {
+                model.wizardStep = OnboardingLogic.initialStep(for: newMode)
+            }
         }
         .onChange(of: chatId) { oldId, newId in
             if oldId != newId {
@@ -353,7 +384,14 @@ struct ChatScreen: View {
                 applyInspectorQuery(context.match.query, canvases: canvases)
             }
         }
-        .onChange(of: context.match.query) { _, query in
+        .onChange(of: context.match.query, initial: true) { _, query in
+            if query["setup"] != nil {
+                model.wizardDismissed = false
+                model.wizardStep = .greeting
+            }
+            if let personaQuery = query["persona"], !personaQuery.isEmpty {
+                model.newChatPersonaId = personaQuery
+            }
             if chatId == nil, query["temporary"] == "1" {
                 model.temporaryMode = true
             }
@@ -977,8 +1015,18 @@ struct ChatScreen: View {
         codeReviews: [API.CodeReview],
         playgroundState: API.ChatPlaygroundState?,
         canvases: [API.ChatCanvasSummary],
-        liveActivity: ChatTurnActivity?
+        liveActivity: ChatTurnActivity?,
+        wizardMode: OnboardingLogic.WizardMode?,
+        wizardStep: OnboardingLogic.WizardStep
     ) -> NativeChrome {
+        if let wizardMode {
+            return NativeChrome(
+                title: wizardMode == .harnessOnly ? "Connect a harness" : "Welcome to Vesper",
+                inspector: nil,
+                navigator: OnboardingLogic.sidebarNavModel(mode: wizardMode, step: wizardStep),
+                areaOverride: nil
+            )
+        }
         var input = ChatNav.Input()
         input.chats = chats.map { ChatNav.ChatRow($0, pinned: model.pinnedIds.contains($0.id)) }
         input.viewedChatId = chatId
@@ -1223,6 +1271,12 @@ struct ChatScreen: View {
                 return
             default:
                 break
+            }
+            if let targetStep = OnboardingLogic.stepFromNavCommand(command) {
+                if targetStep.rawValue < model.wizardStep.rawValue {
+                    model.wizardStep = targetStep
+                }
+                return
             }
             if let spaceAction = SpacesLogic.navAction(for: command) {
                 switch spaceAction {
@@ -1781,6 +1835,7 @@ struct ChatScreen: View {
             keys.append(req.key)
         }
 
+        track(Self.bootRequest)
         track(Self.personasRequest)
         track(Self.spacesRequest)
         track(Self.modelsRequest)

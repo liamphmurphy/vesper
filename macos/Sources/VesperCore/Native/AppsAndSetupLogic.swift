@@ -249,9 +249,7 @@ public enum AppsHomeLogic {
 
 public enum LandingLogic {
     public static func needsWizard(me: API.User?) -> Bool {
-        guard let me else { return false }
-        if me.onboardedAt == nil || me.onboardedAt?.isEmpty == true { return true }
-        return me.harnessConnected == false
+        OnboardingLogic.needsWizard(me: me)
     }
 
     public static func needsProfileSetup(name: String, email: String) -> Bool {

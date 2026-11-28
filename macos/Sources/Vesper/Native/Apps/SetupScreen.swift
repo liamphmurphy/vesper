@@ -44,8 +44,15 @@ struct SetupScreen: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 24) {
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Get started with Vesper")
-                        .vesperText(.display, theme)
+                    HStack(alignment: .firstTextBaseline) {
+                        Text("Get started with Vesper")
+                            .vesperText(.display, theme)
+                        Spacer()
+                        Button("Launch Welcome Wizard") {
+                            context.navigate("/chat?new&setup")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
                     Text("Set your display name and primary email first. Agents author commits with your primary email; coding chats can use any address in your profile.")
                         .vesperText(.body, theme)
                         .foregroundStyle(p.secondaryText)
