@@ -22,10 +22,18 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     /// Called when the person triggers a selection action (Quote, Thread, Explain, Clip) on highlighted text.
     var onSelectionAction: (@MainActor (ChatSelectionAction, String) -> Void)?
     var selectionTheme: ThemeTokens = ThemeTokens(mode: .light)
+    private struct CachedHuggedSize {
+        var laidOutMaxWidth: CGFloat
+        var size: CGSize
+        var singleLine: Bool
+    }
+
     private(set) var rendering: MarkdownRendering?
+    private(set) var layoutPassCount = 0
     private var findRanges: [NSRange] = []
-    private var cachedHeight: (width: CGFloat, height: CGFloat)?
-    private var cachedHuggedSize: (maxWidth: CGFloat, size: CGSize)?
+    private var cachedHeight: (width: CGFloat, height: CGFloat, singleLineWidth: CGFloat?)?
+    private var cachedHuggedSize: CachedHuggedSize?
+    private var appliedTabStopWidth: CGFloat?
     private var renderVersion: UInt64 = 0
     private var lastFind: (version: UInt64, query: String, caseSensitive: Bool, isCurrent: Bool)?
 
@@ -57,11 +65,12 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
 
-    func show(_ rendering: MarkdownRendering) {
+    func show(_ rendering: MarkdownRendering, renderedWidth: CGFloat? = nil) {
         self.rendering = rendering
         renderVersion &+= 1
         cachedHeight = nil
         cachedHuggedSize = nil
+        appliedTabStopWidth = renderedWidth?.rounded()
         lastFind = nil
         textStorage?.setAttributedString(rendering.text)
         if !findRanges.isEmpty {
@@ -69,30 +78,88 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
         }
     }
 
-    /// The height the text needs at `width`. Cached per rounded width and invalidated by `show(_:)`
-    /// so repeated SwiftUI `sizeThatFits` probes across a long transcript don't force TextKit 2
-    /// full-document layout on every pass.
+    /// Updates width-dependent right-aligned tab stops (e.g. chat code-fence "Copy" headers)
+    /// in place without rebuilding `NSAttributedString` or replacing `textStorage`.
+    func updateRightTabStops(forWidth width: CGFloat) {
+        guard let stops = rendering?.rightTabStops, !stops.isEmpty, let storage = textStorage else { return }
+        let rounded = width.rounded()
+        guard appliedTabStopWidth != rounded else { return }
+        appliedTabStopWidth = rounded
+        let totalLength = storage.length
+        storage.beginEditing()
+        for stop in stops {
+            guard stop.range.location >= 0,
+                  stop.range.location + stop.range.length <= totalLength,
+                  stop.range.length > 0 else { continue }
+            let existing = storage.attribute(.paragraphStyle, at: stop.range.location, effectiveRange: nil) as? NSParagraphStyle
+            let updated = (existing?.mutableCopy() as? NSMutableParagraphStyle) ?? NSMutableParagraphStyle()
+            updated.tabStops = [NSTextTab(textAlignment: .right, location: max(stop.minLocation, width - stop.trailingInset))]
+            storage.addAttribute(.paragraphStyle, value: updated, range: stop.range)
+        }
+        storage.endEditing()
+        cachedHeight = nil
+        cachedHuggedSize = nil
+    }
+
+    /// The height the text needs at `width`. Cached per rounded width (and across wider widths for
+    /// single-line paragraphs without trailing tab stops) and invalidated by `show(_:)` so repeated
+    /// SwiftUI `sizeThatFits` probes and split-view resizes skip redundant TextKit 2 full-document layouts.
     func fittingHeight(width: CGFloat) -> CGFloat {
         let rounded = width.rounded()
-        if let cached = cachedHeight, cached.width == rounded {
-            return cached.height
+        if let cached = cachedHeight {
+            if cached.width == rounded {
+                return cached.height
+            }
+            if let minWidth = cached.singleLineWidth, rounded >= minWidth {
+                return cached.height
+            }
         }
         guard let layoutManager = textLayoutManager, let container = textContainer else { return 0 }
         if abs(container.size.width - width) > 0.5 {
             container.size = CGSize(width: width, height: CGFloat.greatestFiniteMagnitude)
         }
         layoutManager.ensureLayout(for: layoutManager.documentRange)
+        layoutPassCount &+= 1
         let height = ceil(layoutManager.usageBoundsForTextContainer.height)
-        cachedHeight = (rounded, height)
+        var singleLineWidth: CGFloat?
+        if rendering?.rightTabStops.isEmpty ?? true {
+            var lineCount = 0
+            var maxX: CGFloat = 0
+            layoutManager.enumerateTextLayoutFragments(
+                from: layoutManager.documentRange.location,
+                options: []
+            ) { fragment in
+                for line in fragment.textLineFragments {
+                    lineCount += 1
+                    maxX = max(maxX, line.typographicBounds.maxX)
+                    if lineCount > 1 { return false }
+                }
+                return true
+            }
+            if lineCount <= 1, maxX > 0 {
+                singleLineWidth = ceil(maxX) + 2
+            }
+        }
+        cachedHeight = (rounded, height, singleLineWidth)
         return height
     }
 
     /// Natural text bounds up to `maxWidth`: lets short user chat bubbles hug their text width
-    /// instead of stretching to the maximum bubble column width.
+    /// instead of stretching to the maximum bubble column width. Reuses the cached measurement
+    /// when SwiftUI re-probes at the hugged width (or any width between natural width and the
+    /// laid-out max width) to avoid double-probe relayout thrash.
     func fittingSize(maxWidth: CGFloat) -> CGSize {
         let rounded = maxWidth.rounded()
-        if let cached = cachedHuggedSize, cached.maxWidth == rounded {
-            return cached.size
+        if let cached = cachedHuggedSize {
+            if cached.laidOutMaxWidth == rounded {
+                return cached.size
+            }
+            if cached.singleLine && rounded >= cached.size.width {
+                return cached.size
+            }
+            if !cached.singleLine && rounded >= cached.size.width && rounded <= cached.laidOutMaxWidth {
+                return cached.size
+            }
         }
         guard let layoutManager = textLayoutManager, let container = textContainer else {
             return CGSize(width: maxWidth, height: 0)
@@ -101,20 +168,27 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
             container.size = CGSize(width: maxWidth, height: CGFloat.greatestFiniteMagnitude)
         }
         layoutManager.ensureLayout(for: layoutManager.documentRange)
+        layoutPassCount &+= 1
         let height = ceil(layoutManager.usageBoundsForTextContainer.height)
         var widest: CGFloat = 0
+        var lineCount = 0
         layoutManager.enumerateTextLayoutFragments(
             from: layoutManager.documentRange.location,
             options: [.ensuresLayout]
         ) { fragment in
             for line in fragment.textLineFragments {
+                lineCount += 1
                 widest = max(widest, line.typographicBounds.maxX)
             }
             return true
         }
         let naturalWidth = widest > 0 ? min(maxWidth, ceil(widest) + 2) : maxWidth
         let size = CGSize(width: naturalWidth, height: height)
-        cachedHuggedSize = (rounded, size)
+        cachedHuggedSize = CachedHuggedSize(
+            laidOutMaxWidth: rounded,
+            size: size,
+            singleLine: lineCount <= 1
+        )
         return size
     }
 
@@ -311,6 +385,7 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
             if decoration != nil || hasInlineCode {
                 let fragment = MarkdownLayoutFragment(textElement: textElement, range: textElement.elementRange)
                 fragment.decoration = decoration
+                fragment.hasInlineCode = hasInlineCode
                 return fragment
             }
         }
@@ -323,6 +398,21 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
 /// reads as one shape.
 final class MarkdownLayoutFragment: NSTextLayoutFragment {
     var decoration: MarkdownDecoration?
+    var hasInlineCode = true
+
+    private struct CachedInlineCodePills {
+        var fragmentSize: CGSize
+        var lineCount: Int
+        var specs: [(rect: CGRect, style: MarkdownInlineCodeStyle)]
+    }
+
+    private var cachedPills: CachedInlineCodePills?
+    private(set) var inlineCodePillComputationCount = 0
+
+    override func invalidateLayout() {
+        cachedPills = nil
+        super.invalidateLayout()
+    }
 
     private var containerWidth: CGFloat {
         textLayoutManager?.textContainer?.size.width ?? layoutFragmentFrame.width
@@ -335,12 +425,34 @@ final class MarkdownLayoutFragment: NSTextLayoutFragment {
 
     override func draw(at point: CGPoint, in context: CGContext) {
         if let decoration { draw(decoration, at: point, in: context) }
-        drawInlineCodePills(at: point, in: context)
+        if hasInlineCode { drawInlineCodePills(at: point, in: context) }
         super.draw(at: point, in: context)
     }
 
-    /// Computes rounded pill frames for every `.markdownInlineCode` span inside this paragraph.
+    /// Computes (and caches per fragment layout size) rounded pill frames for every `.markdownInlineCode`
+    /// span inside this paragraph.
     func inlineCodePillSpecs(at point: CGPoint) -> [(rect: CGRect, style: MarkdownInlineCodeStyle)] {
+        let local = cachedLocalInlineCodePillSpecs()
+        guard point != .zero else { return local }
+        return local.map { ($0.rect.offsetBy(dx: point.x, dy: point.y), $0.style) }
+    }
+
+    private func cachedLocalInlineCodePillSpecs() -> [(rect: CGRect, style: MarkdownInlineCodeStyle)] {
+        guard hasInlineCode else { return [] }
+        let size = layoutFragmentFrame.size
+        let lineCount = textLineFragments.count
+        if let cached = cachedPills,
+           cached.fragmentSize == size,
+           cached.lineCount == lineCount {
+            return cached.specs
+        }
+        inlineCodePillComputationCount &+= 1
+        let specs = computeLocalInlineCodePillSpecs()
+        cachedPills = CachedInlineCodePills(fragmentSize: size, lineCount: lineCount, specs: specs)
+        return specs
+    }
+
+    private func computeLocalInlineCodePillSpecs() -> [(rect: CGRect, style: MarkdownInlineCodeStyle)] {
         guard let paragraph = textElement as? NSTextParagraph else { return [] }
         let attr = paragraph.attributedString
         guard attr.length > 0 else { return [] }
@@ -369,8 +481,8 @@ final class MarkdownLayoutFragment: NSTextLayoutFragment {
                 let lineOrigin = line.typographicBounds.origin
                 let lineHeight = line.typographicBounds.height
                 let rect = CGRect(
-                    x: point.x + lineOrigin.x + minX - 2.5,
-                    y: point.y + lineOrigin.y + 0.5,
+                    x: lineOrigin.x + minX - 2.5,
+                    y: lineOrigin.y + 0.5,
                     width: (maxX - minX) + 5.0,
                     height: max(4, lineHeight - 1.0)
                 )
@@ -381,10 +493,13 @@ final class MarkdownLayoutFragment: NSTextLayoutFragment {
     }
 
     private func drawInlineCodePills(at point: CGPoint, in context: CGContext) {
-        let specs = inlineCodePillSpecs(at: point)
+        let specs = cachedLocalInlineCodePillSpecs()
         guard !specs.isEmpty else { return }
         context.saveGState()
         defer { context.restoreGState() }
+        if point != .zero {
+            context.translateBy(x: point.x, y: point.y)
+        }
         for (rect, style) in specs {
             let radius = min(4.0, rect.height * 0.45)
             let fillPath = CGPath(roundedRect: rect, cornerWidth: radius, cornerHeight: radius, transform: nil)

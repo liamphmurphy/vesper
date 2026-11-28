@@ -189,6 +189,33 @@ extension MarkdownDocument {
         }
         return out
     }
+
+    /// Whether `MarkdownRenderer.render` produces width-dependent attributed text that cannot be
+    /// adjusted in-place via code-header tab stops alone (tables, loaded images, or loaded display math).
+    /// Plain prose, headings, lists, blockquotes, inline code, links, footnotes, and code blocks
+    /// produce identical attributed text across container widths so split-view/window resizes do not
+    /// need to rebuild `NSAttributedString` or replace TextKit storage.
+    public func requiresRerenderOnWidthChange(
+        loadedImageURLs: Set<String>,
+        loadedDisplayMath: Set<String>
+    ) -> Bool {
+        for block in allBlocks {
+            switch block {
+            case .table:
+                return true
+            case .math(let tex):
+                if loadedDisplayMath.contains(tex) { return true }
+            default:
+                break
+            }
+        }
+        if !loadedImageURLs.isEmpty {
+            for case .image(let url, _, _) in allInlines {
+                if loadedImageURLs.contains(url) { return true }
+            }
+        }
+        return false
+    }
 }
 
 // MARK: - Snapshots

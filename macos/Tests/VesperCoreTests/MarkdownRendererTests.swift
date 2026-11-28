@@ -85,6 +85,9 @@ final class MarkdownRendererTests: XCTestCase {
         XCTAssertEqual(MarkdownParser.parse("```go\nfunc main() {}\n```").codeBlocks, [MarkdownCodeBlock(code: "func main() {}", language: "go")])
         XCTAssertTrue(plain.text.string.hasPrefix("go\tCopy\n"))
         XCTAssertEqual((attribute(.link, of: "Copy", in: plain) as? URL).flatMap(MarkdownLinkTarget.init(url:)), .copyCode(0))
+        XCTAssertEqual(plain.rightTabStops.count, 1)
+        XCTAssertEqual(plain.rightTabStops[0].minLocation, 60)
+        XCTAssertEqual(plain.rightTabStops[0].trailingInset, 12)
 
         options.highlights = [0: [[CodeToken(content: "func", light: "#D73A49", dark: "#F97583"), CodeToken(content: " main() {}", light: "#24292E", dark: "#E1E4E8")]]]
         let colored = render("```go\nfunc main() {}\n```", options: options)
@@ -92,6 +95,37 @@ final class MarkdownRendererTests: XCTestCase {
         let expected = try XCTUnwrap(RGBA(hex: CodePalette.light.series[7]))
         XCTAssertEqual(keyword.redComponent, expected.red, accuracy: 0.01)
         XCTAssertEqual(keyword.blueComponent, expected.blue, accuracy: 0.01)
+    }
+
+    func testRequiresRerenderOnWidthChangeOnlyForTablesLoadedImagesAndLoadedDisplayMath() {
+        let proseAndCode = MarkdownParser.parse(
+            """
+            # Heading
+
+            Some prose with `inlineCode`, **bold**, and a list:
+            - First item
+            - Second item
+
+            ```swift
+            let x = 1
+            ```
+            """,
+            chat: true
+        )
+        XCTAssertFalse(proseAndCode.requiresRerenderOnWidthChange(loadedImageURLs: [], loadedDisplayMath: []))
+        XCTAssertTrue(render("Plain prose paragraph.").rightTabStops.isEmpty)
+
+        let tableDoc = MarkdownParser.parse("| A | B |\n| --- | --- |\n| 1 | 2 |", chat: true)
+        XCTAssertTrue(tableDoc.requiresRerenderOnWidthChange(loadedImageURLs: [], loadedDisplayMath: []))
+
+        let imageDoc = MarkdownParser.parse("Look ![chart](https://example.com/chart.png)", chat: true)
+        XCTAssertFalse(imageDoc.requiresRerenderOnWidthChange(loadedImageURLs: [], loadedDisplayMath: []))
+        XCTAssertFalse(imageDoc.requiresRerenderOnWidthChange(loadedImageURLs: ["https://example.com/other.png"], loadedDisplayMath: []))
+        XCTAssertTrue(imageDoc.requiresRerenderOnWidthChange(loadedImageURLs: ["https://example.com/chart.png"], loadedDisplayMath: []))
+
+        let mathDoc = MarkdownParser.parse("$$\nE = mc^2\n$$", chat: true)
+        XCTAssertFalse(mathDoc.requiresRerenderOnWidthChange(loadedImageURLs: [], loadedDisplayMath: []))
+        XCTAssertTrue(mathDoc.requiresRerenderOnWidthChange(loadedImageURLs: [], loadedDisplayMath: ["E = mc^2"]))
     }
 
     func testLongChatCodeFoldsAfterTwentyLines() {

@@ -32,13 +32,22 @@ public enum AnimationPolicy {
         working ? (1.0 / 24.0) : (1.0 / 10.0)
     }
 
-    /// Periodic tick interval for `ActivitySceneView` (60 fps normally, 30 fps in Low Power Mode).
+    /// Nominal target frame interval for `ActivitySceneView` (60 fps normally, 30 fps in Low Power Mode).
     public static func activitySceneTickInterval(lowPowerMode: Bool = false) -> TimeInterval {
         lowPowerMode ? (1.0 / 30.0) : (1.0 / 60.0)
     }
 
-    /// Default periodic tick interval for `ActivitySceneView` (60 fps).
+    /// Default nominal frame interval for `ActivitySceneView` (60 fps).
     public static let activitySceneTickInterval: TimeInterval = 1.0 / 60.0
+
+    /// Display-link `minimumInterval` for `TimelineView(.animation(minimumInterval:))` in `ActivitySceneView`.
+    ///
+    /// Subtracting a 10% VSync jitter margin (15ms for 60fps, 30ms for 30fps) keeps display-synced ticks
+    /// locked to every VSync on 60Hz panels and every 2nd/4th VSync on 120Hz ProMotion panels instead of
+    /// dropping to 30/40fps when a refresh arrives a fraction of a millisecond early.
+    public static func activitySceneDisplayLinkMinimumInterval(lowPowerMode: Bool = false) -> TimeInterval {
+        activitySceneTickInterval(lowPowerMode: lowPowerMode) * 0.9
+    }
 
     /// Whether an animation should tick in the given visibility and power context.
     public static func shouldAnimate(working: Bool, context: Context) -> Bool {

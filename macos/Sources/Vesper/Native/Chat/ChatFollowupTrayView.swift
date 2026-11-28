@@ -90,8 +90,10 @@ struct ChatFollowupTrayView: View {
                 .padding(.bottom, 7)
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .background(p.surface.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            theme.swiftUIColor("surface-raised", fallback: p.surface),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
         .overlay(
             RoundedRectangle(cornerRadius: 10)
                 .stroke(tintColor.opacity(isHeld ? 0.35 : 0.28))

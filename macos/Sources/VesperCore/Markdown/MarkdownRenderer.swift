@@ -57,6 +57,20 @@ public struct MarkdownMathImage {
     }
 }
 
+/// A paragraph whose single right-aligned trailing tab stop (such as a chat code-fence header's
+/// "Copy" link) tracks container width so resizes update it in-place without rebuilding the document.
+public struct MarkdownRightTabStop: Equatable, Sendable {
+    public var range: NSRange
+    public var minLocation: CGFloat
+    public var trailingInset: CGFloat
+
+    public init(range: NSRange, minLocation: CGFloat, trailingInset: CGFloat) {
+        self.range = range
+        self.minLocation = minLocation
+        self.trailingInset = trailingInset
+    }
+}
+
 /// Rendered markdown, with where its anchors and footnotes start.
 public struct MarkdownRendering {
     public var text: NSAttributedString
@@ -64,6 +78,22 @@ public struct MarkdownRendering {
     public var anchors: [String: Int]
     public var footnotes: [Int: Int]
     public var footnoteReferences: [Int: Int]
+    /// Paragraphs whose right-aligned tab stop should track container width on resize.
+    public var rightTabStops: [MarkdownRightTabStop]
+
+    public init(
+        text: NSAttributedString,
+        anchors: [String: Int],
+        footnotes: [Int: Int],
+        footnoteReferences: [Int: Int],
+        rightTabStops: [MarkdownRightTabStop] = []
+    ) {
+        self.text = text
+        self.anchors = anchors
+        self.footnotes = footnotes
+        self.footnoteReferences = footnoteReferences
+        self.rightTabStops = rightTabStops
+    }
 }
 
 extension NSAttributedString.Key {
@@ -181,6 +211,7 @@ private struct Builder {
         var quotes: [Int]
         var box: MarkdownDecoration.Box?
         var rule: (left: CGFloat, color: NSColor)?
+        var rightTabStop: (minLocation: CGFloat, trailingInset: CGFloat)? = nil
     }
 
     let theme: ThemeTokens
@@ -368,7 +399,13 @@ private struct Builder {
         headerStyle.headIndent = context.indent + 12
         headerStyle.tabStops = [NSTextTab(textAlignment: .right, location: max(context.indent + 60, options.width - 12))]
         headerStyle.paragraphSpacing = 4
-        paragraphs.append(Paragraph(text: header, style: headerStyle, quotes: context.quotes, box: fenceBox(context, first: true, last: false, padTop: 4, padBottom: 4, lineBelow: rowBorder)))
+        paragraphs.append(Paragraph(
+            text: header,
+            style: headerStyle,
+            quotes: context.quotes,
+            box: fenceBox(context, first: true, last: false, padTop: 4, padBottom: 4, lineBelow: rowBorder),
+            rightTabStop: (minLocation: context.indent + 60, trailingInset: 12)
+        ))
 
         // Body: `p-3 font-mono text-12 leading-relaxed`, `text-fg`, tokens in the palette's colours.
         let body = NSMutableAttributedString()
@@ -666,8 +703,10 @@ private struct Builder {
         }
         let out = NSMutableAttributedString()
         var starts: [Int] = []
+        var rightTabStops: [MarkdownRightTabStop] = []
         for (i, p) in paragraphs.enumerated() {
-            starts.append(out.length)
+            let start = out.length
+            starts.append(start)
             let text = p.text
             if i < paragraphs.count - 1 { text.append(NSAttributedString(string: "\n", attributes: text.length > 0 ? text.attributes(at: text.length - 1, effectiveRange: nil) : [:])) }
             let range = NSRange(location: 0, length: text.length)
@@ -679,6 +718,13 @@ private struct Builder {
             if p.box != nil || !bars.isEmpty || p.rule != nil {
                 text.addAttribute(.markdownDecoration, value: MarkdownDecoration(box: p.box, quoteBars: bars, rule: p.rule), range: range)
             }
+            if let tab = p.rightTabStop {
+                rightTabStops.append(MarkdownRightTabStop(
+                    range: NSRange(location: start, length: text.length),
+                    minLocation: tab.minLocation,
+                    trailingInset: tab.trailingInset
+                ))
+            }
             out.append(text)
         }
         let location = { (paragraph: Int) in paragraph < starts.count ? starts[paragraph] : out.length }
@@ -686,7 +732,8 @@ private struct Builder {
             text: out,
             anchors: anchorParagraphs.mapValues(location),
             footnotes: footnoteParagraphs.mapValues(location),
-            footnoteReferences: footnoteReferenceParagraphs.mapValues(location)
+            footnoteReferences: footnoteReferenceParagraphs.mapValues(location),
+            rightTabStops: rightTabStops
         )
     }
 }

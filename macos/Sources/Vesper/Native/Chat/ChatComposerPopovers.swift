@@ -94,10 +94,13 @@ struct ChatComposerCompletionPopover: View {
                 }
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .background(p.surface.opacity(0.75), in: RoundedRectangle(cornerRadius: 10))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .background {
+            RoundedRectangle(cornerRadius: 10)
+                .fill(theme.swiftUIColor("surface-raised", fallback: p.surface))
+                .shadow(color: Color.black.opacity(0.14), radius: 10, y: 4)
+        }
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(p.border))
-        .shadow(color: Color.black.opacity(0.14), radius: 10, y: 4)
     }
 }
 
@@ -210,8 +213,10 @@ struct ChatPinnedPlanChecklistBar: View {
                 .frame(height: listHeight)
             }
         }
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 10))
-        .background(p.surface.opacity(0.65), in: RoundedRectangle(cornerRadius: 10))
+        .background(
+            theme.swiftUIColor("surface-raised", fallback: p.surface),
+            in: RoundedRectangle(cornerRadius: 10)
+        )
         .overlay(RoundedRectangle(cornerRadius: 10).stroke(progress.failed > 0 ? failedColor.opacity(0.4) : p.border))
         .onChange(of: turnKey) { _, _ in
             isExpanded = false
