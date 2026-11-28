@@ -30,6 +30,9 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
 
     private(set) var rendering: MarkdownRendering?
     private(set) var layoutPassCount = 0
+    private(set) var deferredReflowCount = 0
+    var onDeferredReflowSettle: (() -> Void)?
+    private var deferredReflowActive = false
     private var findRanges: [NSRange] = []
     private var cachedHeight: (width: CGFloat, height: CGFloat, singleLineWidth: CGFloat?)?
     private var cachedHuggedSize: CachedHuggedSize?
@@ -64,6 +67,47 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
 
     @available(*, unavailable)
     required init?(coder: NSCoder) { fatalError("not used") }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if window == nil && deferredReflowActive {
+            deferredReflowActive = false
+            textContainer?.widthTracksTextView = true
+            clipsToBounds = false
+        }
+    }
+
+    var isDeferringSplitReflow: Bool {
+        SplitAnimationCoordinator.shared.isAnimating(window: window)
+    }
+
+    /// Freezes TextKit 2 container tracking while a split-view animation is sliding so intermediate
+    /// pixel ticks never run synchronous `ensureLayout` passes, then reflows once on settle.
+    func noteDeferredWidthChange() {
+        guard isDeferringSplitReflow else { return }
+        if !deferredReflowActive {
+            deferredReflowActive = true
+            textContainer?.widthTracksTextView = false
+            clipsToBounds = true
+        }
+        SplitAnimationCoordinator.shared.registerSettleHandler(for: window, owner: self) { [weak self] in
+            self?.finishDeferredReflow()
+        }
+    }
+
+    private func finishDeferredReflow() {
+        guard deferredReflowActive else { return }
+        deferredReflowActive = false
+        deferredReflowCount &+= 1
+        textContainer?.widthTracksTextView = true
+        clipsToBounds = false
+        cachedHeight = nil
+        cachedHuggedSize = nil
+        onDeferredReflowSettle?()
+        invalidateIntrinsicContentSize()
+        needsLayout = true
+        needsDisplay = true
+    }
 
     func show(_ rendering: MarkdownRendering, renderedWidth: CGFloat? = nil) {
         self.rendering = rendering
@@ -113,6 +157,10 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
             if let minWidth = cached.singleLineWidth, rounded >= minWidth {
                 return cached.height
             }
+            if isDeferringSplitReflow {
+                noteDeferredWidthChange()
+                return cached.height
+            }
         }
         guard let layoutManager = textLayoutManager, let container = textContainer else { return 0 }
         if abs(container.size.width - width) > 0.5 {
@@ -159,6 +207,10 @@ final class MarkdownTextView: NSTextView, NSTextViewDelegate, NSTextLayoutManage
             }
             if !cached.singleLine && rounded >= cached.size.width && rounded <= cached.laidOutMaxWidth {
                 return cached.size
+            }
+            if isDeferringSplitReflow {
+                noteDeferredWidthChange()
+                return CGSize(width: min(cached.size.width, maxWidth), height: cached.size.height)
             }
         }
         guard let layoutManager = textLayoutManager, let container = textContainer else {
