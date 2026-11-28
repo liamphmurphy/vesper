@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 import VesperCore
 
@@ -42,6 +43,8 @@ final class ChatScreenModel {
     var forceShowCode = false
     var startingPlayground = false
     var scrollToMessageRequest: ChatScrollMessageRequest?
+    var focusedTurnMessageId: String?
+    var contextPopoverToken = 0
     var replyVariants = ChatReplyVariantStore()
     @ObservationIgnored var scrollToken = 0
     var theme: ThemeTokens = ThemeTokens(mode: .light)
@@ -56,6 +59,7 @@ final class ChatScreenModel {
         forceShowCode = false
         startingPlayground = false
         scrollToMessageRequest = nil
+        focusedTurnMessageId = nil
     }
 
     init() {
@@ -86,6 +90,7 @@ struct ChatScreen: View {
     @State private var liveVoiceOpen = false
     @State private var messageReader = ChatMessageReader()
     @State private var lastDockFetch = Date()
+    @State private var keyMonitor: Any?
 
     private static let personasRequest = API.listPersonas()
     private static let spacesRequest = API.listChatSpaces()
@@ -416,10 +421,12 @@ struct ChatScreen: View {
             applyInspectorQuery(context.match.query, canvases: canvases)
             installCommandHandler()
             installInspectorView()
+            installKeyboardMonitor()
         }
         .onChange(of: theme) { _, next in model.theme = next }
         .onChange(of: colorScheme) { _, next in model.colorScheme = next }
         .onDisappear {
+            removeKeyboardMonitor()
             messageReader.stop()
             ChatSelectionPopoverPresenter.shared.dismiss()
             context.inspectorView = nil
@@ -726,6 +733,7 @@ struct ChatScreen: View {
                     session: session,
                     messages: messages,
                     pinnedCount: pinnedCount,
+                    openRequestToken: model.contextPopoverToken,
                     onCompact: { focus in await compactChat(focus: focus) }
                 )
             }
@@ -751,6 +759,10 @@ struct ChatScreen: View {
             .accessibilityLabel(showLiveThinking ? "Hide live thinking" : "Show live thinking")
 
             modelMenu(session: session, harnessModels: harnessModels)
+
+            if let session, !messages.isEmpty {
+                exportChatMenu(session: session, activePersona: activePersona, messages: messages)
+            }
 
             Button {
                 context.navigate("/chat")
@@ -1563,6 +1575,190 @@ struct ChatScreen: View {
             API.markChatRead(id: chatId, body: API.MarkChatReadBody(seq: session.messageCount)),
             invalidating: QueryInvalidation(resources: ["chats"])
         )
+    }
+
+    // MARK: - Full-Chat Export & Keyboard Shortcuts
+
+    private func exportChatMenu(
+        session: API.ChatSession,
+        activePersona: API.Persona?,
+        messages: [API.ChatMessage]
+    ) -> some View {
+        let p = theme.palette
+        return Menu {
+            Button("Export Markdown…") {
+                runChatExport(session: session, messages: messages, mode: .markdown(includeTraces: false))
+            }
+            Button("Export Markdown (with tool traces)…") {
+                runChatExport(session: session, messages: messages, mode: .markdown(includeTraces: true))
+            }
+            Button("Export PDF…") {
+                runChatExport(session: session, messages: messages, mode: .pdf)
+            }
+            Divider()
+            Button("Save Transcript to Knowledge…") {
+                let md = ChatExportLogic.exportMarkdown(session: session, messages: messages, includeToolTraces: false)
+                if let anchor = messages.last {
+                    model.saveWikiBodyOverride = md
+                    model.saveWikiTarget = anchor
+                }
+            }
+            Button("Summarize & Save to Knowledge") {
+                let prompt = ChatExportLogic.summarizeToKnowledgePrompt(chatTitle: session.title)
+                Task { _ = await sendMessage(prompt, activePersona: activePersona) }
+            }
+            .disabled(session.state == .running)
+            Divider()
+            Menu("Keyboard Shortcuts") {
+                Text("⌥↑ / ⌥↓ — Jump between turns")
+                Text("⌘⇧C — Copy last reply")
+                Text("⌘⇧O — Toggle Outline")
+                Text("⌘⇧K — Open Context / Compact")
+                Text("⌘⇧L — Toggle Live Voice")
+            }
+        } label: {
+            Image(systemName: "square.and.arrow.up")
+                .imageScale(.small)
+                .foregroundStyle(p.secondaryText)
+                .padding(.horizontal, 7)
+                .padding(.vertical, 5)
+                .background(p.surface, in: RoundedRectangle(cornerRadius: 6))
+                .overlay(RoundedRectangle(cornerRadius: 6).stroke(p.border))
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .fixedSize()
+        .help("Export chat or save to Knowledge")
+    }
+
+    private enum ChatExportMode {
+        case markdown(includeTraces: Bool)
+        case pdf
+    }
+
+    private func runChatExport(session: API.ChatSession, messages: [API.ChatMessage], mode: ChatExportMode) {
+        let store = context.store
+        Task { @MainActor in
+            var eventsByRunId: [String: [API.RunEvent]] = [:]
+            if case .markdown(true) = mode {
+                let runIds = Set(messages.compactMap(\.runId).filter { !$0.isEmpty })
+                for runId in runIds {
+                    if let cached = store.entry(API.listRunEvents(id: runId)).data?.events {
+                        eventsByRunId[runId] = cached
+                    } else if let fetched = (await store.refetch(API.listRunEvents(id: runId))).data?.events {
+                        eventsByRunId[runId] = fetched
+                    }
+                }
+            }
+            do {
+                let url: URL?
+                switch mode {
+                case .markdown(let includeTraces):
+                    url = try ChatExportHelper.exportMarkdown(
+                        session: session,
+                        messages: messages,
+                        eventsByRunId: eventsByRunId,
+                        includeToolTraces: includeTraces
+                    )
+                case .pdf:
+                    url = try ChatExportHelper.exportPDF(
+                        session: session,
+                        messages: messages,
+                        eventsByRunId: eventsByRunId
+                    )
+                }
+                if let url {
+                    context.showToast(ToastItemModel(id: "chat.export.ok", title: "Exported \(url.lastPathComponent)", tone: .success))
+                }
+            } catch {
+                context.showToast(ToastItemModel(id: "chat.export.err", title: error.localizedDescription, tone: .error))
+            }
+        }
+    }
+
+    private func installKeyboardMonitor() {
+        removeKeyboardMonitor()
+        keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
+            guard context.isActiveTab,
+                  let window = context.window()?.window,
+                  event.window === window,
+                  window.isKeyWindow,
+                  window.attachedSheet == nil,
+                  model.renameTargetId == nil,
+                  model.forkTarget == nil,
+                  model.saveWikiTarget == nil,
+                  model.saveTemplateBody == nil else {
+                return event
+            }
+            let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+            guard let action = ChatKeyboardNavLogic.resolveAction(
+                keyCode: event.keyCode,
+                charactersIgnoringModifiers: event.charactersIgnoringModifiers,
+                command: flags.contains(.command),
+                shift: flags.contains(.shift),
+                option: flags.contains(.option),
+                control: flags.contains(.control)
+            ) else {
+                return event
+            }
+
+            let messages = messagesRequest.flatMap { context.store.entry($0).data?.messages } ?? []
+
+            switch action {
+            case .jumpPreviousTurn, .jumpNextTurn:
+                // Let Option+Up/Down move by paragraph when actively editing non-empty text.
+                if let tv = window.firstResponder as? NSTextView, tv.isEditable, !tv.string.isEmpty {
+                    return event
+                }
+                let dir = action == .jumpPreviousTurn ? -1 : 1
+                guard let targetId = ChatKeyboardNavLogic.stepTurnMessageId(
+                    messages: messages,
+                    currentId: model.focusedTurnMessageId,
+                    direction: dir
+                ) else {
+                    return event
+                }
+                model.focusedTurnMessageId = targetId
+                model.scrollToken += 1
+                model.scrollToMessageRequest = ChatScrollMessageRequest(token: model.scrollToken, messageId: targetId)
+                return nil
+
+            case .copyLastReply:
+                guard let reply = ChatKeyboardNavLogic.lastAssistantReplyBody(in: messages) else {
+                    return event
+                }
+                context.copyToClipboard(reply)
+                context.showToast(ToastItemModel(id: "chat.shortcut.copy", title: "Copied last reply", tone: .success))
+                return nil
+
+            case .toggleOutline:
+                guard chatId != nil else { return event }
+                if model.inspectorOpen && model.inspectorTabId == ChatInspectorLogic.outlineTabId {
+                    model.inspectorOpen = false
+                } else {
+                    model.inspectorTabId = ChatInspectorLogic.outlineTabId
+                    model.inspectorOpen = true
+                }
+                return nil
+
+            case .openContextCompact:
+                guard chatId != nil else { return event }
+                model.contextPopoverToken += 1
+                return nil
+
+            case .toggleLiveVoice:
+                companionOpen = false
+                liveVoiceOpen.toggle()
+                return nil
+            }
+        }
+    }
+
+    private func removeKeyboardMonitor() {
+        if let keyMonitor {
+            NSEvent.removeMonitor(keyMonitor)
+            self.keyMonitor = nil
+        }
     }
 
     // MARK: - Observation

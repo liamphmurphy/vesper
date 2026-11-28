@@ -10,6 +10,7 @@ struct ChatContextMeterView: View {
     let session: API.ChatSession
     var messages: [API.ChatMessage] = []
     let pinnedCount: Int
+    var openRequestToken: Int = 0
     let onCompact: @MainActor (String?) async -> String?
 
     @State private var open = false
@@ -54,7 +55,10 @@ struct ChatContextMeterView: View {
             .overlay(Capsule().stroke(state.tone == .neutral ? p.border : barColor.opacity(0.5)))
         }
         .buttonStyle(.plain)
-        .help("Context window: \(state.label)")
+        .help("Context window: \(state.label) (⌘⇧K)")
+        .onChange(of: openRequestToken) { _, newValue in
+            if newValue > 0 { open.toggle() }
+        }
         .popover(isPresented: $open, arrowEdge: .bottom) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack {
