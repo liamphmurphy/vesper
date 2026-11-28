@@ -43,31 +43,39 @@ final class AnimationPolicyTests: XCTestCase {
         ))
     }
 
-    func testPeriodicIntervalsAreCappedAndSlowerWhenIdle() {
-        XCTAssertEqual(AnimationPolicy.harnessTickInterval(working: true), 1.0 / 24.0, accuracy: 1e-6)
-        XCTAssertEqual(AnimationPolicy.harnessTickInterval(working: false), 1.0 / 10.0, accuracy: 1e-6)
-        XCTAssertGreaterThan(
-            AnimationPolicy.harnessTickInterval(working: false),
-            AnimationPolicy.harnessTickInterval(working: true)
-        )
-        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval, 1.0 / 60.0, accuracy: 1e-6)
-        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval(lowPowerMode: false), 1.0 / 60.0, accuracy: 1e-6)
-        XCTAssertEqual(AnimationPolicy.activitySceneTickInterval(lowPowerMode: true), 1.0 / 30.0, accuracy: 1e-6)
-        XCTAssertGreaterThan(
-            AnimationPolicy.activitySceneTickInterval(lowPowerMode: true),
-            AnimationPolicy.activitySceneTickInterval(lowPowerMode: false)
-        )
+    func testDisplayLinkFrameRateTargetsProMotionAndClampsForExternalPanelsAndLowPower() {
+        let working = AnimationPolicy.displayLinkFrameRate(working: true, lowPowerMode: false)
+        XCTAssertEqual(working.minimum, 80)
+        XCTAssertEqual(working.maximum, 120)
+        XCTAssertEqual(working.preferred, 120)
 
-        // Display-link minimumInterval leaves a 10% VSync jitter margin so 60Hz/120Hz ProMotion panels
-        // lock cleanly to every 2nd VSync (60fps) or 4th VSync (30fps) instead of dropping frames.
-        let normalMin = AnimationPolicy.activitySceneDisplayLinkMinimumInterval(lowPowerMode: false)
-        XCTAssertGreaterThan(normalMin, 1.0 / 120.0)
-        XCTAssertLessThan(normalMin, 1.0 / 60.0)
-        XCTAssertEqual(normalMin, 0.015, accuracy: 1e-6)
+        let idle = AnimationPolicy.displayLinkFrameRate(working: false, lowPowerMode: false)
+        XCTAssertEqual(idle.minimum, 60)
+        XCTAssertEqual(idle.maximum, 120)
+        XCTAssertEqual(idle.preferred, 120)
 
-        let lowPowerMin = AnimationPolicy.activitySceneDisplayLinkMinimumInterval(lowPowerMode: true)
-        XCTAssertGreaterThan(lowPowerMin, 3.0 / 120.0)
-        XCTAssertLessThan(lowPowerMin, 1.0 / 30.0)
-        XCTAssertEqual(lowPowerMin, 0.030, accuracy: 1e-6)
+        let lowPowerWorking = AnimationPolicy.displayLinkFrameRate(working: true, lowPowerMode: true)
+        XCTAssertEqual(lowPowerWorking.minimum, 30)
+        XCTAssertEqual(lowPowerWorking.maximum, 60)
+        XCTAssertEqual(lowPowerWorking.preferred, 30)
+
+        // Clamping onto a 60Hz external display keeps minimum <= preferred <= maximum <= 60.
+        let external = working.clamped(toScreenMaxFPS: 60)
+        XCTAssertEqual(external.minimum, 60)
+        XCTAssertEqual(external.maximum, 60)
+        XCTAssertEqual(external.preferred, 60)
+
+        // Clamping onto a 120Hz ProMotion panel preserves the full 80–120Hz range.
+        let proMotion = working.clamped(toScreenMaxFPS: 120)
+        XCTAssertEqual(proMotion, working)
+
+        // Authored loop cadence locks cleanly without exceeding 60Hz (or 30Hz in Low Power Mode).
+        let loop24 = AnimationPolicy.displayLinkFrameRate(forTargetFPS: 24, lowPowerMode: false)
+        XCTAssertEqual(loop24.preferred, 24)
+        XCTAssertEqual(loop24.maximum, 60)
+
+        let loopLowPower = AnimationPolicy.displayLinkFrameRate(forTargetFPS: 60, lowPowerMode: true)
+        XCTAssertEqual(loopLowPower.preferred, 30)
+        XCTAssertEqual(loopLowPower.maximum, 30)
     }
 }

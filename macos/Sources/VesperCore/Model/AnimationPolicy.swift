@@ -1,6 +1,7 @@
 import Foundation
 
-/// Decides when character and activity animations should tick and at what periodic cadence.
+/// Decides when character and activity animations should tick and what display-link refresh rate
+/// range they should request from macOS ProMotion / VRR displays.
 ///
 /// Active/working animations stay live whenever the window is visible (even side-by-side behind
 /// another focused app). Idle animations pause when the host view is hidden or occluded, when
@@ -26,27 +27,60 @@ public enum AnimationPolicy {
         }
     }
 
-    /// Periodic tick interval for `HarnessCharacterView`. Using `.periodic` instead of `.animation`
-    /// avoids attaching a 120Hz ProMotion DisplayLink just to throttle it down.
-    public static func harnessTickInterval(working: Bool) -> TimeInterval {
-        working ? (1.0 / 24.0) : (1.0 / 10.0)
+    /// Pure-Swift mirror of `CAFrameRateRange` (in frames per second) so refresh-rate policy
+    /// stays unit-testable inside `VesperCore` without QuartzCore/AppKit dependencies.
+    public struct FrameRateProfile: Equatable, Sendable {
+        public var minimum: Float
+        public var maximum: Float
+        public var preferred: Float
+
+        public init(minimum: Float, maximum: Float, preferred: Float) {
+            self.minimum = minimum
+            self.maximum = maximum
+            self.preferred = preferred
+        }
+
+        /// Clamps this profile to the hardware refresh rate of the screen hosting the window
+        /// (e.g. 60 Hz external monitor vs 120 Hz ProMotion panel) while preserving valid bounds.
+        public func clamped(toScreenMaxFPS screenMaxFPS: Int) -> FrameRateProfile {
+            let cap = Float(max(screenMaxFPS, 30))
+            let clampedMax = min(maximum, cap)
+            let clampedMin = min(minimum, clampedMax)
+            let clampedPreferred = min(max(preferred, clampedMin), clampedMax)
+            return FrameRateProfile(
+                minimum: clampedMin,
+                maximum: clampedMax,
+                preferred: clampedPreferred
+            )
+        }
     }
 
-    /// Nominal target frame interval for `ActivitySceneView` (60 fps normally, 30 fps in Low Power Mode).
-    public static func activitySceneTickInterval(lowPowerMode: Bool = false) -> TimeInterval {
-        lowPowerMode ? (1.0 / 30.0) : (1.0 / 60.0)
-    }
-
-    /// Default nominal frame interval for `ActivitySceneView` (60 fps).
-    public static let activitySceneTickInterval: TimeInterval = 1.0 / 60.0
-
-    /// Display-link `minimumInterval` for `TimelineView(.animation(minimumInterval:))` in `ActivitySceneView`.
+    /// Target `CADisplayLink` frame-rate profile for continuous vector canvases (`ActivitySceneView`,
+    /// `HarnessCharacterView`, `PersonaCharacterView`).
     ///
-    /// Subtracting a 10% VSync jitter margin (15ms for 60fps, 30ms for 30fps) keeps display-synced ticks
-    /// locked to every VSync on 60Hz panels and every 2nd/4th VSync on 120Hz ProMotion panels instead of
-    /// dropping to 30/40fps when a refresh arrives a fraction of a millisecond early.
-    public static func activitySceneDisplayLinkMinimumInterval(lowPowerMode: Bool = false) -> TimeInterval {
-        activitySceneTickInterval(lowPowerMode: lowPowerMode) * 0.9
+    /// - Normal power, working: requests 80–120 Hz (preferred 120 Hz) so ProMotion ramps cleanly to
+    ///   120 Hz and resists VRR step-downs on small canvases while still clamping to 60 Hz on 60 Hz panels.
+    /// - Normal power, idle (foreground & visible): requests 60–120 Hz (preferred 120 Hz) for smooth
+    ///   ambient motion alongside 120 Hz UI transitions, pausing completely when hidden/backgrounded.
+    /// - Low Power Mode: caps to 30–60 Hz (preferred 30 Hz) to preserve battery.
+    public static func displayLinkFrameRate(working: Bool, lowPowerMode: Bool = false) -> FrameRateProfile {
+        if lowPowerMode {
+            return FrameRateProfile(minimum: 30, maximum: 60, preferred: 30)
+        }
+        if working {
+            return FrameRateProfile(minimum: 80, maximum: 120, preferred: 120)
+        }
+        return FrameRateProfile(minimum: 60, maximum: 120, preferred: 120)
+    }
+
+    /// Target `CADisplayLink` frame-rate profile for authored frame-based loops (Animated WebP/GIF)
+    /// whose native cadence is slower than 120 Hz, keeping frame swaps phase-locked to VSync
+    /// without beat judder or wasted intermediate wakeups.
+    public static func displayLinkFrameRate(forTargetFPS targetFPS: Double, lowPowerMode: Bool = false) -> FrameRateProfile {
+        let cap: Float = lowPowerMode ? 30 : 60
+        let preferred = min(max(Float(targetFPS.rounded()), 15), cap)
+        let minimum = min(preferred, 15)
+        return FrameRateProfile(minimum: minimum, maximum: cap, preferred: preferred)
     }
 
     /// Whether an animation should tick in the given visibility and power context.

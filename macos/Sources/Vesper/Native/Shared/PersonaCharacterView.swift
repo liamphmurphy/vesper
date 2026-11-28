@@ -1,12 +1,13 @@
+import QuartzCore
 import SwiftUI
 import VesperCore
 
 /// Renders a custom 64x64 animated SVG persona character natively (`PersonaCharacterRig`):
-/// - `active == true` and animation allowed (`AnimationPolicy`): the state's motions at the
-///   display's refresh rate, restarting from their first frame whenever what's shown changes, as
-///   the web view's CSS animations restarted with each page load.
+/// - `active == true` and animation allowed (`AnimationPolicy`): driven directly by `CADisplayLink`
+///   at native ProMotion refresh rates (120Hz active, 30Hz Low Power Mode) with zero SwiftUI diffing
+///   per frame, restarting from t = 0 whenever `(svg, color, state)` changes.
 /// - otherwise (inactive, Reduce Motion, hidden window, Low Power Mode for idle): the still
-///   `static` frame with no timeline at all, as the web snapshots showed.
+///   `static` frame with no display link running at all.
 struct PersonaCharacterView: View {
     let svg: String
     let color: String
@@ -27,9 +28,10 @@ struct PersonaCharacterView: View {
         let tintAlpha = theme.mode == .dark ? 0.15 : 0.20
         let accentColor = Color(cssHex: PersonaCharacterSanitizer.safeHexColor(color)) ?? .gray
         let isActiveState = state != .idle && state != .staticState
+        let power = AppPowerState.shared
         let liveAllowed = active && AnimationPolicy.shouldAnimate(
             working: isActiveState,
-            context: AppPowerState.shared.animationContext(
+            context: power.animationContext(
                 reduceMotion: reduceMotion,
                 windowVisible: windowVisible
             )
@@ -37,16 +39,22 @@ struct PersonaCharacterView: View {
         let rig = PersonaCharacterRigCache.rig(svg: svg, color: color)
         let shownState: CharacterState = liveAllowed ? state : .staticState
         let animates = rig?.animates(in: shownState) ?? false
+        let frameRate = AnimationPolicy.displayLinkFrameRate(
+            working: isActiveState,
+            lowPowerMode: power.isLowPowerMode
+        )
 
         Group {
             if let rig {
-                if animates {
-                    // A new identity per run gives the canvas a fresh clock.
-                    AnimatedCharacterCanvas(rig: rig, state: shownState)
-                        .id(AnimationRun(svg: svg, color: color, state: shownState))
-                } else {
-                    CharacterCanvas(rig: rig, state: shownState, time: 0)
-                }
+                let run = AnimationRun(svg: svg, color: color, state: shownState)
+                PersonaRigCanvas(
+                    rig: rig,
+                    state: shownState,
+                    animates: animates,
+                    frameRate: frameRate,
+                    redrawToken: run.hashValue
+                )
+                .id(run)
             }
         }
         .padding(pad)
@@ -70,30 +78,25 @@ struct PersonaCharacterView: View {
     }
 }
 
-/// The state's motions at the display's refresh rate, timed from when this view appeared.
-private struct AnimatedCharacterCanvas: View {
+/// Hosts `PersonaCharacterRig` on `DisplayLinkCanvasView`, resetting `start` per `AnimationRun`.
+private struct PersonaRigCanvas: View {
     let rig: PersonaCharacterRig
     let state: CharacterState
+    let animates: Bool
+    let frameRate: AnimationPolicy.FrameRateProfile
+    let redrawToken: Int
 
-    @State private var start = Date()
-
-    var body: some View {
-        TimelineView(.animation) { timeline in
-            CharacterCanvas(rig: rig, state: state, time: timeline.date.timeIntervalSince(start))
-        }
-    }
-}
-
-private struct CharacterCanvas: View {
-    let rig: PersonaCharacterRig
-    let state: CharacterState
-    let time: TimeInterval
+    @State private var start = CACurrentMediaTime()
 
     var body: some View {
-        Canvas { ctx, canvasSize in
-            ctx.withCGContext { cg in
-                rig.draw(state: state, at: time, in: cg, rect: CGRect(origin: .zero, size: canvasSize))
-            }
+        let startTime = start
+        DisplayLinkCanvasView(
+            isAnimating: animates,
+            frameRateProfile: frameRate,
+            redrawToken: redrawToken
+        ) { cg, canvasSize, timestamp in
+            let elapsed = animates ? max(0, timestamp - startTime) : 0
+            rig.draw(state: state, at: elapsed, in: cg, rect: CGRect(origin: .zero, size: canvasSize))
         }
     }
 }

@@ -1,3 +1,4 @@
+import QuartzCore
 import SwiftUI
 import VesperCore
 
@@ -14,9 +15,9 @@ enum ActivitySceneStageStyle: Equatable {
     case diorama(tint: Color, ambientPulse: Bool = true, fillWidth: Bool = false)
 }
 
-/// Native SwiftUI Canvas / CoreGraphics stage rendering any `ActivitySceneKind` with
-/// 800ms hold, 240ms crossfade + scale settle, 600ms wind-down on stop, 60fps active cadence
-/// (30fps in Low Power Mode), and Reduce Motion freeze.
+/// Native `CADisplayLink` + CoreGraphics stage rendering any `ActivitySceneKind` with
+/// 800ms hold, 240ms crossfade + scale settle, 600ms wind-down on stop, 120Hz ProMotion cadence
+/// (30Hz in Low Power Mode, adapting automatically to 60Hz panels), and Reduce Motion freeze.
 struct ActivitySceneView: View {
     let kind: ActivitySceneKind
     var stopping: Bool = false
@@ -47,12 +48,12 @@ struct ActivitySceneView: View {
                 windowVisible: windowVisible
             )
         )
-        let minInterval = AnimationPolicy.activitySceneDisplayLinkMinimumInterval(lowPowerMode: power.isLowPowerMode)
+        let frameRate = AnimationPolicy.displayLinkFrameRate(working: true, lowPowerMode: power.isLowPowerMode)
 
         Group {
             switch resolvedStageStyle {
             case .boxed:
-                timedCanvas(animate: animate, minInterval: minInterval, palette: palette)
+                sceneCanvas(animate: animate, frameRate: frameRate, palette: palette)
                     .padding(.horizontal, 4)
                     .padding(.vertical, 3)
                     .frame(width: width, height: height)
@@ -67,7 +68,7 @@ struct ActivitySceneView: View {
                     .clipShape(RoundedRectangle(cornerRadius: 9))
 
             case .bare:
-                timedCanvas(animate: animate, minInterval: minInterval, palette: palette)
+                sceneCanvas(animate: animate, frameRate: frameRate, palette: palette)
                     .frame(width: width, height: height)
 
             case .diorama(let tint, let ambientPulse, let fillWidth):
@@ -76,7 +77,7 @@ struct ActivitySceneView: View {
                     ambientPulse: ambientPulse,
                     fillWidth: fillWidth,
                     animate: animate,
-                    minInterval: minInterval,
+                    frameRate: frameRate,
                     palette: palette
                 )
             }
@@ -86,24 +87,26 @@ struct ActivitySceneView: View {
         .animation(reduceMotion ? nil : .easeOut(duration: 0.6), value: stopping)
         .accessibilityHidden(true)
         .onChange(of: kind) { _, newKind in
-            let now = Date.timeIntervalSinceReferenceDate
+            let now = CACurrentMediaTime()
             if box.transitioner == nil {
                 box.transitioner = ActivitySceneTransitioner(initial: newKind, at: now)
             } else {
                 box.transitioner?.request(newKind, at: now)
             }
-            if reduceMotion { staticTick &+= 1 }
+            if reduceMotion || !animate { staticTick &+= 1 }
             scheduleHoldIfNeeded()
         }
         .onChange(of: stopping) { _, newStopping in
-            let now = Date.timeIntervalSinceReferenceDate
+            let now = CACurrentMediaTime()
             if box.transitioner == nil {
                 box.transitioner = ActivitySceneTransitioner(initial: kind, at: now)
             }
             box.transitioner?.setStopping(newStopping, at: now)
+            if !animate { staticTick &+= 1 }
         }
         .onChange(of: reduceMotion) { _, paused in
             if paused {
+                staticTick &+= 1
                 scheduleHoldIfNeeded()
             } else {
                 holdTask?.cancel()
@@ -116,34 +119,14 @@ struct ActivitySceneView: View {
         }
     }
 
-    @ViewBuilder
-    private func timedCanvas(
-        animate: Bool,
-        minInterval: TimeInterval,
-        palette: ActivityScenePalette
-    ) -> some View {
-        if animate {
-            // Use VSync-aligned `.animation(minimumInterval:)` instead of wall-clock `.periodic`
-            // so 60fps ticks stay phase-locked to 60Hz/120Hz ProMotion refreshes. Because this
-            // branch is unmounted whenever `animate` is false, no DisplayLink runs while idle/hidden.
-            TimelineView(.animation(minimumInterval: minInterval)) { timeline in
-                let _ = staticTick
-                sceneCanvas(at: timeline.date.timeIntervalSinceReferenceDate, palette: palette)
-            }
-        } else {
-            let _ = staticTick
-            sceneCanvas(at: Date.timeIntervalSinceReferenceDate, palette: palette)
-        }
-    }
-
     /// Static diorama layers (sunken fill, batched architectural dot grid, GPU-composited ambient
-    /// bloom, top hairline) stay outside `TimelineView` so only the foreground scene canvas ticks.
+    /// bloom, top hairline) stay independent of the foreground `CADisplayLink` scene canvas.
     private func dioramaStage(
         tint: Color,
         ambientPulse: Bool,
         fillWidth: Bool,
         animate: Bool,
-        minInterval: TimeInterval,
+        frameRate: AnimationPolicy.FrameRateProfile,
         palette: ActivityScenePalette
     ) -> some View {
         let isDark = theme.mode == .dark
@@ -156,7 +139,7 @@ struct ActivitySceneView: View {
 
             DioramaAmbientBloomView(tint: tint, isDark: isDark, pulsing: pulseBloom)
 
-            timedCanvas(animate: animate, minInterval: minInterval, palette: palette)
+            sceneCanvas(animate: animate, frameRate: frameRate, palette: palette)
                 .padding(.horizontal, 8)
                 .padding(.vertical, 6)
         }
@@ -173,37 +156,65 @@ struct ActivitySceneView: View {
         }
     }
 
-    private func sceneCanvas(at now: Double, palette: ActivityScenePalette) -> some View {
-        let frame = evaluatedFrame(at: now)
-        return Canvas { ctx, canvasSize in
-            ctx.withCGContext { cg in
-                if !reduceMotion, let prev = frame.previous, frame.previousOpacity > 0.001 {
-                    ActivitySceneRenderer.render(
-                        prev,
-                        at: frame.previousClock,
-                        palette: palette,
-                        reduceMotion: false,
-                        opacity: frame.previousOpacity,
-                        contentScale: frame.previousScale,
-                        in: cg,
-                        size: canvasSize
-                    )
-                }
+    private func sceneCanvas(
+        animate: Bool,
+        frameRate: AnimationPolicy.FrameRateProfile,
+        palette: ActivityScenePalette
+    ) -> some View {
+        var hasher = Hasher()
+        hasher.combine(kind)
+        hasher.combine(stopping)
+        hasher.combine(reduceMotion)
+        hasher.combine(theme.mode)
+        hasher.combine(staticTick)
+        let redrawToken = hasher.finalize()
+        let transitionerBox = box
+        let initialKind = kind
+        let initialStopping = stopping
+        let isReduceMotion = reduceMotion
+
+        return DisplayLinkCanvasView(
+            isAnimating: animate,
+            frameRateProfile: frameRate,
+            redrawToken: redrawToken
+        ) { cg, canvasSize, timestamp in
+            let frame = Self.evaluatedFrame(
+                in: transitionerBox,
+                kind: initialKind,
+                stopping: initialStopping,
+                at: timestamp
+            )
+            if !isReduceMotion, let prev = frame.previous, frame.previousOpacity > 0.001 {
                 ActivitySceneRenderer.render(
-                    frame.current,
-                    at: frame.currentClock,
+                    prev,
+                    at: frame.previousClock,
                     palette: palette,
-                    reduceMotion: reduceMotion,
-                    opacity: reduceMotion ? 1 : frame.currentOpacity,
-                    contentScale: reduceMotion ? 1 : frame.currentScale,
+                    reduceMotion: false,
+                    opacity: frame.previousOpacity,
+                    contentScale: frame.previousScale,
                     in: cg,
                     size: canvasSize
                 )
             }
+            ActivitySceneRenderer.render(
+                frame.current,
+                at: frame.currentClock,
+                palette: palette,
+                reduceMotion: isReduceMotion,
+                opacity: isReduceMotion ? 1 : frame.currentOpacity,
+                contentScale: isReduceMotion ? 1 : frame.currentScale,
+                in: cg,
+                size: canvasSize
+            )
         }
     }
 
-    private func evaluatedFrame(at now: Double) -> SceneFrame {
+    private static func evaluatedFrame(
+        in box: TransitionerBox,
+        kind: ActivitySceneKind,
+        stopping: Bool,
+        at now: Double
+    ) -> SceneFrame {
         if box.transitioner == nil {
             var initial = ActivitySceneTransitioner(initial: kind, at: now)
             if stopping { initial.setStopping(true, at: now) }
@@ -227,14 +238,14 @@ struct ActivitySceneView: View {
         holdTask?.cancel()
         holdTask = nil
         guard reduceMotion, let tr = box.transitioner, tr.pending != nil else { return }
-        let now = Date.timeIntervalSinceReferenceDate
+        let now = CACurrentMediaTime()
         let remaining = max(0, (tr.shownAt + ActivitySceneTransitioner.holdDuration) - now)
         holdTask = Task { @MainActor in
             if remaining > 0 {
                 try? await Task.sleep(for: .seconds(remaining))
             }
             guard !Task.isCancelled else { return }
-            box.transitioner?.advance(to: Date.timeIntervalSinceReferenceDate)
+            box.transitioner?.advance(to: CACurrentMediaTime())
             staticTick &+= 1
         }
     }
@@ -281,7 +292,7 @@ private struct DioramaDotGridView: View, Equatable {
     }
 }
 
-/// GPU-composited elliptical ambient bloom animated via Core Animation opacity rather than a 60fps CPU Canvas.
+/// GPU-composited elliptical ambient bloom animated via Core Animation opacity.
 private struct DioramaAmbientBloomView: View {
     let tint: Color
     let isDark: Bool
